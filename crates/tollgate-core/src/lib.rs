@@ -7,7 +7,17 @@
 //! This crate is transport and resource agnostic. Consumers provide a
 //! [`Wallet`] and [`ResourceAdapter`] to integrate with specific deployments.
 
+pub mod access;
+pub mod adapter;
+pub mod config;
+pub mod error;
+pub mod metering;
+pub mod peer;
+pub mod pricing;
 pub mod protocol;
+pub mod types;
+pub mod wallet;
 
-// Re-export primary protocol types at crate root for convenience.
+// Re-export primary types at crate root for convenience.
 pub use protocol::Message;
+pub use types::Amount;
