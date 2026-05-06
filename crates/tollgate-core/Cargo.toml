@@ -8,8 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ciborium = "0.2"
-serde = { version = "1", features = ["derive"] }
+minicbor = { version = "0.25", features = ["derive", "std"] }
 thiserror = "2"
 
 [dev-dependencies]
