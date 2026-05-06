@@ -9,6 +9,7 @@
 
 pub mod access;
 pub mod adapter;
+pub mod bootstrap;
 pub mod config;
 pub mod error;
 pub mod framing;
@@ -16,5 +17,6 @@ pub mod metering;
 pub mod peer;
 pub mod pricing;
 pub mod protocol;
+pub mod session;
 pub mod types;
 pub mod wallet;

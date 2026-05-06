@@ -115,6 +115,32 @@ pub fn compute_interval_cost(
     Ok(cost)
 }
 
+/// Compute interval cost at full scaled precision (no ceiling division).
+///
+/// Used for bootstrap balance tracking where sub-sat precision must be
+/// preserved across multiple intervals. The result stays in scaled units
+/// (e.g., milli-sats when `pricing_scale = 1000`) and is never rounded.
+///
+/// # Formula
+///
+/// ```text
+/// cost_scaled = (elapsed_seconds × price_per_second) + (units_delivered × price_per_unit)
+/// ```
+///
+/// where `elapsed_seconds = elapsed_ms / 1000` (integer division, truncating sub-second).
+pub fn compute_interval_cost_scaled(
+    elapsed_ms: u64,
+    units_delivered: u64,
+    price_per_second: i64,
+    price_per_unit: i64,
+) -> i128 {
+    let elapsed_seconds = i128::from(elapsed_ms / 1000);
+    let pps = i128::from(price_per_second);
+    let ppu = i128::from(price_per_unit);
+    let units = i128::from(units_delivered);
+    elapsed_seconds * pps + units * ppu
+}
+
 /// Compute a deterministic product ID from pricing parameters.
 ///
 /// ```text
@@ -293,6 +319,46 @@ mod tests {
         // ceil(-1.5) = -1 ✓
         let cost = compute_interval_cost(-300, 0, 5, 0, 1000).unwrap();
         assert_eq!(cost, -1);
+    }
+
+    // -----------------------------------------------------------------------
+    // compute_interval_cost_scaled — unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scaled_basic_combined() {
+        let cost = compute_interval_cost_scaled(5000, 1000, 50, 5);
+        assert_eq!(cost, 5 * 50 + 1000 * 5);
+    }
+
+    #[test]
+    fn scaled_zero_elapsed() {
+        let cost = compute_interval_cost_scaled(0, 100, 10, 1);
+        assert_eq!(cost, 100);
+    }
+
+    #[test]
+    fn scaled_zero_units() {
+        let cost = compute_interval_cost_scaled(3000, 0, 10, 1);
+        assert_eq!(cost, 30);
+    }
+
+    #[test]
+    fn scaled_both_zero() {
+        let cost = compute_interval_cost_scaled(0, 0, 10, 5);
+        assert_eq!(cost, 0);
+    }
+
+    #[test]
+    fn scaled_negative_price_per_unit() {
+        let cost = compute_interval_cost_scaled(0, 1000, 0, -2);
+        assert_eq!(cost, -2000);
+    }
+
+    #[test]
+    fn scaled_sub_second_truncated() {
+        let cost = compute_interval_cost_scaled(999, 0, 100, 0);
+        assert_eq!(cost, 0);
     }
 
     // -----------------------------------------------------------------------
