@@ -1,0 +1,19 @@
+[package]
+name = "tollgate-core"
+version = "0.1.0"
+description = "Resource-agnostic TollGate payment protocol library"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ciborium = "0.2"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

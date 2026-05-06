@@ -3,6 +3,8 @@
 
 # Build
 /target
+**/target
+Cargo.lock
 
 # Editor/IDE
 *.swp
