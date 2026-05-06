@@ -1,0 +1,19 @@
+[package]
+name = "tollgate-net"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85.0"
+license = "MIT"
+
+[dependencies]
+tollgate-core = { path = "../tollgate-core" }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["http1"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+minicbor = { version = "0.25", features = ["derive", "std"] }
+reqwest = "0.12"
+
+[lints]
+workspace = true
