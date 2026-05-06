@@ -1,6 +1,6 @@
-# ADR-0001: CDDL as Documentation, ciborium as Implementation
+# ADR-0001: CDDL as Documentation, Rust Types as Implementation
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR-0002 (library changed from ciborium to minicbor; CDDL-as-doc approach remains)
 - **Date**: 2026-05-06
 - **Deciders**: Project owner, Sisyphus
 - **Related**: Issue #3 (M1.1), Issue #1 (M1.4 Codec)
