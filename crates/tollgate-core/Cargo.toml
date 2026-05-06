@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 minicbor = { version = "0.25", features = ["derive", "std"] }
+sha2 = "0.10"
 thiserror = "2"
 
 [dev-dependencies]

@@ -63,4 +63,6 @@ pub enum PricingError {
     ZeroScaleDivisor,
     #[error("overflow in pricing calculation")]
     Overflow,
+    #[error("CBOR encoding failed: {0}")]
+    Encoding(String),
 }
