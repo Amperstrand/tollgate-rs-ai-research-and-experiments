@@ -219,7 +219,7 @@ jobs:
                  <li class="phase-badge"><span class="phase-swatch" style="background:#fef3c7"></span>Metering</li>
                  <li class="phase-badge"><span class="phase-swatch" style="background:#fee2e2"></span>Teardown</li>
                </ul>
-           HTMLEOF
+          HTMLEOF
 
           if [ -f "$TRACE_DIR/cdk_bootstrap_lifecycle.mmd" ]; then
             echo '<div class="mermaid">' >> pages/index.html
