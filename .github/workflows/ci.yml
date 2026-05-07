@@ -88,7 +88,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: actions/cache@v4
         with:
@@ -103,7 +103,7 @@ jobs:
         id: run-tests
         run: |
           set +e
-          cargo test -p tollgate-net --test cdk_integration -- --ignored --nocapture 2>&1 | tee protocol-report.log
+          cargo test -p tollgate-net --test cdk_integration -- --ignored --nocapture 2>build.log | tee protocol-report.log
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
           set -e
 
@@ -112,7 +112,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: protocol-report
-          path: protocol-report.log
+          path: |
+            protocol-report.log
+            build.log
           retention-days: 14
 
       - name: Check test result
