@@ -18,6 +18,7 @@ Cargo.lock
 AGENTS.md
 CLAUDE.md
 agents/
+.playwright-mcp/
 
 deploy/
 
