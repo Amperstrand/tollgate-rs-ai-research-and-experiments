@@ -233,3 +233,24 @@ fn note_event_without_target() {
     assert!(md.contains("**Actor**: Client\n"));
     assert!(!md.contains("\u{2192}"));
 }
+
+#[test]
+fn note_event_spanning_two_participants() {
+    let collector = TraceCollector::new();
+    {
+        let mut events = collector.events.lock().unwrap();
+        events.push(ProtocolTraceEvent {
+            actor: TraceActor("Buyer".to_owned()),
+            target: Some(TraceActor("Seller".to_owned())),
+            direction: TraceDirection::Note,
+            msg_type: "Balance".to_owned(),
+            spec_ref: "tollgate-bootstrap.md §3".to_owned(),
+            payload: "credit: 100,000 scaled".to_owned(),
+            note: None,
+            timestamp_ms: 1000,
+        });
+    }
+
+    let mmd = collector.to_mermaid();
+    assert!(mmd.contains("Note over Buyer,Seller: credit: 100,000 scaled"));
+}

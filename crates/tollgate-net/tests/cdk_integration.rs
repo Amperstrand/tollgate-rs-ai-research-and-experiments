@@ -30,7 +30,7 @@ use tollgate_core::wallet::Wallet;
 use tollgate_net::cdk_wallet::CdkWallet;
 use tollgate_net::mock::MockAdapter;
 
-const MINT_URL: &str = "https://testnut.cashu.space";
+const MINT_URL: &str = "https://testnut.cashu.exchange";
 
 fn provider_pubkey() -> PubKey {
     PubKey([0x01; 33])
@@ -366,6 +366,15 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("Provider state: {:?}", provider_session.state());
     assert!(provider_session.is_active(), "session should be active");
 
+    trace_event!(
+        "Buyer",
+        "Seller",
+        "Note",
+        "Balance",
+        "tollgate-bootstrap.md §3",
+        "credit: 100 sat × 1000 = 100,000 scaled<br/>pricing: 10 sat/s + 1 sat/unit<br/>remaining: 100.000 sat"
+    );
+
     let client_bal_after_send = client_wallet.total_balance().await.expect("client balance");
     tracing::info!("Client balance after sending token: {client_bal_after_send} sat");
 
@@ -442,6 +451,17 @@ async fn cdk_bootstrap_lifecycle() {
                 tracing::warn!("  [Interval {i}] Response: {msg:?}");
             }
         }
+
+        let remaining_sat = balance_scaled as f64 / scale as f64;
+        let interval_cost = if i == 1 { cost_scaled } else { cost_scaled - ((i - 1) as i64 * 1050) };
+        trace_event!(
+            "Buyer",
+            "Seller",
+            "Note",
+            "Balance",
+            "tollgate-metering.md §2",
+            format!("interval {i}: cost={interval_cost}, cum.cost={cost_scaled}<br/>delivered: {total_delivered} bytes in {total_elapsed_ms}ms<br/>remaining: {remaining_sat:.3} sat ({balance_scaled} scaled)")
+        );
     }
 
     assert!(
@@ -496,6 +516,16 @@ async fn cdk_bootstrap_lifecycle() {
         .await
         .expect("provider final balance");
     tracing::info!("Provider balance after bootstrap + top-up: {provider_final} sat");
+
+    trace_event!(
+        "Buyer",
+        "Seller",
+        "Note",
+        "Balance",
+        "tollgate-bootstrap.md §4",
+        "top-up: +50 sat (+50,000 scaled)<br/>new credit: previous remaining + 50,000 scaled"
+    );
+
     assert!(
         provider_final >= 140,
         "provider should have at least 140 sat from bootstrap + topup (after mint fees), got {provider_final}"

@@ -166,18 +166,38 @@ impl TraceCollector {
         let first_ts = events[0].timestamp_ms;
         let mut current_spec_ref = "";
         let mut i = 0;
+        let mut open_phase: Option<Phase> = None;
 
         while i < events.len() {
             let evt = &events[i];
+            let phase = resolve_phase(&events, i);
 
             if evt.spec_ref != current_spec_ref {
                 current_spec_ref = &evt.spec_ref;
                 append_spec_ref_note(&mut out, &events[i..], current_spec_ref);
             }
 
+            if open_phase != Some(phase) {
+                if let Some(p) = open_phase {
+                    close_phase_block(&mut out, p);
+                }
+                open_phase = Some(phase);
+                write!(
+                    out,
+                    "    rect rgb({})\n    Note right of {}: {} phase\n",
+                    phase.color(),
+                    events[i].actor.0,
+                    phase.label(),
+                )
+                .unwrap();
+            }
+
             if evt.msg_type == "MeteringReport" {
                 let loop_start = i;
-                while i < events.len() && events[i].msg_type == "MeteringReport" {
+                while i < events.len()
+                    && events[i].msg_type == "MeteringReport"
+                    && resolve_phase(&events, i) == Phase::Metering
+                {
                     i += 1;
                 }
                 if i - loop_start >= 2 {
@@ -195,6 +215,10 @@ impl TraceCollector {
                 append_mermaid_event(&mut out, evt, first_ts, false);
                 i += 1;
             }
+        }
+
+        if let Some(p) = open_phase {
+            close_phase_block(&mut out, p);
         }
 
         out
@@ -337,6 +361,44 @@ where
 // Mermaid rendering helpers
 // ---------------------------------------------------------------------------
 
+/// Phase classification for Mermaid `rect` background coloring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Setup,
+    Payment,
+    Metering,
+    Teardown,
+}
+
+impl Phase {
+    fn from_event(evt: &ProtocolTraceEvent) -> Self {
+        match evt.msg_type.as_str() {
+            "BootstrapToken" | "BootstrapAck" | "Balance" => Phase::Payment,
+            "MeteringReport" => Phase::Metering,
+            "Disconnect" => Phase::Teardown,
+            _ => Phase::Setup,
+        }
+    }
+
+    fn color(self) -> &'static str {
+        match self {
+            Phase::Setup => "230, 245, 255",     // light blue
+            Phase::Payment => "230, 255, 237",    // light green
+            Phase::Metering => "255, 248, 225",   // light amber
+            Phase::Teardown => "255, 235, 233",   // light red
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Phase::Setup => "Setup",
+            Phase::Payment => "Payment",
+            Phase::Metering => "Metering",
+            Phase::Teardown => "Teardown",
+        }
+    }
+}
+
 fn append_spec_ref_note(out: &mut String, remaining: &[ProtocolTraceEvent], spec_ref: &str) {
     let mut first_actor: Option<&str> = None;
     let mut last_target: Option<&str> = None;
@@ -374,6 +436,24 @@ fn append_spec_ref_note(out: &mut String, remaining: &[ProtocolTraceEvent], spec
     }
 }
 
+fn resolve_phase(events: &[ProtocolTraceEvent], idx: usize) -> Phase {
+    if events[idx].msg_type != "Balance" {
+        return Phase::from_event(&events[idx]);
+    }
+    let mut lookback = idx;
+    while lookback > 0 {
+        lookback -= 1;
+        if events[lookback].msg_type != "Balance" {
+            return Phase::from_event(&events[lookback]);
+        }
+    }
+    Phase::Setup
+}
+
+fn close_phase_block(out: &mut String, _phase: Phase) {
+    out.push_str("    end\n");
+}
+
 fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u64, indented: bool) {
     let indent = if indented { "        " } else { "    " };
     let delta = evt.timestamp_ms.saturating_sub(first_ts);
@@ -398,6 +478,16 @@ fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u6
             out.push_str(": ");
             out.push_str(&evt.msg_type);
             out.push(' ');
+            out.push_str(&evt.payload);
+            out.push('\n');
+        }
+        (TraceDirection::Note, Some(target)) => {
+            out.push_str(indent);
+            out.push_str("Note over ");
+            out.push_str(&evt.actor.0);
+            out.push(',');
+            out.push_str(&target.0);
+            out.push_str(": ");
             out.push_str(&evt.payload);
             out.push('\n');
         }

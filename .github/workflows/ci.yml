@@ -161,8 +161,18 @@ jobs:
               details { margin: 24px 0; }
               summary { cursor: pointer; font-weight: 600; color: var(--text); font-size: 0.9rem; }
               pre { background: var(--text); color: #e6edf3; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; max-height: 400px; }
-              @media (max-width: 640px) { .actors { grid-template-columns: 1fr; } }
-            </style>
+               #tooltip { position: absolute; display: none; background: var(--text); color: #e6edf3; padding: 12px 16px; border-radius: 8px; font-size: 0.82rem; max-width: 380px; z-index: 100; pointer-events: none; box-shadow: 0 4px 20px rgba(0,0,0,0.25); line-height: 1.5; }
+               #tooltip .tt-type { font-weight: 700; font-size: 0.88rem; margin-bottom: 6px; }
+               #tooltip .tt-row { display: flex; gap: 8px; }
+               #tooltip .tt-label { color: #8b949e; min-width: 60px; }
+               #tooltip .tt-val { color: #e6edf3; word-break: break-all; }
+               .balance-gauge { height: 6px; border-radius: 3px; background: var(--border); margin-top: 8px; overflow: hidden; }
+               .balance-gauge-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+               .phase-legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; list-style: none; padding: 0; }
+               .phase-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; padding: 2px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--card); }
+               .phase-swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+               @media (max-width: 640px) { .actors { grid-template-columns: 1fr; } }
+             </style>
           </head>
           <body>
             <header>
@@ -190,7 +200,7 @@ jobs:
                 </div>
                 <div class="actor">
                   <h3><span class="dot dot-mint"></span>Mint</h3>
-                  <p>Issues and verifies Cashu ecash. This test uses <code>testnut.cashu.space</code> (auto-paying fake wallet).</p>
+                  <p>Issues and verifies Cashu ecash. This test uses <code>testnut.cashu.exchange</code> (auto-paying fake wallet).</p>
                 </div>
               </div>
             </section>
@@ -201,9 +211,15 @@ jobs:
                 Solid arrows (→) are requests &middot;
                 Dashed arrows (⇢) are responses &middot;
                 Numbers are auto-sequenced &middot;
-                Timing is relative to start
-              </p>
-          HTMLEOF
+                 Timing is relative to start
+               </p>
+               <ul class="phase-legend">
+                 <li class="phase-badge"><span class="phase-swatch" style="background:#dbeafe"></span>Setup</li>
+                 <li class="phase-badge"><span class="phase-swatch" style="background:#dcfce7"></span>Payment</li>
+                 <li class="phase-badge"><span class="phase-swatch" style="background:#fef3c7"></span>Metering</li>
+                 <li class="phase-badge"><span class="phase-swatch" style="background:#fee2e2"></span>Teardown</li>
+               </ul>
+           HTMLEOF
 
           if [ -f "$TRACE_DIR/cdk_bootstrap_lifecycle.mmd" ]; then
             echo '<div class="mermaid">' >> pages/index.html
@@ -229,6 +245,58 @@ jobs:
             </section>
 
             <script>
+          var traceEvents = null;
+          var firstTimestamp = 0;
+          var tooltipEl = null;
+
+          function parseBalanceRemaining(p) { var m = p.match(/remaining:\s*([\d.]+)\s*sat/); return m ? parseFloat(m[1]) : null; }
+          function gaugeColor(pct) { return pct > 60 ? '#1a7f37' : pct > 30 ? '#9a6700' : '#cf222e'; }
+
+          function showTooltip(evt, ev) {
+            if (!tooltipEl) tooltipEl = document.getElementById('tooltip');
+            var ar = ev.actor && ev.target ? ev.actor + ' \u2192 ' + ev.target : ev.actor || '';
+            var dt = firstTimestamp ? (ev.timestamp_ms - firstTimestamp) : ev.timestamp_ms;
+            tooltipEl.innerHTML = '<div class="tt-type">' + ev.msg_type + '</div>'
+              + '<div class="tt-row"><span class="tt-label">From\u2192To</span><span class="tt-val">' + ar + '</span></div>'
+              + '<div class="tt-row"><span class="tt-label">Payload</span><span class="tt-val">' + ev.payload + '</span></div>'
+              + '<div class="tt-row"><span class="tt-label">Spec</span><span class="tt-val">' + ev.spec_ref + '</span></div>'
+              + '<div class="tt-row"><span class="tt-label">Dir</span><span class="tt-val">' + ev.direction + '</span></div>'
+              + '<div class="tt-row"><span class="tt-label">Time</span><span class="tt-val">+' + dt + 'ms</span></div>';
+            tooltipEl.style.display = 'block';
+            moveTooltip(evt);
+          }
+          function moveTooltip(evt) {
+            if (!tooltipEl) return;
+            var x = evt.pageX + 12, y = evt.pageY + 12;
+            if (x + 400 > window.innerWidth) x = evt.pageX - 400;
+            tooltipEl.style.left = x + 'px';
+            tooltipEl.style.top = y + 'px';
+          }
+          function hideTooltip() { if (tooltipEl) tooltipEl.style.display = 'none'; }
+
+          function attachTooltips() {
+            if (!traceEvents) return;
+            var svg = document.querySelector('.mermaid svg');
+            if (!svg) return;
+            svg.querySelectorAll('.messageText').forEach(function(el, idx) {
+              if (idx >= traceEvents.length) return;
+              var ev = traceEvents[idx];
+              el.style.cursor = 'pointer';
+              el.addEventListener('mouseenter', function(e) { showTooltip(e, ev); });
+              el.addEventListener('mousemove', moveTooltip);
+              el.addEventListener('mouseleave', hideTooltip);
+            });
+          }
+
+          function waitForMermaid() {
+            var c = document.querySelector('.mermaid');
+            if (!c) return;
+            if (c.querySelector('svg')) { attachTooltips(); return; }
+            new MutationObserver(function() {
+              if (c.querySelector('svg')) { this.disconnect(); attachTooltips(); }
+            }).observe(c, { childList: true, subtree: true });
+          }
+
           const STEP_INFO = {
             'MintQuote': {
               Request: {
@@ -296,48 +364,61 @@ jobs:
                 return;
               }
 
-              var firstTs = events[0].timestamp_ms;
-              var html = '';
+               var firstTs = events[0].timestamp_ms;
+               traceEvents = events;
+               firstTimestamp = firstTs;
+               var html = '';
 
-              for (var i = 0; i < events.length; i++) {
-                var e = events[i];
-                var delta = e.timestamp_ms - firstTs;
-                var dir = e.direction;
-                var dirClass = dir === 'Response' ? 'res' : 'req';
-                var dirLabel = dir === 'Response' ? 'Response' : 'Request';
+               for (var i = 0; i < events.length; i++) {
+                 var e = events[i];
+                 var delta = e.timestamp_ms - firstTs;
+                 var dir = e.direction;
+                 var dirClass = dir === 'Response' ? 'res' : 'req';
+                 var dirLabel = dir === 'Response' ? 'Response' : 'Request';
 
-                var info = (STEP_INFO[e.msg_type] || {})[dir] || {
-                  title: e.msg_type,
-                  explain: ''
-                };
+                 var info = (STEP_INFO[e.msg_type] || {})[dir] || {
+                   title: e.msg_type,
+                   explain: ''
+                 };
 
-                var arrow = (e.actor && e.target)
-                  ? e.actor + ' → ' + e.target
-                  : e.actor || '';
+                 var arrow = (e.actor && e.target)
+                   ? e.actor + ' \u2192 ' + e.target
+                   : e.actor || '';
 
-                html += '<div class="step">'
-                  + '<div class="step-head">'
-                  + '<span class="step-num">#' + (i + 1) + '</span>'
-                  + '<span class="step-dir ' + dirClass + '">' + dirLabel + '</span>'
-                  + '<span class="step-title">' + info.title + '</span>'
-                  + '</div>'
-                  + '<p class="step-explain">' + info.explain + '</p>'
-                  + '<div class="step-meta">'
-                  + '<span>' + arrow + '</span>'
-                  + '<span><code>' + e.payload + '</code></span>'
-                  + '<span>Spec: <code>' + e.spec_ref + '</code></span>'
-                  + '<span>+' + delta + 'ms</span>'
-                  + '</div>'
-                  + '</div>';
-              }
+                 html += '<div class="step">'
+                   + '<div class="step-head">'
+                   + '<span class="step-num">#' + (i + 1) + '</span>'
+                   + '<span class="step-dir ' + dirClass + '">' + dirLabel + '</span>'
+                   + '<span class="step-title">' + info.title + '</span>'
+                   + '</div>'
+                   + '<p class="step-explain">' + info.explain + '</p>'
+                   + '<div class="step-meta">'
+                   + '<span>' + arrow + '</span>'
+                   + '<span><code>' + e.payload + '</code></span>'
+                   + '<span>Spec: <code>' + e.spec_ref + '</code></span>'
+                   + '<span>+' + delta + 'ms</span>'
+                   + '</div>';
 
-              document.getElementById('steps').innerHTML = html;
+                 if (e.msg_type === 'Balance') {
+                   var rem = parseBalanceRemaining(e.payload);
+                   if (rem !== null) {
+                     var pct = Math.min(100, Math.max(0, rem));
+                     html += '<div class="balance-gauge"><div class="balance-gauge-fill" style="width:' + pct + '%;background:' + gaugeColor(pct) + '"></div></div>';
+                   }
+                 }
+
+                 html += '</div>';
+               }
+
+               document.getElementById('steps').innerHTML = html;
+               waitForMermaid();
             })
             .catch(function() {
               document.getElementById('steps').innerHTML = '<p class="no-data">No trace data available — the test may not have completed.</p>';
             });
-            </script>
-          </body>
+             </script>
+             <div id="tooltip"></div>
+           </body>
           </html>
           HTMLEOF
 
