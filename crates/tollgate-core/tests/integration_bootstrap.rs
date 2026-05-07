@@ -10,6 +10,7 @@ use tollgate_core::metering::PeerMetrics;
 use tollgate_core::peer::PeerSessionState;
 use tollgate_core::protocol::*;
 use tollgate_core::session::{PeerSession, SessionConfig};
+use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::types::{
     Amount, ChannelFundParams, ChannelSecret, FundingProof, SettlementResult,
 };
@@ -233,6 +234,7 @@ fn provider_config() -> SessionConfig {
         interval_ms: 5000,
         min_checkin_ms: 1000,
         max_interval_ms: 10000,
+        exhaustion: ExhaustionConfig::default(),
     }
 }
 
@@ -246,6 +248,7 @@ fn client_config() -> SessionConfig {
         interval_ms: 5000,
         min_checkin_ms: 1000,
         max_interval_ms: 10000,
+        exhaustion: ExhaustionConfig::default(),
     }
 }
 

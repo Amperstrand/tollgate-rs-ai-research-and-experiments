@@ -10,6 +10,45 @@ use crate::metering::PeerMetrics;
 use crate::pricing::compute_interval_cost_scaled;
 use crate::types::Amount;
 
+/// Action to take when buyer's quota is exhausted.
+/// RFC 8506 §8.34 — Final-Unit-Action equivalent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustionAction {
+    /// Hard cutoff — suspend access immediately when remaining_quota <= 0.
+    /// RFC 8506 Final-Unit-Action TERMINATE (0).
+    Terminate,
+    /// Throttle bandwidth — continue delivery at reduced rate.
+    /// RFC 8506 Final-Unit-Action RESTRICT_ACCESS (2).
+    Restrict,
+    /// Allow overdelivery — continue delivery beyond paid amount up to leeway.
+    /// No RFC 8506 equivalent — TollGate-specific.
+    Allow,
+}
+
+/// Configuration for quota exhaustion behavior.
+#[derive(Debug, Clone, Copy)]
+pub struct ExhaustionConfig {
+    /// Action to take when quota is exhausted.
+    pub action: ExhaustionAction,
+    /// Allow mode: deliver N% extra beyond paid amount (0 = disabled).
+    pub leeway_percent: u32,
+    /// Allow mode: deliver N extra scaled units beyond zero (0 = disabled).
+    pub leeway_units_scaled: i128,
+}
+
+impl Default for ExhaustionConfig {
+    fn default() -> Self {
+        Self {
+            action: ExhaustionAction::Terminate,
+            leeway_percent: 0,
+            leeway_units_scaled: 0,
+        }
+    }
+}
+
+// RFC 8506: No direct equivalent. RFC's Credit-Control-Server tracks quota per session;
+// TollGate tracks balance per peer. Inverted flow: buyer pays → provider credits
+// (RFC: server grants → client delivers).
 pub struct BootstrapSession {
     balance_scaled: i128,
     pricing_scale: u64,
@@ -19,6 +58,8 @@ pub struct BootstrapSession {
     access_level: AccessLevel,
     min_checkin_ms: u64,
     max_interval_ms: u64,
+    exhaustion_config: ExhaustionConfig,
+    effective_leeway_scaled: i128,
 }
 
 pub enum BootstrapIntervalResult {
@@ -31,6 +72,7 @@ pub enum BootstrapIntervalResult {
     Exhausted {
         balance_scaled: i128,
         cost_scaled: i128,
+        action: ExhaustionAction,
     },
     CounterWentBackwards,
 }
@@ -43,8 +85,16 @@ impl BootstrapSession {
         price_per_unit: i64,
         min_checkin_ms: u64,
         max_interval_ms: u64,
+        exhaustion_config: ExhaustionConfig,
     ) -> Self {
         let balance_scaled = i128::from(token_value.0) * i128::from(pricing_scale);
+        let initial_balance_scaled = balance_scaled;
+
+        let leeway_percent_scaled =
+            (initial_balance_scaled * i128::from(exhaustion_config.leeway_percent)) / 100;
+        let effective_leeway_scaled =
+            i128::max(exhaustion_config.leeway_units_scaled, leeway_percent_scaled);
+
         Self {
             balance_scaled,
             pricing_scale,
@@ -54,9 +104,12 @@ impl BootstrapSession {
             access_level: AccessLevel::Active,
             min_checkin_ms,
             max_interval_ms,
+            exhaustion_config,
+            effective_leeway_scaled,
         }
     }
 
+    // RFC 8506: Partial mapping to server-initiated re-authorization (§5.5).
     pub fn top_up(&mut self, token_value: Amount) {
         let add = i128::from(token_value.0) * i128::from(self.pricing_scale);
         self.balance_scaled += add;
@@ -65,6 +118,9 @@ impl BootstrapSession {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
+    // RFC 8506: Partial mapping to credit-control UPDATE_REQUEST handling (§5.2).
+    // TollGate uses peer metrics delta instead of explicit quota request.
     pub fn process_interval(&mut self, current_metrics: &PeerMetrics) -> BootstrapIntervalResult {
         let Some(delta) = self.last_metrics.delta(current_metrics) else {
             return BootstrapIntervalResult::CounterWentBackwards;
@@ -79,23 +135,94 @@ impl BootstrapSession {
 
         self.last_metrics = current_metrics.clone();
 
+        let action = self.exhaustion_config.action;
+
         if cost_scaled > 0 && self.balance_scaled <= cost_scaled {
-            self.balance_scaled = 0;
-            self.access_level = AccessLevel::Suspended;
-            return BootstrapIntervalResult::Exhausted {
-                balance_scaled: 0,
-                cost_scaled,
-            };
+            match action {
+                ExhaustionAction::Terminate => {
+                    self.balance_scaled = 0;
+                    self.access_level = AccessLevel::Suspended;
+                    return BootstrapIntervalResult::Exhausted {
+                        balance_scaled: 0,
+                        cost_scaled,
+                        action,
+                    };
+                }
+                ExhaustionAction::Restrict => {
+                    self.balance_scaled = 0;
+                    self.access_level = AccessLevel::Restricted;
+                    return BootstrapIntervalResult::Exhausted {
+                        balance_scaled: 0,
+                        cost_scaled,
+                        action,
+                    };
+                }
+                ExhaustionAction::Allow => {
+                    // Allow balance to go negative
+                    self.balance_scaled -= cost_scaled;
+                    if self.effective_leeway_scaled > 0
+                        && -self.balance_scaled <= self.effective_leeway_scaled
+                    {
+                        // Within leeway — continue with is_final: true
+                        return BootstrapIntervalResult::Ok {
+                            balance_scaled: self.balance_scaled,
+                            cost_scaled,
+                            next_checkin_ms: self.min_checkin_ms,
+                            is_final: true,
+                        };
+                    }
+                    // Leeway exhausted
+                    self.access_level = AccessLevel::Suspended;
+                    return BootstrapIntervalResult::Exhausted {
+                        balance_scaled: self.balance_scaled,
+                        cost_scaled,
+                        action,
+                    };
+                }
+            }
         }
 
         self.balance_scaled -= cost_scaled;
 
         if self.balance_scaled <= 0 {
-            self.access_level = AccessLevel::Suspended;
-            return BootstrapIntervalResult::Exhausted {
-                balance_scaled: self.balance_scaled,
-                cost_scaled,
-            };
+            match action {
+                ExhaustionAction::Terminate => {
+                    self.balance_scaled = 0;
+                    self.access_level = AccessLevel::Suspended;
+                    return BootstrapIntervalResult::Exhausted {
+                        balance_scaled: 0,
+                        cost_scaled,
+                        action,
+                    };
+                }
+                ExhaustionAction::Restrict => {
+                    self.balance_scaled = 0;
+                    self.access_level = AccessLevel::Restricted;
+                    return BootstrapIntervalResult::Exhausted {
+                        balance_scaled: 0,
+                        cost_scaled,
+                        action,
+                    };
+                }
+                ExhaustionAction::Allow => {
+                    if self.effective_leeway_scaled > 0
+                        && -self.balance_scaled <= self.effective_leeway_scaled
+                    {
+                        return BootstrapIntervalResult::Ok {
+                            balance_scaled: self.balance_scaled,
+                            cost_scaled,
+                            next_checkin_ms: self.min_checkin_ms,
+                            is_final: true,
+                        };
+                    }
+                    self.access_level = AccessLevel::Suspended;
+                    return BootstrapIntervalResult::Exhausted {
+                        balance_scaled: self.balance_scaled,
+                        cost_scaled,
+                        action,
+                    };
+                }
+            }
         }
 
         let next_checkin_ms = self.compute_next_checkin_ms(delta.elapsed_ms, delta.delivered);
@@ -109,6 +236,8 @@ impl BootstrapSession {
         }
     }
 
+    // RFC 8506: TollGate-specific adaptive Validity-Time (§8.33).
+    // RFC implementations use fixed values; TollGate computes from remaining_quota / spend_rate.
     fn compute_next_checkin_ms(&self, last_elapsed_ms: u64, last_delivered: u64) -> u64 {
         if self.balance_scaled <= 0 {
             return self.min_checkin_ms;
@@ -132,6 +261,7 @@ impl BootstrapSession {
         checkin.clamp(self.min_checkin_ms, self.max_interval_ms)
     }
 
+    // RFC 8506: Direct mapping to Final-Unit-Indication (§8.34).
     fn compute_is_final(&self, last_elapsed_ms: u64, last_delivered: u64) -> bool {
         if self.balance_scaled <= 0 {
             return true;
@@ -165,7 +295,15 @@ mod tests {
     use super::*;
 
     fn make_session(sats: u64) -> BootstrapSession {
-        BootstrapSession::new(Amount(sats), 1000, 10, 1, 1000, 10000)
+        BootstrapSession::new(
+            Amount(sats),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        )
     }
 
     fn metrics(elapsed_ms: u64, delivered: u64) -> PeerMetrics {
@@ -212,7 +350,15 @@ mod tests {
 
     #[test]
     fn top_up_resumes_from_suspended() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         s.process_interval(&metrics(200_000, 0));
         assert_eq!(s.access_level(), AccessLevel::Suspended);
         s.top_up(Amount(100));
@@ -238,14 +384,30 @@ mod tests {
 
     #[test]
     fn exhaustion_detected() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         let result = s.process_interval(&metrics(200_000, 0));
         assert!(matches!(result, BootstrapIntervalResult::Exhausted { .. }));
     }
 
     #[test]
     fn exhaustion_suspends_access() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         s.process_interval(&metrics(200_000, 0));
         assert_eq!(s.access_level(), AccessLevel::Suspended);
         assert!(s.is_exhausted());
@@ -253,7 +415,15 @@ mod tests {
 
     #[test]
     fn top_up_after_exhaustion() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         s.process_interval(&metrics(200_000, 0));
         assert!(s.is_exhausted());
         s.top_up(Amount(50));
@@ -292,13 +462,29 @@ mod tests {
 
     #[test]
     fn large_token_value() {
-        let s = BootstrapSession::new(Amount(10_000), 1000, 0, 0, 1000, 10000);
+        let s = BootstrapSession::new(
+            Amount(10_000),
+            1000,
+            0,
+            0,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         assert_eq!(s.balance_scaled(), 10_000_000);
     }
 
     #[test]
     fn tiny_intervals_preserve_precision() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 0, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            0,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         for i in 1..=100u64 {
             let result = s.process_interval(&metrics(i, i));
             match result {
@@ -315,7 +501,15 @@ mod tests {
 
     #[test]
     fn negative_price_gives_credit() {
-        let mut s = BootstrapSession::new(Amount(10), 1000, 0, -1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(10),
+            1000,
+            0,
+            -1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         let before = s.balance_scaled();
         s.process_interval(&metrics(0, 100));
         assert!(s.balance_scaled() > before);
@@ -323,7 +517,15 @@ mod tests {
 
     #[test]
     fn scaled_precision_preserved() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 0, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            0,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         let m1 = metrics(0, 1);
         s.process_interval(&m1);
         assert_eq!(s.balance_scaled(), 999);
@@ -334,7 +536,15 @@ mod tests {
 
     #[test]
     fn balance_scaled_reflects_exact_deduction() {
-        let mut s = BootstrapSession::new(Amount(5), 1000, 3, 7, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(5),
+            1000,
+            3,
+            7,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         let cost = 5 * 3 + 200 * 7;
         let result = s.process_interval(&metrics(5000, 200));
         match result {
@@ -360,7 +570,15 @@ mod tests {
 
     #[test]
     fn exhaustion_balance_is_zero_not_negative() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         let result = s.process_interval(&metrics(200_000, 0));
         match result {
             BootstrapIntervalResult::Exhausted { balance_scaled, .. } => {
@@ -372,7 +590,15 @@ mod tests {
 
     #[test]
     fn balance_never_goes_negative() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         s.process_interval(&metrics(200_000, 0));
         assert_eq!(s.balance_scaled(), 0);
     }
@@ -395,7 +621,15 @@ mod tests {
 
     #[test]
     fn is_final_true_when_balance_low() {
-        let mut s = BootstrapSession::new(Amount(2), 1000, 10, 1, 1000, 10000);
+        let mut s = BootstrapSession::new(
+            Amount(2),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig::default(),
+        );
         let result = s.process_interval(&metrics(5000, 1000));
         match result {
             BootstrapIntervalResult::Ok { is_final, .. } => {
@@ -406,5 +640,206 @@ mod tests {
             }
             _ => panic!("expected Ok"),
         }
+    }
+
+    // ─── Phase 2: Exhaustion action tests ───
+
+    #[test]
+    fn terminate_action_suspends_access() {
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig {
+                action: ExhaustionAction::Terminate,
+                leeway_percent: 0,
+                leeway_units_scaled: 0,
+            },
+        );
+        let result = s.process_interval(&metrics(200_000, 0));
+        match result {
+            BootstrapIntervalResult::Exhausted {
+                balance_scaled,
+                action,
+                ..
+            } => {
+                assert_eq!(action, ExhaustionAction::Terminate);
+                assert_eq!(balance_scaled, 0);
+            }
+            _ => panic!("expected Exhausted"),
+        }
+        assert_eq!(s.access_level(), AccessLevel::Suspended);
+    }
+
+    #[test]
+    fn allow_action_continues_past_zero() {
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig {
+                action: ExhaustionAction::Allow,
+                leeway_percent: 0,
+                leeway_units_scaled: 5000, // 5 extra scaled units
+            },
+        );
+        // cost_scaled = 200_000 * 10 = 2_000_000 >> balance (1000)
+        let result = s.process_interval(&metrics(200_000, 0));
+        match result {
+            BootstrapIntervalResult::Ok {
+                balance_scaled,
+                is_final,
+                ..
+            } => {
+                assert!(balance_scaled < 0, "balance should be negative with Allow");
+                assert!(is_final, "should be is_final when past zero");
+            }
+            _ => panic!("expected Ok (within leeway)"),
+        }
+    }
+
+    #[test]
+    fn allow_action_exhausts_at_leeway() {
+        // 1 sat with scale 1000 = 1000 scaled balance
+        // price_per_second = 10, so 1 second costs 10_000 scaled
+        // With leeway_units_scaled = 50, allow up to -50
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig {
+                action: ExhaustionAction::Allow,
+                leeway_percent: 0,
+                leeway_units_scaled: 50,
+            },
+        );
+        // cost = 200_000 * 10 = 2_000_000 >> balance + leeway (1000 + 50 = 1050)
+        let result = s.process_interval(&metrics(200_000, 0));
+        match result {
+            BootstrapIntervalResult::Exhausted {
+                balance_scaled,
+                action,
+                ..
+            } => {
+                assert_eq!(action, ExhaustionAction::Allow);
+                assert!(
+                    -balance_scaled > 50,
+                    "balance should be past leeway limit"
+                );
+            }
+            _ => panic!("expected Exhausted (past leeway)"),
+        }
+        assert_eq!(s.access_level(), AccessLevel::Suspended);
+    }
+
+    #[test]
+    fn allow_action_leeway_percent() {
+        // 1 sat with scale 1000 = 1000 scaled balance
+        // leeway_percent = 50 → 500 extra scaled units
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig {
+                action: ExhaustionAction::Allow,
+                leeway_percent: 50,
+                leeway_units_scaled: 0,
+            },
+        );
+        // cost = 200_000 * 10 = 2_000_000 >> balance + leeway (1000 + 500 = 1500)
+        let result = s.process_interval(&metrics(200_000, 0));
+        assert!(
+            matches!(result, BootstrapIntervalResult::Exhausted { .. }),
+            "should exhaust past leeway"
+        );
+    }
+
+    #[test]
+    fn restrict_action_sets_restricted_access() {
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            10,
+            1,
+            1000,
+            10000,
+            ExhaustionConfig {
+                action: ExhaustionAction::Restrict,
+                leeway_percent: 0,
+                leeway_units_scaled: 0,
+            },
+        );
+        let result = s.process_interval(&metrics(200_000, 0));
+        match result {
+            BootstrapIntervalResult::Exhausted {
+                action,
+                balance_scaled,
+                ..
+            } => {
+                assert_eq!(action, ExhaustionAction::Restrict);
+                assert_eq!(balance_scaled, 0);
+            }
+            _ => panic!("expected Exhausted"),
+        }
+        assert_eq!(s.access_level(), AccessLevel::Restricted);
+    }
+
+    #[test]
+    fn allow_within_leeway_multiple_intervals() {
+        // Small balance with leeway that covers a few intervals
+        let mut s = BootstrapSession::new(
+            Amount(1),
+            1000,
+            0,
+            1, // 1 per unit
+            1000,
+            10000,
+            ExhaustionConfig {
+                action: ExhaustionAction::Allow,
+                leeway_percent: 0,
+                leeway_units_scaled: 500, // 500 extra scaled units beyond zero
+            },
+        );
+        // balance = 1000, leeway = 500, so we can go to -500
+
+        // Interval 1: deliver 500 units → cost = 500, balance = 500
+        let r1 = s.process_interval(&metrics(0, 500));
+        assert!(matches!(r1, BootstrapIntervalResult::Ok { .. }));
+
+        // Interval 2: deliver 600 units → cost = 600, balance = -100 (within leeway)
+        let r2 = s.process_interval(&metrics(0, 1100));
+        match r2 {
+            BootstrapIntervalResult::Ok {
+                balance_scaled,
+                is_final,
+                ..
+            } => {
+                assert_eq!(balance_scaled, -100);
+                assert!(is_final);
+            }
+            _ => panic!("expected Ok (within leeway)"),
+        }
+
+        // Interval 3: deliver 800 units → cost = 800, balance = -900 (past leeway -500)
+        let r3 = s.process_interval(&metrics(0, 1900));
+        match r3 {
+            BootstrapIntervalResult::Exhausted { action, .. } => {
+                assert_eq!(action, ExhaustionAction::Allow);
+            }
+            _ => panic!("expected Exhausted (past leeway)"),
+        }
+        assert_eq!(s.access_level(), AccessLevel::Suspended);
     }
 }

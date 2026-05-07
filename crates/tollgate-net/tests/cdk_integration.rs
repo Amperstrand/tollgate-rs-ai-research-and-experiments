@@ -23,6 +23,7 @@ use tollgate_core::protocol::{
     MessageType, MeteringReport, PubKey, ReasonCode,
 };
 use tollgate_core::session::{PeerSession, SessionConfig};
+use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::trace::spec_ref;
 use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
@@ -69,6 +70,7 @@ fn provider_session_config() -> SessionConfig {
         interval_ms: 5000,
         min_checkin_ms: 1000,
         max_interval_ms: 10000,
+        exhaustion: ExhaustionConfig::default(),
     }
 }
 
@@ -82,6 +84,7 @@ fn client_session_config() -> SessionConfig {
         interval_ms: 5000,
         min_checkin_ms: 1000,
         max_interval_ms: 10000,
+        exhaustion: ExhaustionConfig::default(),
     }
 }
 

@@ -6,6 +6,7 @@ use tollgate_core::config::{ProductConfig, ProductMintConfig};
 use tollgate_core::metering::PeerMetrics;
 use tollgate_core::protocol::{Hash32, Message, PubKey};
 use tollgate_core::session::{PeerSession, SessionConfig};
+use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::wallet::Wallet;
 
 use crate::mock::MockAdapter;
@@ -48,6 +49,7 @@ pub fn provider_config() -> SessionConfig {
         interval_ms: 5000,
         min_checkin_ms: 1000,
         max_interval_ms: 10000,
+        exhaustion: ExhaustionConfig::default(),
     }
 }
 

@@ -45,6 +45,7 @@ pricing:     # Dynamic pricing rules
 channels:    # Spilman channel parameters
 metering:    # Metering interval and drift tolerance
 bootstrap:   # Bootstrap token parameters
+exhaustion:  # Quota exhaustion behavior and adaptive check-in
 mints:       # Accepted mints
 peers:       # Static peer overrides
 ```
@@ -215,6 +216,51 @@ Bootstrap tokens are always verified with the mint before service is granted. If
 
 ---
 
+## Exhaustion
+
+Configures what happens when a buyer's prepaid quota is exhausted during a bootstrap session.
+
+```yaml
+exhaustion:
+  action: Terminate                        # Terminate | Restrict | Allow
+  leeway_percent: 0                        # Allow: deliver N% extra beyond paid amount
+  leeway_units_scaled: 0                   # Allow: deliver N extra scaled units beyond zero
+  min_checkin_ms: 1000                     # Floor for adaptive next_checkin_ms
+  max_interval_ms: 10000                   # Ceiling for adaptive check-in interval
+```
+
+### Exhaustion Actions
+
+| Action | Description |
+|--------|-------------|
+| **Terminate** | Hard cutoff. Access suspended immediately. Default. |
+| **Restrict** | Throttle bandwidth to a reduced rate. Buyer keeps access but at lower speed. |
+| **Allow** | Deliver beyond the paid amount up to the configured leeway. Seller covers the overage. |
+
+### Defaults
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `exhaustion.action` | string | `"Terminate"` | Action when quota exhausted: Terminate, Restrict, or Allow |
+| `exhaustion.leeway_percent` | u32 | `0` | Allow mode: extra delivery as percentage of initial balance |
+| `exhaustion.leeway_units_scaled` | i128 | `0` | Allow mode: extra delivery in scaled units beyond zero |
+| `min_checkin_ms` | u32 | `1000` | Floor for adaptive check-in interval |
+| `max_interval_ms` | u32 | `10000` | Ceiling for adaptive check-in interval |
+
+### Adaptive Check-In
+
+The `next_checkin_ms` value in MeteringReportResponse is computed as:
+
+```
+next_checkin_ms = clamp(remaining_quota * last_elapsed_ms / last_cost, min_checkin_ms, max_interval_ms)
+```
+
+This is self-calibrating: if the buyer spends more, the interval shortens. If they spend less, it lengthens (up to `max_interval_ms`). The provider derives the spend rate from observed metering deltas, so it does not need to know the pipe's maximum throughput.
+
+See [tollgate-bootstrap.md](tollgate-bootstrap.md) for the full protocol behavior and [ADR-0004](../../private/adr/0004-quota-exhaustion-and-terminology.md) for the design rationale.
+
+---
+
 ## Accepted Mints
 
 ```yaml
@@ -318,6 +364,13 @@ bootstrap:
   enabled: true
   min_token_value: 10
 
+exhaustion:
+  action: Terminate
+  leeway_percent: 0
+  leeway_units_scaled: 0
+  min_checkin_ms: 1000
+  max_interval_ms: 10000
+
 mints:
   - url: "https://mint.example.com"
     mint_units: ["sat"]
@@ -359,5 +412,7 @@ The implementation watches the config file for changes and applies runtime-chang
 | Pricing | Formula expression evaluated against opaque metrics | Core doesn't interpret metrics — implementation sets policy, core executes |
 | Product extensions | Opaque CBOR blob for implementation-specific fields | Core hashes but doesn't interpret |
 | Peer overrides | By pubkey | Per-peer pricing, blocking, zero-price |
+| Exhaustion actions | Three configurable: Terminate, Restrict, Allow | Mirrors RFC 8506 Final-Unit-Action; covers strict, graceful, generous scenarios |
+| Adaptive check-in | Computed from remaining quota / observed spend rate | Self-calibrating Validity-Time; no pipe throughput knowledge needed |
 | Runtime changes | Pricing and peer overrides are hot-reloadable | Operator can adjust without downtime |
 | OpenWrt | YAML directly, UCI integration future | Keep it simple initially |

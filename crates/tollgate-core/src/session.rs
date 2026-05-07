@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::access::AccessLevel;
 use crate::adapter::ResourceAdapter;
-use crate::bootstrap::{BootstrapIntervalResult, BootstrapSession};
+use crate::bootstrap::{BootstrapIntervalResult, BootstrapSession, ExhaustionAction, ExhaustionConfig};
 use crate::config::ProductConfig;
 use crate::metering::PeerMetrics;
 use crate::peer::{PeerSessionState, PeerStateMachine};
@@ -40,6 +40,8 @@ pub struct SessionConfig {
     pub min_checkin_ms: u32,
     /// Maximum metering interval in milliseconds (ceiling for adaptive timing).
     pub max_interval_ms: u32,
+    /// Exhaustion action configuration.
+    pub exhaustion: ExhaustionConfig,
 }
 
 /// Cached pricing details for the accepted product.
@@ -218,6 +220,9 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
         }
     }
 
+    // RFC 8506: Partial mapping to INITIAL_REQUEST handling (§5.1). RFC:
+    // client requests quota. TollGate: buyer sends payment (token), provider
+    // credits balance.
     async fn handle_initial_bootstrap(&mut self, token: BootstrapToken) -> Vec<Message> {
         match self.wallet.receive_token(&token.token).await {
             Ok(amount) => {
@@ -244,6 +249,7 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
                     ap.price_per_unit,
                     u64::from(self.config.min_checkin_ms),
                     u64::from(self.config.max_interval_ms),
+                    self.config.exhaustion,
                 );
 
                 self.bootstrap = Some(session);
@@ -267,6 +273,7 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
         }
     }
 
+    // RFC 8506: Partial mapping to server-initiated re-authorization (§5.5).
     async fn handle_top_up(&mut self, token: BootstrapToken) -> Vec<Message> {
         match self.wallet.receive_token(&token.token).await {
             Ok(amount) => {
@@ -297,6 +304,9 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
         }
     }
 
+    // RFC 8506: Partial mapping to credit-control UPDATE_REQUEST handling (§5.2).
+    // TollGate is P2P symmetric — both sides charge simultaneously, which
+    // has no RFC equivalent.
     async fn handle_metering_report(&mut self, _report: MeteringReport) -> Vec<Message> {
         if self.sm.on_metering_report().is_err() {
             return vec![Message::Reject(Reject {
@@ -331,17 +341,29 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
                     is_final,
                 })]
             }
-            BootstrapIntervalResult::Exhausted { .. } => {
-                let _ = self
-                    .adapter
-                    .set_peer_access(peer_id, AccessLevel::Suspended)
-                    .await;
-                vec![Message::Reject(Reject {
-                    msg_type: MessageType::Reject as u8,
-                    rejected_type: MessageType::MeteringReport as u8,
-                    reason_code: ReasonCode::Other,
-                    reason_text: Some("balance exhausted".to_owned()),
-                })]
+            BootstrapIntervalResult::Exhausted { action, .. } => {
+                let access = match action {
+                    ExhaustionAction::Terminate => AccessLevel::Suspended,
+                    ExhaustionAction::Restrict => AccessLevel::Restricted,
+                    ExhaustionAction::Allow => AccessLevel::Active,
+                };
+                let _ = self.adapter.set_peer_access(peer_id, access).await;
+                match action {
+                    ExhaustionAction::Allow => {
+                        vec![Message::MeteringReportResponse(MeteringReportResponse {
+                            msg_type: MessageType::MeteringReportResponse as u8,
+                            remaining_quota: 0,
+                            next_checkin_ms: u64::from(self.config.min_checkin_ms),
+                            is_final: true,
+                        })]
+                    }
+                    _ => vec![Message::Reject(Reject {
+                        msg_type: MessageType::Reject as u8,
+                        rejected_type: MessageType::MeteringReport as u8,
+                        reason_code: ReasonCode::Other,
+                        reason_text: Some("balance exhausted".to_owned()),
+                    })],
+                }
             }
             BootstrapIntervalResult::CounterWentBackwards => {
                 vec![Message::Reject(Reject {
@@ -364,6 +386,7 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
         vec![]
     }
 
+    // RFC 8506: Direct mapping to TERMINATION_REQUEST (§5.3).
     async fn handle_disconnect(&mut self, _disconnect: Disconnect) -> Vec<Message> {
         let _ = self.sm.on_disconnect();
         let _ = self

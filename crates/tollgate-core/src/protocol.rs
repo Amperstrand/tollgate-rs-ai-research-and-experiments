@@ -211,6 +211,8 @@ pub struct Product {
 // ---------------------------------------------------------------------------
 
 /// 0x00 Announce — first message from each peer.
+// No RFC 8506 equivalent. TollGate uses explicit identity introduction;
+// RFC 8506 assumes pre-established client-server relationships.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cbor(map)]
 pub struct Announce {
@@ -268,6 +270,9 @@ pub struct ChannelReady {
 }
 
 /// 0x04 MeteringReport — unsigned cumulative resource stats.
+// RFC 8506: Partial mapping to Used-Service-Unit (§8.19). TollGate uses
+// concrete field names (elapsed_ms, delivered, received) instead of RFC's
+// abstract CC-Time/CC-Input-Octets.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cbor(map)]
 pub struct MeteringReport {
@@ -414,6 +419,9 @@ pub struct Disconnect {
 }
 
 /// 0x0F MeteringReportResponse — seller responds to MeteringReport with quota metadata.
+// RFC 8506: Direct mapping to Credit-Control-Answer metadata. remaining_quota
+// ≈ Granted-Service-Unit (§8.17), next_checkin_ms ≈ Validity-Time (§8.33),
+// is_final ≈ Final-Unit-Indication (§8.34).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cbor(map)]
 pub struct MeteringReportResponse {

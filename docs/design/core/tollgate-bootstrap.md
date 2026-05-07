@@ -122,6 +122,50 @@ The Reject message signals the peer that it needs to pay more. The peer's option
 - If the peer now has mint connectivity: upgrade to Spilman channels (send Accept with channel funding)
 - Disconnect
 
+### MeteringReportResponse: Quota Metadata
+
+When a seller processes a MeteringReport, they respond with a `MeteringReportResponse` (message type 0x0F) containing:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `remaining_quota` | i64 | Remaining prepaid balance in scaled units. Maps to RFC 8506 Granted-Service-Unit. |
+| `next_checkin_ms` | u64 | Maximum time before the buyer MUST send the next MeteringReport. Adaptive: computed from `remaining_quota / spend_rate`. Maps to RFC 8506 Validity-Time. |
+| `is_final` | bool | True when the next interval at current spend rate would exhaust the quota. Maps to RFC 8506 Final-Unit-Indication. |
+
+This approach follows the same pattern used by RFC 4006/8506 (Final-Unit-Indication on CCA), GitHub/Stripe (rate-limit headers on every response), and mobile data caps. No separate warning message is needed.
+
+### Exhaustion Actions
+
+When `remaining_quota` reaches zero, the seller takes one of three configurable actions:
+
+| Action | RFC 8506 Equivalent | Behavior |
+|--------|-------------------|----------|
+| **Terminate** | TERMINATE (0) | Hard cutoff. Access suspended immediately when `remaining_quota <= 0`. Default. |
+| **Restrict** | RESTRICT_ACCESS (2) | Throttle bandwidth to a configured rate. Access continues at reduced speed. Gives buyer time to top up. |
+| **Allow** | No RFC equivalent | Deliver beyond the paid amount up to a configured leeway. Seller eats the overage cost. Useful for gas pump and EV charger use cases where stopping mid-transaction is worse than a small overdelivery. |
+
+Configuration:
+
+```yaml
+exhaustion:
+  action: Terminate    # Terminate | Restrict | Allow
+  leeway_percent: 0    # Allow: deliver N% extra beyond paid amount
+  leeway_units_scaled: 0  # Allow: deliver N extra scaled units beyond zero
+  min_checkin_ms: 1000    # Floor for adaptive next_checkin_ms
+```
+
+### Adaptive Check-In Interval
+
+The `next_checkin_ms` value in MeteringReportResponse is not fixed. It is computed from the buyer's current spend rate:
+
+```
+next_checkin_ms = clamp(remaining_quota * last_elapsed_ms / last_cost, min_checkin_ms, max_interval_ms)
+```
+
+This is self-calibrating: if the buyer spends more, the interval shortens. If they spend less, it lengthens (up to `max_interval_ms`). The provider does not need to know the pipe's maximum throughput because it derives the rate from observed behavior.
+
+The `is_final` flag is set when the seller detects that the next interval at the current spend rate would exhaust the remaining quota: `balance_scaled <= next_interval_cost`. This gives the buyer one interval of advance warning to top up or prepare for termination.
+
 ---
 
 ## Token Renewal (Top-Up)
@@ -272,3 +316,7 @@ If the provider loses mint connectivity after accepting a token:
 | Bootstrap-only pricing | Client's delivery price must be zero or negative | No receiving channel to the client; peer would have no way to pay positive amounts |
 | Exhaustion signal | Reject (balance exhausted) | Reuses existing message type |
 | Offline provider | Existing balance continues, new tokens rejected until mint returns | Already-verified balance is safe to use |
+| Quota metadata on response | MeteringReportResponse with remaining_quota, next_checkin_ms, is_final | RFC 8506 pattern: balance metadata on regular responses, not separate warning messages |
+| Exhaustion actions | Three configurable actions: Terminate, Restrict, Allow | Mirrors RFC 8506 Final-Unit-Action; covers strict, graceful, and generous scenarios |
+| Adaptive check-in | next_checkin_ms computed from remaining_quota / observed spend_rate | Self-calibrating Validity-Time; no need to know pipe's max throughput |
+| is_final flag | Set when next interval would exhaust quota | RFC 8506 Final-Unit-Indication; gives buyer one interval of advance warning |
