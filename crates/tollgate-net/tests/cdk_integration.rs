@@ -67,6 +67,8 @@ fn provider_session_config() -> SessionConfig {
             }],
         }],
         interval_ms: 5000,
+        min_checkin_ms: 1000,
+        max_interval_ms: 10000,
     }
 }
 
@@ -78,6 +80,8 @@ fn client_session_config() -> SessionConfig {
         capabilities: 0x01,
         products: vec![],
         interval_ms: 5000,
+        min_checkin_ms: 1000,
+        max_interval_ms: 10000,
     }
 }
 
@@ -443,12 +447,23 @@ async fn cdk_bootstrap_lifecycle() {
             format!("interval {}: elapsed={total_elapsed_ms}ms", i)
         );
         let msgs = provider_session.handle_message(report).await;
-        if msgs.is_empty() {
-            tracing::info!("  [Interval {i}] ✓ Balance OK, session continues");
-        } else {
-            tracing::warn!("  [Interval {i}] Got {} response messages!", msgs.len());
-            for msg in &msgs {
-                tracing::warn!("  [Interval {i}] Response: {msg:?}");
+        match msgs.first() {
+            Some(Message::MeteringReportResponse(resp)) => {
+                #[allow(clippy::cast_precision_loss)]
+                let remaining_sat = resp.remaining_quota as f64 / scale as f64;
+                tracing::info!(
+                    "  [Interval {i}] ✓ Balance OK: remaining_quota={} scaled ({:.3} sat), next_checkin_ms={}, is_final={}",
+                    resp.remaining_quota,
+                    remaining_sat,
+                    resp.next_checkin_ms,
+                    resp.is_final
+                );
+            }
+            Some(Message::Reject(r)) => {
+                tracing::warn!("  [Interval {i}] Rejected: {:?}", r.reason_text);
+            }
+            _ => {
+                tracing::info!("  [Interval {i}] ✓ No response (continuing)");
             }
         }
 

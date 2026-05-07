@@ -231,6 +231,8 @@ fn provider_config() -> SessionConfig {
             }],
         }],
         interval_ms: 5000,
+        min_checkin_ms: 1000,
+        max_interval_ms: 10000,
     }
 }
 
@@ -242,6 +244,8 @@ fn client_config() -> SessionConfig {
         capabilities: 0x01,
         products: vec![],
         interval_ms: 5000,
+        min_checkin_ms: 1000,
+        max_interval_ms: 10000,
     }
 }
 
@@ -328,7 +332,11 @@ async fn bootstrap_lifecycle() {
         new_pricing: None,
     });
     let msgs = provider.handle_message(metering_report).await;
-    assert!(msgs.is_empty(), "provider should still have balance");
+    assert_eq!(msgs.len(), 1, "provider should return MeteringReportResponse");
+    assert!(
+        matches!(&msgs[0], Message::MeteringReportResponse(_)),
+        "expected MeteringReportResponse"
+    );
 
     // cost_scaled = 5*10 + 1000*1 = 1050
     // balance = 100*1000 - 1050 = 98950
@@ -356,15 +364,15 @@ async fn bootstrap_lifecycle() {
         });
         let msgs = provider.handle_message(report).await;
 
-        if !msgs.is_empty() {
-            match &msgs[0] {
-                Message::Reject(r) => {
-                    assert_eq!(r.reason_text, Some("balance exhausted".to_owned()));
-                }
-                other => panic!("expected Reject, got {other:?}"),
+        match msgs.first() {
+            Some(Message::MeteringReportResponse(_)) => {}
+            Some(Message::Reject(r)) => {
+                assert_eq!(r.reason_text, Some("balance exhausted".to_owned()));
+                exhausted = true;
+                break;
             }
-            exhausted = true;
-            break;
+            Some(other) => panic!("expected MeteringReportResponse or Reject, got {other:?}"),
+            None => {}
         }
     }
     assert!(exhausted, "balance should have been exhausted");

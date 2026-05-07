@@ -23,6 +23,8 @@ pub fn client_config() -> SessionConfig {
         capabilities: 0x01,
         products: vec![],
         interval_ms: 5000,
+        min_checkin_ms: 1000,
+        max_interval_ms: 10000,
     }
 }
 

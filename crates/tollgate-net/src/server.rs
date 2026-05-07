@@ -46,6 +46,8 @@ pub fn provider_config() -> SessionConfig {
             }],
         }],
         interval_ms: 5000,
+        min_checkin_ms: 1000,
+        max_interval_ms: 10000,
     }
 }
 
@@ -162,5 +164,6 @@ fn message_name(msg: &Message) -> &'static str {
         Message::CloseAck(_) => "CloseAck",
         Message::Reject(_) => "Reject",
         Message::Disconnect(_) => "Disconnect",
+        Message::MeteringReportResponse(_) => "MeteringReportResponse",
     }
 }

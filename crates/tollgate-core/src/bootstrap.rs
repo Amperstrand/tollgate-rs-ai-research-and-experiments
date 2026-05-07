@@ -17,12 +17,16 @@ pub struct BootstrapSession {
     price_per_unit: i64,
     last_metrics: PeerMetrics,
     access_level: AccessLevel,
+    min_checkin_ms: u64,
+    max_interval_ms: u64,
 }
 
 pub enum BootstrapIntervalResult {
     Ok {
         balance_scaled: i128,
         cost_scaled: i128,
+        next_checkin_ms: u64,
+        is_final: bool,
     },
     Exhausted {
         balance_scaled: i128,
@@ -37,6 +41,8 @@ impl BootstrapSession {
         pricing_scale: u64,
         price_per_second: i64,
         price_per_unit: i64,
+        min_checkin_ms: u64,
+        max_interval_ms: u64,
     ) -> Self {
         let balance_scaled = i128::from(token_value.0) * i128::from(pricing_scale);
         Self {
@@ -46,6 +52,8 @@ impl BootstrapSession {
             price_per_unit,
             last_metrics: PeerMetrics::zero(),
             access_level: AccessLevel::Active,
+            min_checkin_ms,
+            max_interval_ms,
         }
     }
 
@@ -69,21 +77,74 @@ impl BootstrapSession {
             self.price_per_unit,
         );
 
-        self.balance_scaled -= cost_scaled;
         self.last_metrics = current_metrics.clone();
+
+        if cost_scaled > 0 && self.balance_scaled <= cost_scaled {
+            self.balance_scaled = 0;
+            self.access_level = AccessLevel::Suspended;
+            return BootstrapIntervalResult::Exhausted {
+                balance_scaled: 0,
+                cost_scaled,
+            };
+        }
+
+        self.balance_scaled -= cost_scaled;
 
         if self.balance_scaled <= 0 {
             self.access_level = AccessLevel::Suspended;
-            BootstrapIntervalResult::Exhausted {
+            return BootstrapIntervalResult::Exhausted {
                 balance_scaled: self.balance_scaled,
                 cost_scaled,
-            }
-        } else {
-            BootstrapIntervalResult::Ok {
-                balance_scaled: self.balance_scaled,
-                cost_scaled,
-            }
+            };
         }
+
+        let next_checkin_ms = self.compute_next_checkin_ms(delta.elapsed_ms, delta.delivered);
+        let is_final = self.compute_is_final(delta.elapsed_ms, delta.delivered);
+
+        BootstrapIntervalResult::Ok {
+            balance_scaled: self.balance_scaled,
+            cost_scaled,
+            next_checkin_ms,
+            is_final,
+        }
+    }
+
+    fn compute_next_checkin_ms(&self, last_elapsed_ms: u64, last_delivered: u64) -> u64 {
+        if self.balance_scaled <= 0 {
+            return self.min_checkin_ms;
+        }
+
+        let last_cost_scaled = compute_interval_cost_scaled(
+            last_elapsed_ms,
+            last_delivered,
+            self.price_per_second,
+            self.price_per_unit,
+        );
+
+        if last_elapsed_ms == 0 || last_cost_scaled <= 0 {
+            return self.max_interval_ms;
+        }
+
+        let ms_remaining =
+            (self.balance_scaled * i128::from(last_elapsed_ms)) / last_cost_scaled;
+
+        let checkin = u64::try_from(ms_remaining).unwrap_or(u64::MAX);
+        checkin.clamp(self.min_checkin_ms, self.max_interval_ms)
+    }
+
+    fn compute_is_final(&self, last_elapsed_ms: u64, last_delivered: u64) -> bool {
+        if self.balance_scaled <= 0 {
+            return true;
+        }
+
+        let next_cost_scaled = compute_interval_cost_scaled(
+            last_elapsed_ms,
+            last_delivered,
+            self.price_per_second,
+            self.price_per_unit,
+        );
+
+        self.balance_scaled <= next_cost_scaled
     }
 
     pub fn balance_scaled(&self) -> i128 {
@@ -104,7 +165,7 @@ mod tests {
     use super::*;
 
     fn make_session(sats: u64) -> BootstrapSession {
-        BootstrapSession::new(Amount(sats), 1000, 10, 1)
+        BootstrapSession::new(Amount(sats), 1000, 10, 1, 1000, 10000)
     }
 
     fn metrics(elapsed_ms: u64, delivered: u64) -> PeerMetrics {
@@ -131,6 +192,7 @@ mod tests {
             BootstrapIntervalResult::Ok {
                 balance_scaled,
                 cost_scaled,
+                ..
             } => {
                 assert_eq!(cost_scaled, 1050);
                 assert_eq!(balance_scaled, 100_000 - 1050);
@@ -150,7 +212,7 @@ mod tests {
 
     #[test]
     fn top_up_resumes_from_suspended() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1);
+        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
         s.process_interval(&metrics(200_000, 0));
         assert_eq!(s.access_level(), AccessLevel::Suspended);
         s.top_up(Amount(100));
@@ -176,14 +238,14 @@ mod tests {
 
     #[test]
     fn exhaustion_detected() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1);
+        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
         let result = s.process_interval(&metrics(200_000, 0));
         assert!(matches!(result, BootstrapIntervalResult::Exhausted { .. }));
     }
 
     #[test]
     fn exhaustion_suspends_access() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1);
+        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
         s.process_interval(&metrics(200_000, 0));
         assert_eq!(s.access_level(), AccessLevel::Suspended);
         assert!(s.is_exhausted());
@@ -191,7 +253,7 @@ mod tests {
 
     #[test]
     fn top_up_after_exhaustion() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1);
+        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
         s.process_interval(&metrics(200_000, 0));
         assert!(s.is_exhausted());
         s.top_up(Amount(50));
@@ -208,6 +270,7 @@ mod tests {
             BootstrapIntervalResult::Ok {
                 balance_scaled,
                 cost_scaled,
+                ..
             } => {
                 assert_eq!(cost_scaled, 0);
                 assert_eq!(balance_scaled, before);
@@ -229,13 +292,13 @@ mod tests {
 
     #[test]
     fn large_token_value() {
-        let s = BootstrapSession::new(Amount(10_000), 1000, 0, 0);
+        let s = BootstrapSession::new(Amount(10_000), 1000, 0, 0, 1000, 10000);
         assert_eq!(s.balance_scaled(), 10_000_000);
     }
 
     #[test]
     fn tiny_intervals_preserve_precision() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 0, 1);
+        let mut s = BootstrapSession::new(Amount(1), 1000, 0, 1, 1000, 10000);
         for i in 1..=100u64 {
             let result = s.process_interval(&metrics(i, i));
             match result {
@@ -252,7 +315,7 @@ mod tests {
 
     #[test]
     fn negative_price_gives_credit() {
-        let mut s = BootstrapSession::new(Amount(10), 1000, 0, -1);
+        let mut s = BootstrapSession::new(Amount(10), 1000, 0, -1, 1000, 10000);
         let before = s.balance_scaled();
         s.process_interval(&metrics(0, 100));
         assert!(s.balance_scaled() > before);
@@ -260,7 +323,7 @@ mod tests {
 
     #[test]
     fn scaled_precision_preserved() {
-        let mut s = BootstrapSession::new(Amount(1), 1000, 0, 1);
+        let mut s = BootstrapSession::new(Amount(1), 1000, 0, 1, 1000, 10000);
         let m1 = metrics(0, 1);
         s.process_interval(&m1);
         assert_eq!(s.balance_scaled(), 999);
@@ -271,13 +334,14 @@ mod tests {
 
     #[test]
     fn balance_scaled_reflects_exact_deduction() {
-        let mut s = BootstrapSession::new(Amount(5), 1000, 3, 7);
+        let mut s = BootstrapSession::new(Amount(5), 1000, 3, 7, 1000, 10000);
         let cost = 5 * 3 + 200 * 7;
         let result = s.process_interval(&metrics(5000, 200));
         match result {
             BootstrapIntervalResult::Ok {
                 balance_scaled,
                 cost_scaled,
+                ..
             } => {
                 assert_eq!(cost_scaled, cost);
                 assert_eq!(balance_scaled, 5000 - cost);
@@ -292,5 +356,55 @@ mod tests {
         s.top_up(Amount(5));
         s.top_up(Amount(3));
         assert_eq!(s.balance_scaled(), (10 + 5 + 3) * 1000);
+    }
+
+    #[test]
+    fn exhaustion_balance_is_zero_not_negative() {
+        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        let result = s.process_interval(&metrics(200_000, 0));
+        match result {
+            BootstrapIntervalResult::Exhausted { balance_scaled, .. } => {
+                assert_eq!(balance_scaled, 0, "exhausted balance must be 0, not negative");
+            }
+            _ => panic!("expected Exhausted"),
+        }
+    }
+
+    #[test]
+    fn balance_never_goes_negative() {
+        let mut s = BootstrapSession::new(Amount(1), 1000, 10, 1, 1000, 10000);
+        s.process_interval(&metrics(200_000, 0));
+        assert_eq!(s.balance_scaled(), 0);
+    }
+
+    #[test]
+    fn next_checkin_ms_decreases_as_balance_decreases() {
+        let mut s = make_session(100);
+        let mut prev_checkin = u64::MAX;
+        for i in 1..=5u64 {
+            let result = s.process_interval(&metrics(i * 1000, i * 100));
+            if let BootstrapIntervalResult::Ok { next_checkin_ms, .. } = result {
+                assert!(
+                    next_checkin_ms <= prev_checkin,
+                    "checkin should decrease or stay same: {next_checkin_ms} vs {prev_checkin} at interval {i}"
+                );
+                prev_checkin = next_checkin_ms;
+            }
+        }
+    }
+
+    #[test]
+    fn is_final_true_when_balance_low() {
+        let mut s = BootstrapSession::new(Amount(2), 1000, 10, 1, 1000, 10000);
+        let result = s.process_interval(&metrics(5000, 1000));
+        match result {
+            BootstrapIntervalResult::Ok { is_final, .. } => {
+                assert!(
+                    is_final,
+                    "should be is_final when next interval would exhaust"
+                );
+            }
+            _ => panic!("expected Ok"),
+        }
     }
 }

@@ -17,7 +17,7 @@ use crate::metering::PeerMetrics;
 use crate::peer::{PeerSessionState, PeerStateMachine};
 use crate::protocol::{
     Accept, Announce, BootstrapAck, BootstrapStatus, BootstrapToken, Disconnect, IntervalRange,
-    Message, MessageType, MeteringReport, MintOption, PriceSheet, Product, PubKey, ReasonCode,
+    Message, MessageType, MeteringReport, MeteringReportResponse, MintOption, PriceSheet, Product, PubKey, ReasonCode,
     Reject,
 };
 use crate::wallet::Wallet;
@@ -36,6 +36,10 @@ pub struct SessionConfig {
     pub products: Vec<ProductConfig>,
     /// Preferred metering interval in milliseconds.
     pub interval_ms: u32,
+    /// Minimum check-in interval in milliseconds (floor for adaptive timing).
+    pub min_checkin_ms: u32,
+    /// Maximum metering interval in milliseconds (ceiling for adaptive timing).
+    pub max_interval_ms: u32,
 }
 
 /// Cached pricing details for the accepted product.
@@ -238,6 +242,8 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
                     ap.pricing_scale,
                     ap.price_per_second,
                     ap.price_per_unit,
+                    u64::from(self.config.min_checkin_ms),
+                    u64::from(self.config.max_interval_ms),
                 );
 
                 self.bootstrap = Some(session);
@@ -311,7 +317,20 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
         };
 
         match bs.process_interval(&metrics) {
-            BootstrapIntervalResult::Ok { .. } => vec![],
+            BootstrapIntervalResult::Ok {
+                balance_scaled,
+                cost_scaled: _,
+                next_checkin_ms,
+                is_final,
+            } => {
+                let remaining_quota = i64::try_from(balance_scaled).unwrap_or(i64::MAX);
+                vec![Message::MeteringReportResponse(MeteringReportResponse {
+                    msg_type: MessageType::MeteringReportResponse as u8,
+                    remaining_quota,
+                    next_checkin_ms,
+                    is_final,
+                })]
+            }
             BootstrapIntervalResult::Exhausted { .. } => {
                 let _ = self
                     .adapter

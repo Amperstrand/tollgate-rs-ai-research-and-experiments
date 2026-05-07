@@ -77,7 +77,7 @@ pub fn spec_ref(msg_type: MessageType) -> &'static str {
         MessageType::PriceSheet => "tollgate-protocol.md \u{00a7}3.2",
         MessageType::Accept => "tollgate-protocol.md \u{00a7}3.3",
         MessageType::ChannelReady => "tollgate-protocol.md \u{00a7}3.4",
-        MessageType::MeteringReport => "tollgate-metering.md \u{00a7}2",
+        MessageType::MeteringReport | MessageType::MeteringReportResponse => "tollgate-metering.md \u{00a7}2",
         MessageType::BalanceUpdate | MessageType::BalanceAck => {
             "tollgate-payment-channels.md \u{00a7}4"
         }

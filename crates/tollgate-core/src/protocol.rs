@@ -1,6 +1,6 @@
 //! TollGate wire protocol message types.
 //!
-//! All 15 message types defined in the TollGate v2 protocol specification
+//! All 16 message types defined in the TollGate v2 protocol specification
 //! (`docs/design/core/tollgate-protocol.md`).
 //!
 //! Messages are encoded as CBOR maps with integer keys per the canonical
@@ -168,6 +168,7 @@ pub enum MessageType {
     CloseAck = 0x0C,
     Reject = 0x0D,
     Disconnect = 0x0E,
+    MeteringReportResponse = 0x0F,
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +413,20 @@ pub struct Disconnect {
     pub reason_code: ReasonCode,
 }
 
+/// 0x0F MeteringReportResponse — seller responds to MeteringReport with quota metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct MeteringReportResponse {
+    #[n(0)]
+    pub msg_type: u8,
+    #[n(1)]
+    pub remaining_quota: i64,
+    #[n(2)]
+    pub next_checkin_ms: u64,
+    #[n(3)]
+    pub is_final: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Message enum — custom Encode/Decode for type dispatch
 // ---------------------------------------------------------------------------
@@ -436,6 +451,7 @@ pub enum Message {
     CloseAck(CloseAck),
     Reject(Reject),
     Disconnect(Disconnect),
+    MeteringReportResponse(MeteringReportResponse),
 }
 
 impl<C> Encode<C> for Message {
@@ -460,6 +476,7 @@ impl<C> Encode<C> for Message {
             Message::CloseAck(m) => m.encode(e, ctx),
             Message::Reject(m) => m.encode(e, ctx),
             Message::Disconnect(m) => m.encode(e, ctx),
+            Message::MeteringReportResponse(m) => m.encode(e, ctx),
         }
     }
 }
@@ -494,6 +511,7 @@ impl<'b, C> Decode<'b, C> for Message {
             12 => Ok(Message::CloseAck(d.decode_with(ctx)?)),
             13 => Ok(Message::Reject(d.decode_with(ctx)?)),
             14 => Ok(Message::Disconnect(d.decode_with(ctx)?)),
+            15 => Ok(Message::MeteringReportResponse(d.decode_with(ctx)?)),
             _ => Err(Error::message("unknown message type")),
         }
     }
@@ -531,6 +549,7 @@ mod tests {
         assert_eq!(MessageType::CloseAck as u8, 0x0C);
         assert_eq!(MessageType::Reject as u8, 0x0D);
         assert_eq!(MessageType::Disconnect as u8, 0x0E);
+        assert_eq!(MessageType::MeteringReportResponse as u8, 0x0F);
     }
 
     #[test]
@@ -735,6 +754,26 @@ mod tests {
             msg_type: 8,
             status: BootstrapStatus::Rejected,
             reason: Some("invalid signature".to_owned()),
+        }));
+    }
+
+    #[test]
+    fn metering_report_response_roundtrip() {
+        roundtrip(&Message::MeteringReportResponse(MeteringReportResponse {
+            msg_type: 15,
+            remaining_quota: 98_950,
+            next_checkin_ms: 5000,
+            is_final: false,
+        }));
+    }
+
+    #[test]
+    fn metering_report_response_is_final() {
+        roundtrip(&Message::MeteringReportResponse(MeteringReportResponse {
+            msg_type: 15,
+            remaining_quota: 5_000,
+            next_checkin_ms: 1000,
+            is_final: true,
         }));
     }
 }
