@@ -282,7 +282,27 @@ jobs:
               nav.section-nav a { font-size: 0.85rem; font-weight: 500; color: var(--muted); text-decoration: none; padding: 4px 12px; border-radius: 6px; transition: all 0.15s ease; }
               nav.section-nav a:hover { color: var(--text); background: rgba(0,0,0,0.04); }
               nav.section-nav a.active { color: var(--buyer); background: #ddf4ff; font-weight: 600; }
+              .teacher-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; margin: 24px 0 28px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+              .teacher-panel h3 { font-size: 1.05rem; margin-bottom: 8px; }
+              .teacher-intro { color: var(--muted); font-size: 0.92rem; margin-bottom: 18px; }
+              .lesson-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+              .lesson-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: #fbfcfd; }
+              .lesson-card strong { display: block; margin-bottom: 4px; }
+              .lesson-card p { color: var(--muted); font-size: 0.86rem; }
+              .scenario-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 16px; }
+              .scenario-buttons button { border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 999px; padding: 7px 12px; font: inherit; font-size: 0.84rem; cursor: pointer; }
+              .scenario-buttons button.active { border-color: var(--buyer); background: #ddf4ff; color: var(--buyer); font-weight: 600; }
+              .scenario-output { border-left: 4px solid var(--buyer); background: #f8fbff; border-radius: 8px; padding: 16px 18px; }
+              .scenario-output h4 { font-size: 0.98rem; margin-bottom: 6px; }
+              .scenario-output p { font-size: 0.88rem; color: var(--muted); margin-bottom: 10px; }
+              .claim-steps { margin: 0; padding-left: 20px; font-size: 0.86rem; color: var(--text); }
+              .claim-steps li { margin-bottom: 6px; }
+              .call-pill { display: inline-block; background: rgba(0,0,0,0.05); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
+              .claim-matrix { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 0.84rem; }
+              .claim-matrix th, .claim-matrix td { border: 1px solid var(--border); padding: 9px 10px; text-align: left; vertical-align: top; }
+              .claim-matrix th { background: #f6f8fa; font-weight: 600; }
               html { scroll-padding-top: 60px; }
+              @media (max-width: 720px) { .lesson-grid { grid-template-columns: 1fr; } }
             </style>
           </head>
           <body>
@@ -395,6 +415,36 @@ jobs:
                   <h3><span class="dot dot-mint"></span>Mint</h3>
                   <p>Issues ecash proofs for channel funding. Swaps channel proofs for spendable tokens on settlement.</p>
                 </div>
+              </div>
+              <div class="teacher-panel" id="spilman-lesson">
+                <h3>Professor view: who can claim what, and when?</h3>
+                <p class="teacher-intro">
+                  Think of the channel as a locked box. Alice puts 100 sat in the box. Charlie cannot take more than Alice has signed over to him. Alice cannot take everything back until the timeout path is valid.
+                </p>
+                <div class="lesson-grid">
+                  <div class="lesson-card">
+                    <strong>Student question</strong>
+                    <p>Why do Alice and Charlie both compute the same secret during setup?</p>
+                  </div>
+                  <div class="lesson-card">
+                    <strong>Professor answer</strong>
+                    <p>The shared secret makes the funding proofs deterministic. Charlie can verify the proofs belong to this channel before accepting balance updates.</p>
+                  </div>
+                </div>
+                <div class="scenario-buttons" role="group" aria-label="Claim path scenarios">
+                  <button type="button" class="active" data-scenario="cooperate">Cooperate</button>
+                  <button type="button" data-scenario="force">Charlie force-closes</button>
+                  <button type="button" data-scenario="timeout">Alice waits for timeout</button>
+                </div>
+                <div class="scenario-output" id="claim-scenario" aria-live="polite"></div>
+                <table class="claim-matrix">
+                  <thead><tr><th>Moment</th><th>Charlie can claim</th><th>Alice can recover</th></tr></thead>
+                  <tbody>
+                    <tr><td>After funding, before updates</td><td>0 sat</td><td>100 sat after expiry, or all change cooperatively</td></tr>
+                    <tr><td>After latest update = 40 sat</td><td>40 sat using the latest signed update</td><td>60 sat change through cooperative close or timeout/refund path</td></tr>
+                    <tr><td>After expiry if Charlie never settles</td><td>No newer claim than the latest update he still holds</td><td>Refund path becomes available to Alice</td></tr>
+                  </tbody>
+                </table>
               </div>
             </section>
 
@@ -739,6 +789,53 @@ jobs:
           }
 
           var allEvents = [];
+
+          var CLAIM_SCENARIOS = {
+            cooperate: {
+              title: 'Cooperative close: both parties agree on the latest balance',
+              body: 'Alice has signed the channel up to 40 sat. Charlie accepts that as final, settles his earned amount, and Alice receives the unused remainder as change.',
+              steps: [
+                'Alice signs the latest cumulative balance with <span class="call-pill">create_signed_balance_update(..., 40)</span>.',
+                'Charlie verifies the update belongs to this channel and is not lower than the previous balance.',
+                'Charlie settles the 40 sat claim with the mint; Alice gets the 60 sat remainder.'
+              ]
+            },
+            force: {
+              title: 'Receiver force-close: Charlie uses the latest signed update',
+              body: 'Charlie does not need Alice online once he has a valid signed update. He can present the latest update he holds and claim exactly that amount, not more.',
+              steps: [
+                'Charlie keeps the newest valid <span class="call-pill">BalanceUpdate</span> signature from Alice.',
+                'If Alice disappears, Charlie submits that latest state to the mint-side settlement path.',
+                'The mint-side split pays Charlie the signed balance and preserves Alice\'s remaining change/refund path.'
+              ]
+            },
+            timeout: {
+              title: 'Sender timeout refund: Alice waits until the refund path unlocks',
+              body: 'The channel is funded as a locked token: Charlie can claim signed balances before expiry, but Alice has a time-locked path that protects the unspent remainder.',
+              steps: [
+                'Alice cannot simply claw back the box while the channel is live.',
+                'After <span class="call-pill">expiry_timestamp</span>, the sender refund condition becomes valid.',
+                'If Charlie never settles, Alice uses the timeout/refund path to recover what was not rightfully claimed.'
+              ]
+            }
+          };
+
+          function renderClaimScenario(key) {
+            var scenario = CLAIM_SCENARIOS[key] || CLAIM_SCENARIOS.cooperate;
+            var out = document.getElementById('claim-scenario');
+            if (!out) return;
+            out.innerHTML = '<h4>' + scenario.title + '</h4>'
+              + '<p>' + scenario.body + '</p>'
+              + '<ol class="claim-steps"><li>' + scenario.steps.join('</li><li>') + '</li></ol>';
+            document.querySelectorAll('.scenario-buttons button').forEach(function(btn) {
+              btn.classList.toggle('active', btn.getAttribute('data-scenario') === key);
+            });
+          }
+
+          document.querySelectorAll('.scenario-buttons button').forEach(function(btn) {
+            btn.addEventListener('click', function() { renderClaimScenario(btn.getAttribute('data-scenario')); });
+          });
+          renderClaimScenario('cooperate');
 
           fetch('trace.json')
             .then(function(r) { return r.ok ? r.text() : Promise.reject('no trace'); })
