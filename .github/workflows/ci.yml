@@ -1,14 +1,3 @@
-# CI workflow for tollgate-rs
-#
-# Jobs:
-#   check            — Compiles the workspace (gate for all other jobs)
-#   test             — Runs unit tests (cargo test --workspace, skips #[ignore] tests)
-#   lint             — rustfmt + clippy with deny-warnings
-#   msrv             — Verifies the workspace builds on the Minimum Supported Rust Version (1.85.0)
-#   cdk-integration  — Runs CDK integration tests against the public testnut.cashu.space mint
-#                      These tests are #[ignore]d so they only run in this dedicated job.
-#                      Captures verbose protocol logs as CI artifacts for debugging.
-
 name: CI
 
 on:
@@ -22,9 +11,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Compile check (gate job) ────────────────────────────────────────
   check:
     name: Check
     runs-on: ubuntu-latest
@@ -44,9 +33,6 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
       - run: cargo check --workspace --all-targets
 
-  # ── Unit tests ──────────────────────────────────────────────────────
-  # Runs `cargo test --workspace` which automatically skips #[ignore]d
-  # tests (including the CDK integration tests).
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -65,7 +51,6 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
       - run: cargo test --workspace
 
-  # ── Lint (fmt + clippy) ─────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -87,8 +72,6 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  # ── MSRV check ──────────────────────────────────────────────────────
-  # Ensures the crate builds on Rust 1.85.0 (our declared minimum).
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
@@ -98,17 +81,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
       - run: cargo check -p tollgate-core
 
-  # ── CDK integration test ────────────────────────────────────────────
-  # Runs #[ignore]d integration tests in tollgate-net against the public
-  # testnut.cashu.space Cashu mint. These tests exercise real wallet
-  # operations (mint tokens, check proofs, etc.) over the network.
-  #
-  # Key details:
-  #   - Uses --ignored to select #[ignore]d tests only
-  #   - Uses --nocapture for verbose output (protocol exchange logs)
-  #   - Output is teed to protocol-report.log for artifact upload
-  #   - Artifact is uploaded even on test failure for post-mortem debugging
-  #   - 10-minute timeout because testnut can be slow under load
   cdk-integration:
     name: CDK Integration (testnut)
     runs-on: ubuntu-latest
@@ -127,9 +99,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # Run the CDK integration tests with verbose output.
-      # The `|| true` ensures the log file is preserved even on failure.
-      # The step outcome is checked below to propagate the failure.
       - name: Run CDK integration tests
         id: run-tests
         run: |
@@ -138,8 +107,6 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
           set -e
 
-      # Always upload the protocol report artifact, regardless of test outcome.
-      # This allows debugging failed test runs from the CI artifacts.
       - name: Upload protocol report
         if: always()
         uses: actions/upload-artifact@v4
@@ -148,7 +115,6 @@ jobs:
           path: protocol-report.log
           retention-days: 14
 
-      # Propagate the test failure so the job shows as failed in the CI UI.
       - name: Check test result
         if: steps.run-tests.outputs.exit_code != '0'
         run: |
