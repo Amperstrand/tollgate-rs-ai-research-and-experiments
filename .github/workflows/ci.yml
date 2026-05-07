@@ -227,8 +227,8 @@ jobs:
               header h1 { font-size: 1.75rem; margin-bottom: 4px; }
               header p { color: var(--muted); font-size: 0.95rem; }
               h2 { font-size: 1.25rem; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-              .actors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
-              .actor { padding: 14px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); }
+              .actors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+              .actor { padding: 18px 20px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); }
               .actor h3 { font-size: 0.95rem; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
               .actor p { font-size: 0.85rem; color: var(--muted); }
               .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
@@ -273,10 +273,24 @@ jobs:
               .step-dir.actor-mint { background: #fff8c5; color: var(--mint); }
               .step-dir.note { background: rgba(0,0,0,0.04); color: var(--muted); }
               @media (max-width: 640px) { .actors { grid-template-columns: 1fr; } }
-              .section-divider { border: none; border-top: 2px solid var(--border); margin: 48px 0 32px; }
+              .section-divider { border: none; margin: 0; padding: 0; }
+              .section-divider-inner { display: flex; align-items: center; gap: 16px; margin: 48px 0 40px; }
+              .section-divider-inner::before, .section-divider-inner::after { content: ''; flex: 1; border-top: 2px solid var(--border); }
+              .section-divider-label { font-size: 0.85rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+              nav.section-nav { position: sticky; top: 0; z-index: 50; background: rgba(246,248,250,0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); margin: 0 -24px 24px; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+              nav.section-nav .nav-brand { font-weight: 700; font-size: 0.95rem; color: var(--text); margin-right: auto; }
+              nav.section-nav a { font-size: 0.85rem; font-weight: 500; color: var(--muted); text-decoration: none; padding: 4px 12px; border-radius: 6px; transition: all 0.15s ease; }
+              nav.section-nav a:hover { color: var(--text); background: rgba(0,0,0,0.04); }
+              nav.section-nav a.active { color: var(--buyer); background: #ddf4ff; font-weight: 600; }
+              html { scroll-padding-top: 60px; }
             </style>
           </head>
           <body>
+            <nav class="section-nav" id="nav">
+              <span class="nav-brand">TollGate</span>
+              <a href="#bootstrap" data-section="bootstrap">Bootstrap Token</a>
+              <a href="#spilman" data-section="spilman">Spilman Channel</a>
+            </nav>
             <header>
               <h1>TollGate Protocol Traces</h1>
               <p>Auto-generated from integration tests — Bootstrap token payment &amp; Spilman payment channel lifecycle</p>
@@ -285,7 +299,7 @@ jobs:
             <!-- ============================================================ -->
             <!-- SECTION 1: Bootstrap Token Payment                           -->
             <!-- ============================================================ -->
-            <section>
+            <section id="bootstrap">
               <h2>Bootstrap Token Payment</h2>
               <p style="margin-bottom:16px">
                 A <strong>Buyer</strong> wants network access from a <strong>Seller</strong>.
@@ -356,11 +370,12 @@ jobs:
             </section>
 
             <hr class="section-divider">
+            <div class="section-divider-inner"><span class="section-divider-label">Spilman Payment Channel</span></div>
 
             <!-- ============================================================ -->
             <!-- SECTION 2: Spilman Payment Channel                           -->
             <!-- ============================================================ -->
-            <section>
+            <section id="spilman">
               <h2>Spilman Payment Channel</h2>
               <p style="margin-bottom:16px">
                 Alice opens a Spilman payment channel with Charlie. She locks 100 sat in the channel via Cashu ecash,
@@ -746,6 +761,23 @@ jobs:
             });
 
           waitForMermaid(function() { attachTooltips(allEvents); });
+
+          // Scroll spy for nav highlighting
+          var sections = ['bootstrap', 'spilman'];
+          var navLinks = document.querySelectorAll('nav.section-nav a[data-section]');
+          function updateNav() {
+            var scrollY = window.scrollY + 80;
+            var current = sections[0];
+            for (var i = 0; i < sections.length; i++) {
+              var el = document.getElementById(sections[i]);
+              if (el && el.offsetTop <= scrollY) current = sections[i];
+            }
+            navLinks.forEach(function(a) {
+              a.classList.toggle('active', a.getAttribute('data-section') === current);
+            });
+          }
+          window.addEventListener('scroll', updateNav, { passive: true });
+          updateNav();
            </script>
            <div id="tooltip"></div>
           </body>
