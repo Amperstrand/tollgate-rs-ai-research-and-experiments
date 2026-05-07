@@ -33,6 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: actions/cache@v4
         with:
           path: |
@@ -53,6 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: actions/cache@v4
         with:
           path: |
@@ -73,6 +75,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: actions/cache@v4
         with:
           path: |
@@ -93,6 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85.0
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: cargo check --workspace
 
   # ── CDK integration test ────────────────────────────────────────────
@@ -114,6 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85.0
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: actions/cache@v4
         with:
           path: |
