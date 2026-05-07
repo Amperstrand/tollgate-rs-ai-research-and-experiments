@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, routing::post, Router};
 use tokio::sync::Mutex;
+use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::config::{ProductConfig, ProductMintConfig};
 use tollgate_core::metering::PeerMetrics;
 use tollgate_core::protocol::{Hash32, Message, PubKey};
 use tollgate_core::session::{PeerSession, SessionConfig};
-use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::wallet::Wallet;
 
 use crate::mock::MockAdapter;

@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use common::TraceCollector;
 use tollgate_core::access::AccessLevel;
+use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::config::{ProductConfig, ProductMintConfig};
 use tollgate_core::metering::PeerMetrics;
 use tollgate_core::protocol::{
@@ -23,7 +24,6 @@ use tollgate_core::protocol::{
     MessageType, MeteringReport, PubKey, ReasonCode,
 };
 use tollgate_core::session::{PeerSession, SessionConfig};
-use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::trace::spec_ref;
 use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;

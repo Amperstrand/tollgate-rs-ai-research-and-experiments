@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::protocol::{
     Accept, BootstrapStatus, BootstrapToken, Disconnect, Hash32, IntervalRange, Message,
     MessageType, MeteringReport, PubKey, ReasonCode,
@@ -8,7 +9,6 @@ use tollgate_core::protocol::{
 use tollgate_core::session::{PeerSession, SessionConfig};
 use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
-use tollgate_core::bootstrap::ExhaustionConfig;
 
 use crate::mock::MockAdapter;
 

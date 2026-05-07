@@ -254,8 +254,7 @@ impl BootstrapSession {
             return self.max_interval_ms;
         }
 
-        let ms_remaining =
-            (self.balance_scaled * i128::from(last_elapsed_ms)) / last_cost_scaled;
+        let ms_remaining = (self.balance_scaled * i128::from(last_elapsed_ms)) / last_cost_scaled;
 
         let checkin = u64::try_from(ms_remaining).unwrap_or(u64::MAX);
         checkin.clamp(self.min_checkin_ms, self.max_interval_ms)
@@ -582,7 +581,10 @@ mod tests {
         let result = s.process_interval(&metrics(200_000, 0));
         match result {
             BootstrapIntervalResult::Exhausted { balance_scaled, .. } => {
-                assert_eq!(balance_scaled, 0, "exhausted balance must be 0, not negative");
+                assert_eq!(
+                    balance_scaled, 0,
+                    "exhausted balance must be 0, not negative"
+                );
             }
             _ => panic!("expected Exhausted"),
         }
@@ -609,7 +611,10 @@ mod tests {
         let mut prev_checkin = u64::MAX;
         for i in 1..=5u64 {
             let result = s.process_interval(&metrics(i * 1000, i * 100));
-            if let BootstrapIntervalResult::Ok { next_checkin_ms, .. } = result {
+            if let BootstrapIntervalResult::Ok {
+                next_checkin_ms, ..
+            } = result
+            {
                 assert!(
                     next_checkin_ms <= prev_checkin,
                     "checkin should decrease or stay same: {next_checkin_ms} vs {prev_checkin} at interval {i}"
@@ -731,10 +736,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(action, ExhaustionAction::Allow);
-                assert!(
-                    -balance_scaled > 50,
-                    "balance should be past leeway limit"
-                );
+                assert!(-balance_scaled > 50, "balance should be past leeway limit");
             }
             _ => panic!("expected Exhausted (past leeway)"),
         }

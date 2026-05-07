@@ -4,13 +4,13 @@ use std::sync::{Arc, Mutex};
 
 use tollgate_core::access::AccessLevel;
 use tollgate_core::adapter::ResourceAdapter;
+use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::config::{ProductConfig, ProductMintConfig};
 use tollgate_core::error::{AdapterError, WalletError};
 use tollgate_core::metering::PeerMetrics;
 use tollgate_core::peer::PeerSessionState;
 use tollgate_core::protocol::*;
 use tollgate_core::session::{PeerSession, SessionConfig};
-use tollgate_core::bootstrap::ExhaustionConfig;
 use tollgate_core::types::{
     Amount, ChannelFundParams, ChannelSecret, FundingProof, SettlementResult,
 };
@@ -335,7 +335,11 @@ async fn bootstrap_lifecycle() {
         new_pricing: None,
     });
     let msgs = provider.handle_message(metering_report).await;
-    assert_eq!(msgs.len(), 1, "provider should return MeteringReportResponse");
+    assert_eq!(
+        msgs.len(),
+        1,
+        "provider should return MeteringReportResponse"
+    );
     assert!(
         matches!(&msgs[0], Message::MeteringReportResponse(_)),
         "expected MeteringReportResponse"
@@ -368,14 +372,13 @@ async fn bootstrap_lifecycle() {
         let msgs = provider.handle_message(report).await;
 
         match msgs.first() {
-            Some(Message::MeteringReportResponse(_)) => {}
+            Some(Message::MeteringReportResponse(_)) | None => {}
             Some(Message::Reject(r)) => {
                 assert_eq!(r.reason_text, Some("balance exhausted".to_owned()));
                 exhausted = true;
                 break;
             }
             Some(other) => panic!("expected MeteringReportResponse or Reject, got {other:?}"),
-            None => {}
         }
     }
     assert!(exhausted, "balance should have been exhausted");

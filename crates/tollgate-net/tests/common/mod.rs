@@ -3,6 +3,8 @@
 //! [`TraceCollector`] implements `tracing_subscriber::Layer` to intercept
 //! structured trace events emitted by the [`trace_event!`] macro. Collected
 //! events can be rendered as Mermaid sequence diagrams, NDJSON traces, or
+
+#![allow(dead_code)]
 //! Markdown reports.
 //!
 //! This module lives under `tests/common/` so it is shared across integration

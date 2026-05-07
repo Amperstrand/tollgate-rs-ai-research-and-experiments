@@ -11,14 +11,16 @@ use std::sync::Arc;
 
 use crate::access::AccessLevel;
 use crate::adapter::ResourceAdapter;
-use crate::bootstrap::{BootstrapIntervalResult, BootstrapSession, ExhaustionAction, ExhaustionConfig};
+use crate::bootstrap::{
+    BootstrapIntervalResult, BootstrapSession, ExhaustionAction, ExhaustionConfig,
+};
 use crate::config::ProductConfig;
 use crate::metering::PeerMetrics;
 use crate::peer::{PeerSessionState, PeerStateMachine};
 use crate::protocol::{
     Accept, Announce, BootstrapAck, BootstrapStatus, BootstrapToken, Disconnect, IntervalRange,
-    Message, MessageType, MeteringReport, MeteringReportResponse, MintOption, PriceSheet, Product, PubKey, ReasonCode,
-    Reject,
+    Message, MessageType, MeteringReport, MeteringReportResponse, MintOption, PriceSheet, Product,
+    PubKey, ReasonCode, Reject,
 };
 use crate::wallet::Wallet;
 
