@@ -114,7 +114,7 @@ mod tests {
             msg_type: 14,
             reason_code: ReasonCode::VersionUnsupported,
         });
-        let encoded = encode_frame(&[msg.clone()]).unwrap();
+        let encoded = encode_frame(std::slice::from_ref(&msg)).unwrap();
         let decoded = decode_frame(&encoded).unwrap();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0], msg);

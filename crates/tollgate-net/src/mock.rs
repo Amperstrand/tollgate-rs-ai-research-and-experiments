@@ -129,6 +129,12 @@ pub struct MockAdapter {
     metrics: Mutex<PeerMetrics>,
 }
 
+impl Default for MockAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockAdapter {
     pub fn new() -> Self {
         Self {
@@ -137,8 +143,18 @@ impl MockAdapter {
         }
     }
 
+    #[allow(clippy::missing_panics_doc)]
     pub fn set_metrics(&self, m: PeerMetrics) {
         *self.metrics.lock().expect("lock not poisoned") = m;
+    }
+
+    #[allow(clippy::missing_panics_doc)]
+    pub fn get_access_level(&self, peer_id: &[u8]) -> Option<AccessLevel> {
+        self.access_levels
+            .lock()
+            .expect("lock not poisoned")
+            .get(peer_id)
+            .copied()
     }
 }
 

@@ -29,6 +29,7 @@ impl MockWallet {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl Wallet for MockWallet {
     fn receive_token(
         &self,
@@ -256,6 +257,7 @@ fn client_config() -> SessionConfig {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn bootstrap_lifecycle() {
     let provider_wallet = Arc::new(MockWallet::new(0));
     let provider_adapter = Arc::new(MockAdapter::new());

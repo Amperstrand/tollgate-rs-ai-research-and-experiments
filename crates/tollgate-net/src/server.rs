@@ -6,11 +6,12 @@ use tollgate_core::config::{ProductConfig, ProductMintConfig};
 use tollgate_core::metering::PeerMetrics;
 use tollgate_core::protocol::{Hash32, Message, PubKey};
 use tollgate_core::session::{PeerSession, SessionConfig};
+use tollgate_core::wallet::Wallet;
 
-use crate::mock::{MockAdapter, MockWallet};
+use crate::mock::MockAdapter;
 
-struct AppState {
-    session: Mutex<PeerSession<MockWallet, MockAdapter>>,
+struct AppState<W: Wallet> {
+    session: Mutex<PeerSession<W, MockAdapter>>,
     adapter: Arc<MockAdapter>,
 }
 
@@ -26,7 +27,7 @@ fn test_option_id() -> Hash32 {
     Hash32([0x22; 32])
 }
 
-fn provider_config() -> SessionConfig {
+pub fn provider_config() -> SessionConfig {
     SessionConfig {
         pubkey: provider_pubkey(),
         protocol_version: 1,
@@ -48,8 +49,8 @@ fn provider_config() -> SessionConfig {
     }
 }
 
-pub async fn run(port: u16) {
-    let wallet = Arc::new(MockWallet::new(0));
+#[allow(clippy::missing_panics_doc)]
+pub async fn run<W: Wallet + 'static>(port: u16, wallet: Arc<W>) {
     let adapter = Arc::new(MockAdapter::new());
     let config = provider_config();
     let session = PeerSession::new(wallet, adapter.clone(), config);
@@ -60,7 +61,7 @@ pub async fn run(port: u16) {
     });
 
     let app = Router::new()
-        .route("/tollgate/message", post(handle_message))
+        .route("/tollgate/message", post(handle_message::<W>))
         .with_state(state);
 
     tracing::info!("Provider listening on port {port}");
@@ -75,8 +76,8 @@ pub async fn run(port: u16) {
         .expect("server exited with error");
 }
 
-async fn handle_message(
-    State(state): State<Arc<AppState>>,
+async fn handle_message<W: Wallet>(
+    State(state): State<Arc<AppState<W>>>,
     body: axum::body::Bytes,
 ) -> (StatusCode, Vec<u8>) {
     let msg: Message = match minicbor::decode(&body) {

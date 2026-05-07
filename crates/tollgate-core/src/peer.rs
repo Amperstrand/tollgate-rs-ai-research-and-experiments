@@ -388,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::type_complexity)]
     fn disconnect_from_every_state() {
         let states: Vec<Box<dyn Fn(&mut PeerStateMachine)>> = vec![
             Box::new(|sm| {
