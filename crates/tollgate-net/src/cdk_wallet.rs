@@ -120,25 +120,21 @@ impl CdkWallet {
                 }
                 Err(e) => {
                     last_err = format!("{e}");
-                    if last_err.contains("already signed") {
+                    tracing::warn!("[NUT-04] Mint attempt {}/3 failed: {e}", attempt + 1);
+
+                    // The mint may have succeeded server-side despite HTTP
+                    // errors (timeout, "already signed", "quote in use").
+                    // Recover incomplete sagas and check balance.
+                    tracing::info!("[NUT-04] Recovering incomplete sagas...");
+                    let _ = self.wallet.recover_incomplete_sagas().await;
+                    let bal = self.total_balance().await?;
+                    if bal >= amount {
                         tracing::info!(
-                            "[NUT-04] Mint reports already signed, attempting saga recovery..."
+                            "[NUT-04] Recovered {bal} sat after failed attempt (requested {amount})"
                         );
-                        let _ = self.wallet.recover_incomplete_sagas().await;
-                        let bal = self.total_balance().await?;
-                        if bal >= amount {
-                            tracing::info!("[NUT-04] Recovered {bal} sat (requested {amount})");
-                            return Ok(());
-                        }
-                        return Err(WalletError::Internal(format!(
-                            "mint failed and recovery gave {bal}/{amount} sat: {e}"
-                        )));
+                        return Ok(());
                     }
-                    tracing::warn!(
-                        "[NUT-04] Mint attempt {}/{} failed: {e}",
-                        attempt + 1,
-                        3
-                    );
+
                     if attempt < 2 {
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     }
