@@ -70,7 +70,11 @@ impl CdkWallet {
             .await
             .map_err(|e| WalletError::Internal(format!("mint_quote: {e}")))?;
 
-        tracing::info!("[NUT-04] Created mint quote {} for {} sat", quote.id, amount);
+        tracing::info!(
+            "[NUT-04] Created mint quote {} for {} sat",
+            quote.id,
+            amount
+        );
 
         // Step 2: Poll until PAID (FakeWallet auto-pays within ~2s)
         let mut paid = false;
@@ -116,13 +120,13 @@ impl CdkWallet {
                 if err_msg.contains("already signed") {
                     // The mint already signed these blinded messages — likely a saga
                     // recovery scenario. Try recovering incomplete sagas.
-                    tracing::info!("[NUT-04] Mint reports already signed, attempting saga recovery...");
+                    tracing::info!(
+                        "[NUT-04] Mint reports already signed, attempting saga recovery..."
+                    );
                     let _ = self.wallet.recover_incomplete_sagas().await;
                     let bal = self.total_balance().await?;
                     if bal >= amount {
-                        tracing::info!(
-                            "[NUT-04] Recovered {bal} sat (requested {amount})"
-                        );
+                        tracing::info!("[NUT-04] Recovered {bal} sat (requested {amount})");
                         return Ok(());
                     }
                     return Err(WalletError::Internal(format!(

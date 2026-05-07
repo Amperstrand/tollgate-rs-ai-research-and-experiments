@@ -10,7 +10,9 @@ use tollgate_core::metering::PeerMetrics;
 use tollgate_core::peer::PeerSessionState;
 use tollgate_core::protocol::*;
 use tollgate_core::session::{PeerSession, SessionConfig};
-use tollgate_core::types::{Amount, ChannelFundParams, ChannelSecret, FundingProof, SettlementResult};
+use tollgate_core::types::{
+    Amount, ChannelFundParams, ChannelSecret, FundingProof, SettlementResult,
+};
 use tollgate_core::wallet::Wallet;
 
 // ---------------------------------------------------------------------------
@@ -72,9 +74,7 @@ impl Wallet for MockWallet {
         _: &ChannelFundParams,
         _: &ChannelSecret,
     ) -> impl Future<Output = Result<FundingProof, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal("not implemented".to_owned()))
-        }
+        async { Err(WalletError::Internal("not implemented".to_owned())) }
     }
 
     fn verify_funding(
@@ -82,9 +82,7 @@ impl Wallet for MockWallet {
         _: &Hash32,
         _: &[u8],
     ) -> impl Future<Output = Result<Amount, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal("not implemented".to_owned()))
-        }
+        async { Err(WalletError::Internal("not implemented".to_owned())) }
     }
 
     fn sign_balance_update(
@@ -92,9 +90,7 @@ impl Wallet for MockWallet {
         _: &Hash32,
         _: Amount,
     ) -> impl Future<Output = Result<Signature, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal("not implemented".to_owned()))
-        }
+        async { Err(WalletError::Internal("not implemented".to_owned())) }
     }
 
     fn verify_balance_update(
@@ -103,24 +99,17 @@ impl Wallet for MockWallet {
         _: Amount,
         _: &Signature,
     ) -> impl Future<Output = Result<(), WalletError>> + Send {
-        async {
-            Err(WalletError::Internal("not implemented".to_owned()))
-        }
+        async { Err(WalletError::Internal("not implemented".to_owned())) }
     }
 
     fn settle_channel(
         &self,
         _: &Hash32,
     ) -> impl Future<Output = Result<SettlementResult, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal("not implemented".to_owned()))
-        }
+        async { Err(WalletError::Internal("not implemented".to_owned())) }
     }
 
-    fn mint_reachable(
-        &self,
-        _: &str,
-    ) -> impl Future<Output = Result<bool, WalletError>> + Send {
+    fn mint_reachable(&self, _: &str) -> impl Future<Output = Result<bool, WalletError>> + Send {
         async { Ok(true) }
     }
 
@@ -159,7 +148,11 @@ impl MockAdapter {
     }
 
     fn get_access_level(&self, peer_id: &[u8]) -> Option<AccessLevel> {
-        self.access_levels.lock().expect("lock").get(peer_id).copied()
+        self.access_levels
+            .lock()
+            .expect("lock")
+            .get(peer_id)
+            .copied()
     }
 }
 
@@ -264,16 +257,9 @@ async fn bootstrap_lifecycle() {
     let client_wallet = Arc::new(MockWallet::new(200));
     let client_adapter = Arc::new(MockAdapter::new());
 
-    let mut provider = PeerSession::new(
-        provider_wallet,
-        provider_adapter.clone(),
-        provider_config(),
-    );
-    let mut client = PeerSession::new(
-        client_wallet,
-        client_adapter,
-        client_config(),
-    );
+    let mut provider =
+        PeerSession::new(provider_wallet, provider_adapter.clone(), provider_config());
+    let mut client = PeerSession::new(client_wallet, client_adapter, client_config());
 
     // Step 1: Announce exchange
     let provider_announce = provider.create_announce();
@@ -373,10 +359,7 @@ async fn bootstrap_lifecycle() {
         if !msgs.is_empty() {
             match &msgs[0] {
                 Message::Reject(r) => {
-                    assert_eq!(
-                        r.reason_text,
-                        Some("balance exhausted".to_owned())
-                    );
+                    assert_eq!(r.reason_text, Some("balance exhausted".to_owned()));
                 }
                 other => panic!("expected Reject, got {other:?}"),
             }
@@ -440,29 +423,29 @@ async fn bootstrap_token_rejected_by_wallet() {
     let provider_wallet = Arc::new(MockWallet::new(0));
     let provider_adapter = Arc::new(MockAdapter::new());
 
-    let mut provider = PeerSession::new(
-        provider_wallet,
-        provider_adapter,
-        provider_config(),
-    );
+    let mut provider = PeerSession::new(provider_wallet, provider_adapter, provider_config());
 
     // Advance provider to Priced state
-    let _msgs = provider.handle_message(Message::Announce(Announce {
-        msg_type: MessageType::Announce as u8,
-        protocol_version: 1,
-        pubkey: client_pubkey(),
-        unit: "bytes".to_owned(),
-        capabilities: 0x01,
-    })).await;
+    let _msgs = provider
+        .handle_message(Message::Announce(Announce {
+            msg_type: MessageType::Announce as u8,
+            protocol_version: 1,
+            pubkey: client_pubkey(),
+            unit: "bytes".to_owned(),
+            capabilities: 0x01,
+        }))
+        .await;
     assert_eq!(provider.state(), &PeerSessionState::Announced);
 
-    let _msgs = provider.handle_message(Message::Accept(Accept {
-        msg_type: MessageType::Accept as u8,
-        product_id: test_product_id(),
-        option_id: test_option_id(),
-        interval_range: IntervalRange([2500, 10000]),
-        channel_funding: vec![],
-    })).await;
+    let _msgs = provider
+        .handle_message(Message::Accept(Accept {
+            msg_type: MessageType::Accept as u8,
+            product_id: test_product_id(),
+            option_id: test_option_id(),
+            interval_range: IntervalRange([2500, 10000]),
+            channel_funding: vec![],
+        }))
+        .await;
     assert_eq!(provider.state(), &PeerSessionState::Priced);
 
     // Send a zero-amount token — MockWallet rejects these

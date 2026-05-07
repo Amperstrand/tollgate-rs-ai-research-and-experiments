@@ -160,10 +160,10 @@ pub fn compute_product_id(
 ) -> Result<Hash32, PricingError> {
     use sha2::{Digest, Sha256};
 
-    let scale_bytes = minicbor::to_vec(pricing_scale)
-        .map_err(|e| PricingError::Encoding(e.to_string()))?;
-    let pricing_bytes = minicbor::to_vec(pricing)
-        .map_err(|e| PricingError::Encoding(e.to_string()))?;
+    let scale_bytes =
+        minicbor::to_vec(pricing_scale).map_err(|e| PricingError::Encoding(e.to_string()))?;
+    let pricing_bytes =
+        minicbor::to_vec(pricing).map_err(|e| PricingError::Encoding(e.to_string()))?;
     // extensions must be encoded as CBOR byte string (major type 2),
     // not as an array of unsigned integers.
     let ext_bytes = minicbor::to_vec(<&minicbor::bytes::ByteSlice>::from(extensions))
@@ -189,11 +189,7 @@ pub fn compute_product_id(
 /// because the divisor is positive and the result is negative.
 fn ceil_div(a: i128, b: u64) -> i64 {
     let b = i128::from(b);
-    let result = if a >= 0 {
-        (a + b - 1) / b
-    } else {
-        a / b
-    };
+    let result = if a >= 0 { (a + b - 1) / b } else { a / b };
     i64::try_from(result).expect("ceil_div result must fit in i64")
 }
 

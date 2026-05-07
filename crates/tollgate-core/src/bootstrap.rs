@@ -20,8 +20,14 @@ pub struct BootstrapSession {
 }
 
 pub enum BootstrapIntervalResult {
-    Ok { balance_scaled: i128, cost_scaled: i128 },
-    Exhausted { balance_scaled: i128, cost_scaled: i128 },
+    Ok {
+        balance_scaled: i128,
+        cost_scaled: i128,
+    },
+    Exhausted {
+        balance_scaled: i128,
+        cost_scaled: i128,
+    },
     CounterWentBackwards,
 }
 
@@ -32,8 +38,7 @@ impl BootstrapSession {
         price_per_second: i64,
         price_per_unit: i64,
     ) -> Self {
-        let balance_scaled =
-            i128::from(token_value.0) * i128::from(pricing_scale);
+        let balance_scaled = i128::from(token_value.0) * i128::from(pricing_scale);
         Self {
             balance_scaled,
             pricing_scale,
@@ -45,18 +50,14 @@ impl BootstrapSession {
     }
 
     pub fn top_up(&mut self, token_value: Amount) {
-        let add =
-            i128::from(token_value.0) * i128::from(self.pricing_scale);
+        let add = i128::from(token_value.0) * i128::from(self.pricing_scale);
         self.balance_scaled += add;
         if self.access_level == AccessLevel::Suspended {
             self.access_level = AccessLevel::Active;
         }
     }
 
-    pub fn process_interval(
-        &mut self,
-        current_metrics: &PeerMetrics,
-    ) -> BootstrapIntervalResult {
+    pub fn process_interval(&mut self, current_metrics: &PeerMetrics) -> BootstrapIntervalResult {
         let Some(delta) = self.last_metrics.delta(current_metrics) else {
             return BootstrapIntervalResult::CounterWentBackwards;
         };
@@ -127,7 +128,10 @@ mod tests {
         let mut s = make_session(100);
         let result = s.process_interval(&metrics(5000, 1000));
         match result {
-            BootstrapIntervalResult::Ok { balance_scaled, cost_scaled } => {
+            BootstrapIntervalResult::Ok {
+                balance_scaled,
+                cost_scaled,
+            } => {
                 assert_eq!(cost_scaled, 1050);
                 assert_eq!(balance_scaled, 100_000 - 1050);
             }
@@ -201,7 +205,10 @@ mod tests {
         let before = s.balance_scaled();
         let result = s.process_interval(&metrics(0, 0));
         match result {
-            BootstrapIntervalResult::Ok { balance_scaled, cost_scaled } => {
+            BootstrapIntervalResult::Ok {
+                balance_scaled,
+                cost_scaled,
+            } => {
                 assert_eq!(cost_scaled, 0);
                 assert_eq!(balance_scaled, before);
             }
@@ -214,7 +221,10 @@ mod tests {
         let mut s = make_session(100);
         s.process_interval(&metrics(5000, 1000));
         let result = s.process_interval(&metrics(3000, 500));
-        assert!(matches!(result, BootstrapIntervalResult::CounterWentBackwards));
+        assert!(matches!(
+            result,
+            BootstrapIntervalResult::CounterWentBackwards
+        ));
     }
 
     #[test]
@@ -265,7 +275,10 @@ mod tests {
         let cost = 5 * 3 + 200 * 7;
         let result = s.process_interval(&metrics(5000, 200));
         match result {
-            BootstrapIntervalResult::Ok { balance_scaled, cost_scaled } => {
+            BootstrapIntervalResult::Ok {
+                balance_scaled,
+                cost_scaled,
+            } => {
                 assert_eq!(cost_scaled, cost);
                 assert_eq!(balance_scaled, 5000 - cost);
             }

@@ -14,7 +14,11 @@ pub struct PeerMetrics {
 
 impl PeerMetrics {
     pub fn zero() -> Self {
-        Self { elapsed_ms: 0, delivered: 0, received: 0 }
+        Self {
+            elapsed_ms: 0,
+            delivered: 0,
+            received: 0,
+        }
     }
 
     /// Compute the delta between two metric snapshots.

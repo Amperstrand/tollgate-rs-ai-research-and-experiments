@@ -102,7 +102,10 @@ async fn cdk_bootstrap_lifecycle() {
             .await
             .expect("provider wallet init"),
     );
-    let provider_bal = provider_wallet.total_balance().await.expect("provider balance");
+    let provider_bal = provider_wallet
+        .total_balance()
+        .await
+        .expect("provider balance");
     tracing::info!("[NUT-06] Provider wallet connected. Balance: {provider_bal} sat");
 
     // ─── Step 2: Create Client Wallet + Mint Tokens ───
@@ -129,9 +132,7 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("");
     tracing::info!("━━━ Step 3: Provider Session Setup ━━━");
     tracing::info!("Per docs/design/core/tollgate-protocol.md §2: Provider advertises products");
-    tracing::info!(
-        "Product: price_per_second=10, price_per_unit=1, scale=1000"
-    );
+    tracing::info!("Product: price_per_second=10, price_per_unit=1, scale=1000");
     let provider_adapter = Arc::new(MockAdapter::new());
     let provider_config = provider_session_config();
     let mut provider_session = PeerSession::new(
@@ -139,19 +140,21 @@ async fn cdk_bootstrap_lifecycle() {
         provider_adapter.clone(),
         provider_config,
     );
-    tracing::info!("Provider PeerSession created (state: {:?})", provider_session.state());
+    tracing::info!(
+        "Provider PeerSession created (state: {:?})",
+        provider_session.state()
+    );
 
     // ─── Step 4: Create Client PeerSession ───
     tracing::info!("");
     tracing::info!("━━━ Step 4: Client Session Setup ━━━");
     let client_adapter = Arc::new(MockAdapter::new());
     let client_config = client_session_config();
-    let mut client_session = PeerSession::new(
-        client_wallet.clone(),
-        client_adapter,
-        client_config,
+    let mut client_session = PeerSession::new(client_wallet.clone(), client_adapter, client_config);
+    tracing::info!(
+        "Client PeerSession created (state: {:?})",
+        client_session.state()
     );
-    tracing::info!("Client PeerSession created (state: {:?})", client_session.state());
 
     // ─── Step 5: Announce Exchange ───
     tracing::info!("");
@@ -166,7 +169,10 @@ async fn cdk_bootstrap_lifecycle() {
         msgs.len()
     );
     assert!(msgs.is_empty(), "Announce produces no direct response");
-    tracing::info!("Provider state after Announce: {:?}", provider_session.state());
+    tracing::info!(
+        "Provider state after Announce: {:?}",
+        provider_session.state()
+    );
 
     let provider_announce = provider_session.create_announce();
     let _msgs = client_session.handle_message(provider_announce).await;
@@ -211,7 +217,10 @@ async fn cdk_bootstrap_lifecycle() {
     });
     let msgs = provider_session.handle_message(accept).await;
     assert!(msgs.is_empty(), "Accept produces no direct response");
-    tracing::info!("Provider state after Accept: {:?}", provider_session.state());
+    tracing::info!(
+        "Provider state after Accept: {:?}",
+        provider_session.state()
+    );
     assert_eq!(
         format!("{:?}", provider_session.state()),
         "Priced".to_string(),
@@ -244,14 +253,23 @@ async fn cdk_bootstrap_lifecycle() {
         token: token_bytes,
     });
 
-    let pre_bal = provider_wallet.total_balance().await.expect("pre-receive balance");
+    let pre_bal = provider_wallet
+        .total_balance()
+        .await
+        .expect("pre-receive balance");
     tracing::info!("Provider balance BEFORE receive: {pre_bal} sat");
 
     let msgs = provider_session.handle_message(bootstrap_token).await;
     assert_eq!(msgs.len(), 1, "should get exactly one response");
 
-    let post_bal = provider_wallet.total_balance().await.expect("post-receive balance");
-    tracing::info!("Provider balance AFTER receive: {post_bal} sat (delta: {} sat)", post_bal - pre_bal);
+    let post_bal = provider_wallet
+        .total_balance()
+        .await
+        .expect("post-receive balance");
+    tracing::info!(
+        "Provider balance AFTER receive: {post_bal} sat (delta: {} sat)",
+        post_bal - pre_bal
+    );
 
     match &msgs[0] {
         Message::BootstrapAck(ack) => {
@@ -278,7 +296,9 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("━━━ Step 8: Metering Report Exchange ━━━");
     tracing::info!("Per docs/design/core/tollgate-metering.md §2: Cumulative counter model");
     tracing::info!("Per docs/design/core/tollgate-pricing.md §3: Dual pricing formula");
-    tracing::info!("Formula: cost_scaled = elapsed_ms * price_per_second + delivered * price_per_unit");
+    tracing::info!(
+        "Formula: cost_scaled = elapsed_ms * price_per_second + delivered * price_per_unit"
+    );
     tracing::info!("       balance = bootstrap_amount * scale - cost_scaled");
 
     let bootstrap_amount = 100u64;
@@ -308,7 +328,9 @@ async fn cdk_bootstrap_lifecycle() {
             .saturating_mul(scale as i64)
             .saturating_sub(cost_scaled);
         tracing::info!("");
-        tracing::info!("  [Interval {i}] elapsed_ms={total_elapsed_ms}, delivered={total_delivered}");
+        tracing::info!(
+            "  [Interval {i}] elapsed_ms={total_elapsed_ms}, delivered={total_delivered}"
+        );
         tracing::info!(
             "  [Interval {i}] cost_scaled = {total_elapsed_ms}×{pps} + {total_delivered}×{ppu} = {cost_scaled}"
         );
@@ -336,7 +358,10 @@ async fn cdk_bootstrap_lifecycle() {
         }
     }
 
-    assert!(provider_session.is_active(), "session should still be active after metering");
+    assert!(
+        provider_session.is_active(),
+        "session should still be active after metering"
+    );
 
     // ─── Step 9: Top-Up Test (another real Cashu token) ───
     tracing::info!("");
@@ -364,7 +389,10 @@ async fn cdk_bootstrap_lifecycle() {
         other => panic!("expected BootstrapAck for top-up, got {other:?}"),
     }
 
-    let provider_final = provider_wallet.total_balance().await.expect("provider final balance");
+    let provider_final = provider_wallet
+        .total_balance()
+        .await
+        .expect("provider final balance");
     tracing::info!("Provider balance after bootstrap + top-up: {provider_final} sat");
     // testnut.cashu.space charges input_fee_ppk=100 (1 sat per proof).
     // 100 sat token → 99 sat received, 50 sat token → 49 sat received = 148 total.
@@ -389,7 +417,10 @@ async fn cdk_bootstrap_lifecycle() {
         Message::Disconnect(_) => tracing::info!("Provider confirmed disconnect"),
         other => tracing::warn!("Unexpected disconnect response: {other:?}"),
     }
-    tracing::info!("Provider state after disconnect: {:?}", provider_session.state());
+    tracing::info!(
+        "Provider state after disconnect: {:?}",
+        provider_session.state()
+    );
 
     let access = provider_adapter.get_access_level(&client_pubkey().0);
     tracing::info!("Client access level after disconnect: {access:?}");
@@ -399,7 +430,10 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("");
     tracing::info!("╔══════════════════════════════════════════════════════════════╗");
     tracing::info!("║  Test Complete                                               ║");
-    let pbal = provider_wallet.total_balance().await.expect("provider balance");
+    let pbal = provider_wallet
+        .total_balance()
+        .await
+        .expect("provider balance");
     let cbal = client_wallet.total_balance().await.expect("client balance");
     tracing::info!("║  Provider wallet balance: {pbal} sat");
     tracing::info!("║  Client wallet balance:  {cbal} sat");

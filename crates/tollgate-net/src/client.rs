@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tollgate_core::protocol::{
     Accept, BootstrapStatus, BootstrapToken, Disconnect, Hash32, IntervalRange, Message,
-    MeteringReport, MessageType, PubKey, ReasonCode,
+    MessageType, MeteringReport, PubKey, ReasonCode,
 };
 use tollgate_core::session::{PeerSession, SessionConfig};
 use tollgate_core::types::Amount;
@@ -26,11 +26,7 @@ pub fn client_config() -> SessionConfig {
     }
 }
 
-async fn send_message(
-    client: &reqwest::Client,
-    peer_url: &str,
-    msg: &Message,
-) -> Vec<Message> {
+async fn send_message(client: &reqwest::Client, peer_url: &str, msg: &Message) -> Vec<Message> {
     let body = minicbor::to_vec(msg).expect("encode message");
     let resp = client
         .post(format!("{peer_url}/tollgate/message"))

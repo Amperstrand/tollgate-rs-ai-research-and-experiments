@@ -44,7 +44,9 @@ pub enum FrameError {
 /// # Panics
 ///
 /// Panics if any CBOR-encoded message exceeds 64 KiB (the 2-byte length prefix limit).
-pub fn encode_frame(messages: &[Message]) -> Result<Vec<u8>, minicbor::encode::Error<std::convert::Infallible>> {
+pub fn encode_frame(
+    messages: &[Message],
+) -> Result<Vec<u8>, minicbor::encode::Error<std::convert::Infallible>> {
     let mut buf = Vec::new();
     for msg in messages {
         let msg_bytes = minicbor::to_vec(msg)?;
@@ -84,10 +86,7 @@ pub fn decode_frame(data: &[u8]) -> Result<Vec<Message>, FrameError> {
         }
 
         let msg = minicbor::decode(&data[offset..offset + len])
-            .map_err(|e| FrameError::DecodeError {
-                offset,
-                source: e,
-            })?;
+            .map_err(|e| FrameError::DecodeError { offset, source: e })?;
         messages.push(msg);
         offset += len;
     }
@@ -163,15 +162,7 @@ mod tests {
     #[test]
     fn corrupted_cbor() {
         let len_bytes = 5u16.to_le_bytes();
-        let result = decode_frame(&[
-            len_bytes[0],
-            len_bytes[1],
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-            0xFF,
-        ]);
+        let result = decode_frame(&[len_bytes[0], len_bytes[1], 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
         assert!(matches!(result, Err(FrameError::DecodeError { .. })));
     }
 

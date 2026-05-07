@@ -17,8 +17,8 @@ use crate::metering::PeerMetrics;
 use crate::peer::{PeerSessionState, PeerStateMachine};
 use crate::protocol::{
     Accept, Announce, BootstrapAck, BootstrapStatus, BootstrapToken, Disconnect, IntervalRange,
-    Message, MessageType, MintOption, PriceSheet, Product, PubKey, ReasonCode, Reject,
-    MeteringReport,
+    Message, MessageType, MeteringReport, MintOption, PriceSheet, Product, PubKey, ReasonCode,
+    Reject,
 };
 use crate::wallet::Wallet;
 
@@ -144,7 +144,11 @@ impl<W: Wallet, A: ResourceAdapter> PeerSession<W, A> {
         self.sm.info_mut().pubkey = announce.pubkey;
         if self
             .sm
-            .on_announce(announce.protocol_version, announce.unit, announce.capabilities)
+            .on_announce(
+                announce.protocol_version,
+                announce.unit,
+                announce.capabilities,
+            )
             .is_err()
         {
             return vec![Message::Reject(Reject {

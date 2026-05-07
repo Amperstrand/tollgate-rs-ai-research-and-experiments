@@ -33,9 +33,7 @@ impl Wallet for MockWallet {
         let result = if token.len() < 8 {
             Err(WalletError::TokenRejected("token too short".to_owned()))
         } else {
-            let amount = u64::from_be_bytes(
-                token[..8].try_into().expect("checked length above"),
-            );
+            let amount = u64::from_be_bytes(token[..8].try_into().expect("checked length above"));
             if amount == 0 {
                 Err(WalletError::TokenRejected("zero amount".to_owned()))
             } else {
@@ -104,10 +102,7 @@ impl Wallet for MockWallet {
         async { Err(WalletError::Internal("not implemented".to_owned())) }
     }
 
-    fn mint_reachable(
-        &self,
-        _: &str,
-    ) -> impl Future<Output = Result<bool, WalletError>> + Send {
+    fn mint_reachable(&self, _: &str) -> impl Future<Output = Result<bool, WalletError>> + Send {
         async { Ok(true) }
     }
 
