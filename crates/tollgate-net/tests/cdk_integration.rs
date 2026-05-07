@@ -452,6 +452,7 @@ async fn cdk_bootstrap_lifecycle() {
             }
         }
 
+        #[allow(clippy::cast_precision_loss)]
         let remaining_sat = balance_scaled as f64 / scale as f64;
         let interval_cost = if i == 1 {
             cost_scaled
