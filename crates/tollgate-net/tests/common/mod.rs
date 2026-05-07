@@ -382,10 +382,10 @@ impl Phase {
 
     fn color(self) -> &'static str {
         match self {
-            Phase::Setup => "230, 245, 255",     // light blue
-            Phase::Payment => "230, 255, 237",    // light green
-            Phase::Metering => "255, 248, 225",   // light amber
-            Phase::Teardown => "255, 235, 233",   // light red
+            Phase::Setup => "230, 245, 255",    // light blue
+            Phase::Payment => "230, 255, 237",  // light green
+            Phase::Metering => "255, 248, 225", // light amber
+            Phase::Teardown => "255, 235, 233", // light red
         }
     }
 

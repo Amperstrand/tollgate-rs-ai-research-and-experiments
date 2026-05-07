@@ -1,0 +1,45 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - heading "TollGate Protocol Trace" [level=1] [ref=e3]
+    - paragraph [ref=e4]:
+      - text: Bootstrap token payment — auto-generated from
+      - code [ref=e5]: cdk_bootstrap_lifecycle
+      - text: integration test
+  - generic [ref=e6]:
+    - heading "What is happening here?" [level=2] [ref=e7]
+    - paragraph [ref=e8]:
+      - text: A
+      - strong [ref=e9]: Buyer
+      - text: wants network access from a
+      - strong [ref=e10]: Seller
+      - text: . The Buyer pays with
+      - link "Cashu ecash" [ref=e11] [cursor=pointer]:
+        - /url: https://cashu.space/
+      - text: — digital bearer tokens that work like electronic cash. The
+      - strong [ref=e12]: Mint
+      - text: issues and verifies these tokens. No accounts, no registration — the Buyer just sends tokens and gets access.
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - heading "Buyer" [level=3] [ref=e15]: Buyer
+        - paragraph [ref=e17]: Wants network access. Pays the Seller with Cashu ecash tokens minted from the Mint.
+      - generic [ref=e18]:
+        - heading "Seller" [level=3] [ref=e19]: Seller
+        - paragraph [ref=e21]:
+          - text: Sells bandwidth at
+          - strong [ref=e22]: 10 sat/second + 1 sat/byte
+          - text: . Verifies every token with the Mint before granting access.
+      - generic [ref=e23]:
+        - heading "Mint" [level=3] [ref=e24]: Mint
+        - paragraph [ref=e26]:
+          - text: Issues and verifies Cashu ecash. This test uses
+          - code [ref=e27]: testnut.cashu.space
+          - text: (auto-paying fake wallet).
+  - generic [ref=e28]:
+    - heading "Protocol sequence" [level=2] [ref=e29]
+    - paragraph [ref=e30]: Solid arrows (→) are requests · Dashed arrows (⇢) are responses · Numbers are auto-sequenced · Timing is relative to start
+    - paragraph [ref=e31]: No sequence diagram — test did not produce trace artifacts.
+  - generic [ref=e32]:
+    - heading "Step-by-step walkthrough" [level=2] [ref=e33]
+    - paragraph [ref=e35]: No trace data available — the test may not have completed.
+  - group [ref=e37]:
+    - generic "Raw JSON trace (machine-readable)" [ref=e38] [cursor=pointer]

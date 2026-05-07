@@ -453,7 +453,11 @@ async fn cdk_bootstrap_lifecycle() {
         }
 
         let remaining_sat = balance_scaled as f64 / scale as f64;
-        let interval_cost = if i == 1 { cost_scaled } else { cost_scaled - ((i - 1) as i64 * 1050) };
+        let interval_cost = if i == 1 {
+            cost_scaled
+        } else {
+            cost_scaled - ((i - 1) as i64 * 1050)
+        };
         trace_event!(
             "Buyer",
             "Seller",

@@ -1,0 +1,76 @@
+- generic [active] [ref=e1]:
+  - heading "TollGate Protocol Trace" [level=1] [ref=e2]
+  - generic [ref=e3]:
+    - text: Auto-generated from
+    - code [ref=e4]: cdk_bootstrap_lifecycle
+    - text: integration test run on
+    - code [ref=e5]: testnut.cashu.space
+    - text: . See
+    - link "trace.json" [ref=e6] [cursor=pointer]:
+      - /url: trace.json
+    - text: for machine-readable output.
+  - heading "Sequence Diagram" [level=2] [ref=e7]
+  - document [ref=e9]:
+    - generic [ref=e12]: Provider
+    - generic [ref=e15]: Mint
+    - generic [ref=e18]: Client
+    - generic [ref=e22]: Provider
+    - generic [ref=e26]: Mint
+    - generic [ref=e30]: Client
+    - generic [ref=e33]: NUT-04
+    - generic [ref=e36]: +0ms
+    - generic [ref=e39]: +3078ms
+    - generic [ref=e42]: tollgate-protocol.md §3.1
+    - generic [ref=e45]: +3078ms
+    - generic [ref=e48]: +3078ms
+    - generic [ref=e51]: tollgate-protocol.md §3.2
+    - generic [ref=e54]: +3078ms
+    - generic [ref=e57]: tollgate-protocol.md §3.3
+    - generic [ref=e60]: +3078ms
+    - generic [ref=e63]: tollgate-bootstrap.md §3
+    - generic [ref=e66]: +3394ms
+    - generic [ref=e69]: +37501ms
+    - generic [ref=e72]: tollgate-metering.md §2
+    - generic [ref=e75]: +37502ms
+    - generic [ref=e78]: +37502ms
+    - generic [ref=e81]: +37502ms
+    - generic [ref=e82]:
+      - generic [ref=e84]: loop
+      - generic [ref=e85]: "[Metering Intervals]"
+    - generic [ref=e88]: tollgate-bootstrap.md §3
+    - generic [ref=e91]: +37817ms
+    - generic [ref=e94]: +38014ms
+    - generic [ref=e97]: tollgate-protocol.md §3.5
+    - generic [ref=e100]: +38015ms
+    - generic [ref=e101]: MintQuote 200 sat from testnut
+    - generic [ref=e102]: "1"
+    - generic [ref=e103]: MintQuote 200 sat minted
+    - generic [ref=e104]: "2"
+    - generic [ref=e105]: Announce v=1, unit=bytes, caps=0x01
+    - generic [ref=e106]: "3"
+    - generic [ref=e107]: Announce v=1, unit=bytes, caps=0x01
+    - generic [ref=e108]: "4"
+    - generic [ref=e109]: PriceSheet 1 product, pps=10, ppu=1
+    - generic [ref=e110]: "5"
+    - generic [ref=e111]: Accept product selected, interval=[2500,10000]
+    - generic [ref=e112]: "6"
+    - generic [ref=e113]: BootstrapToken 100 sat cashuB V4
+    - generic [ref=e114]: "7"
+    - generic [ref=e115]: BootstrapAck Accepted
+    - generic [ref=e116]: "8"
+    - generic [ref=e117]: "MeteringReport interval 1: elapsed=5000ms"
+    - generic [ref=e118]: "9"
+    - generic [ref=e119]: "MeteringReport interval 2: elapsed=10000ms"
+    - generic [ref=e120]: "10"
+    - generic [ref=e121]: "MeteringReport interval 3: elapsed=15000ms"
+    - generic [ref=e122]: "11"
+    - generic [ref=e123]: BootstrapToken 50 sat cashuB V4 (top-up)
+    - generic [ref=e124]: "12"
+    - generic [ref=e125]: BootstrapAck Accepted (top-up)
+    - generic [ref=e126]: "13"
+    - generic [ref=e127]: Disconnect Other
+    - generic [ref=e128]: "14"
+  - group [ref=e129]:
+    - generic "Step-by-step report" [ref=e130] [cursor=pointer]
+  - group [ref=e131]:
+    - generic "Raw JSON trace" [ref=e132] [cursor=pointer]
