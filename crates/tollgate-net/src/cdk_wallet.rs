@@ -106,38 +106,48 @@ impl CdkWallet {
             )));
         }
 
-        // Step 3: Mint proofs
-        match self
-            .wallet
-            .mint(&quote.id, cdk::amount::SplitTarget::default(), None)
-            .await
-        {
-            Ok(_proofs) => {
-                tracing::info!("[NUT-04] Minted {} sat successfully", amount);
-            }
-            Err(e) => {
-                let err_msg = format!("{e}");
-                if err_msg.contains("already signed") {
-                    // The mint already signed these blinded messages — likely a saga
-                    // recovery scenario. Try recovering incomplete sagas.
-                    tracing::info!(
-                        "[NUT-04] Mint reports already signed, attempting saga recovery..."
-                    );
-                    let _ = self.wallet.recover_incomplete_sagas().await;
-                    let bal = self.total_balance().await?;
-                    if bal >= amount {
-                        tracing::info!("[NUT-04] Recovered {bal} sat (requested {amount})");
-                        return Ok(());
-                    }
-                    return Err(WalletError::Internal(format!(
-                        "mint failed and recovery gave {bal}/{amount} sat: {e}"
-                    )));
+        // Step 3: Mint proofs (with retry for transient network errors)
+        let mut last_err = String::new();
+        for attempt in 0..3 {
+            match self
+                .wallet
+                .mint(&quote.id, cdk::amount::SplitTarget::default(), None)
+                .await
+            {
+                Ok(_proofs) => {
+                    tracing::info!("[NUT-04] Minted {} sat successfully", amount);
+                    return Ok(());
                 }
-                return Err(WalletError::Internal(format!("mint: {e}")));
+                Err(e) => {
+                    last_err = format!("{e}");
+                    if last_err.contains("already signed") {
+                        tracing::info!(
+                            "[NUT-04] Mint reports already signed, attempting saga recovery..."
+                        );
+                        let _ = self.wallet.recover_incomplete_sagas().await;
+                        let bal = self.total_balance().await?;
+                        if bal >= amount {
+                            tracing::info!("[NUT-04] Recovered {bal} sat (requested {amount})");
+                            return Ok(());
+                        }
+                        return Err(WalletError::Internal(format!(
+                            "mint failed and recovery gave {bal}/{amount} sat: {e}"
+                        )));
+                    }
+                    tracing::warn!(
+                        "[NUT-04] Mint attempt {}/{} failed: {e}",
+                        attempt + 1,
+                        3
+                    );
+                    if attempt < 2 {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                }
             }
         }
-
-        Ok(())
+        Err(WalletError::Internal(format!(
+            "mint failed after 3 attempts: {last_err}"
+        )))
     }
 
     /// Get the total wallet balance.

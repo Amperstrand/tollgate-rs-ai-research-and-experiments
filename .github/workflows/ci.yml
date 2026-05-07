@@ -102,10 +102,9 @@ jobs:
       - name: Run CDK integration tests
         id: run-tests
         run: |
-          set +e
+          set -o pipefail
           cargo test -p tollgate-net --test cdk_integration -- --ignored --nocapture 2>build.log | tee protocol-report.log
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-          set -e
 
       - name: Upload protocol report
         if: always()
