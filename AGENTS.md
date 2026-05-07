@@ -1,6 +1,6 @@
-# AGENTS.md — Amperstrand Private Fork
+# AGENTS.md — Amperstrand AI Research & Experiments Fork
 
-This is the **private Amperstrand fork** of [OpenTollGate/tollgate-rs](https://github.com/OpenTollGate/tollgate-rs).
+This is the **Amperstrand experimental fork** of [OpenTollGate/tollgate-rs](https://github.com/OpenTollGate/tollgate-rs).
 
 ## CRITICAL: Upstream Boundary
 
@@ -14,15 +14,15 @@ This is the **private Amperstrand fork** of [OpenTollGate/tollgate-rs](https://g
 
 3. **NEVER interact with the upstream repo's GitHub in any way** — no comments, no reactions, no issue creation, no discussions, no wiki edits. Zero. The upstream maintainers should never see activity from this fork.
 
-4. **All work happens on the `private` remote** (`https://github.com/Amperstrand/tollgate-rs.git`). Branch from `master`, push to `private`, create PRs against `private`.
+4. **All work happens on the `private` remote** (`https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git`). Branch from `master`, push to `private`, create PRs against `private`.
 
 5. **When syncing from upstream**, always `git fetch origin` and merge/rebase into local branches. Never push those merged changes back to `origin`.
 
 ### Git Remote Configuration
 
 ```
-origin  → https://github.com/OpenTollGate/tollgate-rs    (READ-ONLY upstream, fetch only)
-private → https://github.com/Amperstrand/tollgate-rs.git (READ-WRITE, this fork)
+origin  → https://github.com/OpenTollGate/tollgate-rs                 (READ-ONLY upstream, fetch only)
+private → https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git (READ-WRITE, this fork)
 ```
 
 - `git pull origin master` — OK (sync from upstream)
