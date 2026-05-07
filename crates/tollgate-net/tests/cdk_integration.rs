@@ -10,8 +10,11 @@
 //! Run with:
 //!   cargo test -p tollgate-net --test cdk_integration -- --ignored --nocapture
 
+mod common;
+
 use std::sync::Arc;
 
+use common::TraceCollector;
 use tollgate_core::access::AccessLevel;
 use tollgate_core::config::{ProductConfig, ProductMintConfig};
 use tollgate_core::metering::PeerMetrics;
@@ -20,6 +23,7 @@ use tollgate_core::protocol::{
     MessageType, MeteringReport, PubKey, ReasonCode,
 };
 use tollgate_core::session::{PeerSession, SessionConfig};
+use tollgate_core::trace::spec_ref;
 use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
 
@@ -81,10 +85,20 @@ fn client_session_config() -> SessionConfig {
 #[ignore = "requires network access to testnut.cashu.space"]
 #[allow(clippy::too_many_lines, clippy::cast_possible_wrap)]
 async fn cdk_bootstrap_lifecycle() {
-    let _guard = tracing_subscriber::fmt()
-        .with_env_filter("tollgate_net=debug,tollgate_core=debug")
-        .with_test_writer()
-        .try_init();
+    use tracing_subscriber::prelude::*;
+
+    let trace = TraceCollector::new();
+
+    let fmt_layer = tracing_subscriber::fmt::layer().with_test_writer();
+
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            "tollgate_net=debug,tollgate_core=debug,info",
+        ))
+        .with(fmt_layer)
+        .with(trace.clone());
+
+    let _guard = tracing::subscriber::set_default(subscriber);
 
     tracing::info!("╔══════════════════════════════════════════════════════════════╗");
     tracing::info!("║  TollGate v2 CDK Integration Test                           ║");
@@ -111,6 +125,14 @@ async fn cdk_bootstrap_lifecycle() {
     // ─── Step 2: Create Client Wallet + Mint Tokens ───
     tracing::info!("");
     tracing::info!("━━━ Step 2: Create Client Wallet + Mint Tokens ━━━");
+    trace_event!(
+        "Client",
+        "Mint",
+        "Request",
+        "MintQuote",
+        "NUT-04",
+        "200 sat from testnut"
+    );
     tracing::info!("[NUT-04] Minting 200 sat from testnut (FakeWallet auto-pays)");
     let client_wallet = Arc::new(
         CdkWallet::new(MINT_URL, rand::random::<[u8; 64]>())
@@ -122,6 +144,14 @@ async fn cdk_bootstrap_lifecycle() {
         .await
         .expect("mint test tokens");
     let client_bal = client_wallet.total_balance().await.expect("client balance");
+    trace_event!(
+        "Mint",
+        "Client",
+        "Response",
+        "MintQuote",
+        "NUT-04",
+        "200 sat minted"
+    );
     tracing::info!("[NUT-04] Client balance after minting: {client_bal} sat");
     assert!(
         client_bal >= 200,
@@ -161,6 +191,14 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("━━━ Step 5: Announce Exchange ━━━");
     tracing::info!("Per docs/design/core/tollgate-protocol.md §3.1: Peer announcement");
     let client_announce = client_session.create_announce();
+    trace_event!(
+        "Client",
+        "Provider",
+        "Request",
+        "Announce",
+        spec_ref(MessageType::Announce),
+        "v=1, unit=bytes, caps=0x01"
+    );
     tracing::info!("Client → Provider: Announce (version=1, unit=bytes, capabilities=0x01)");
 
     let msgs = provider_session.handle_message(client_announce).await;
@@ -175,10 +213,26 @@ async fn cdk_bootstrap_lifecycle() {
     );
 
     let provider_announce = provider_session.create_announce();
+    trace_event!(
+        "Provider",
+        "Client",
+        "Request",
+        "Announce",
+        spec_ref(MessageType::Announce),
+        "v=1, unit=bytes, caps=0x01"
+    );
     let _msgs = client_session.handle_message(provider_announce).await;
     tracing::info!("Client handled provider's Announce");
 
     let price_sheet = provider_session.create_price_sheet();
+    trace_event!(
+        "Provider",
+        "Client",
+        "Request",
+        "PriceSheet",
+        spec_ref(MessageType::PriceSheet),
+        "1 product, pps=10, ppu=1"
+    );
     tracing::info!(
         "Provider → Client: PriceSheet ({} products)",
         price_sheet.products_count()
@@ -215,6 +269,14 @@ async fn cdk_bootstrap_lifecycle() {
         interval_range: IntervalRange([2500, 10000]),
         channel_funding: vec![],
     });
+    trace_event!(
+        "Client",
+        "Provider",
+        "Request",
+        "Accept",
+        spec_ref(MessageType::Accept),
+        "product selected, interval=[2500,10000]"
+    );
     let msgs = provider_session.handle_message(accept).await;
     assert!(msgs.is_empty(), "Accept produces no direct response");
     tracing::info!(
@@ -259,6 +321,14 @@ async fn cdk_bootstrap_lifecycle() {
         .expect("pre-receive balance");
     tracing::info!("Provider balance BEFORE receive: {pre_bal} sat");
 
+    trace_event!(
+        "Client",
+        "Provider",
+        "Request",
+        "BootstrapToken",
+        spec_ref(MessageType::BootstrapToken),
+        "100 sat cashuB V4"
+    );
     let msgs = provider_session.handle_message(bootstrap_token).await;
     assert_eq!(msgs.len(), 1, "should get exactly one response");
 
@@ -273,6 +343,14 @@ async fn cdk_bootstrap_lifecycle() {
 
     match &msgs[0] {
         Message::BootstrapAck(ack) => {
+            trace_event!(
+                "Provider",
+                "Client",
+                "Response",
+                "BootstrapAck",
+                spec_ref(MessageType::BootstrapAck),
+                "Accepted"
+            );
             tracing::info!(
                 "BootstrapAck: status={:?}, reason={:?}",
                 ack.status,
@@ -347,6 +425,14 @@ async fn cdk_bootstrap_lifecycle() {
             new_pricing: None,
         });
 
+        trace_event!(
+            "Client",
+            "Provider",
+            "Request",
+            "MeteringReport",
+            spec_ref(MessageType::MeteringReport),
+            format!("interval {}: elapsed={total_elapsed_ms}ms", i)
+        );
         let msgs = provider_session.handle_message(report).await;
         if msgs.is_empty() {
             tracing::info!("  [Interval {i}] ✓ Balance OK, session continues");
@@ -380,9 +466,25 @@ async fn cdk_bootstrap_lifecycle() {
         token: topup_bytes,
     });
 
+    trace_event!(
+        "Client",
+        "Provider",
+        "Request",
+        "BootstrapToken",
+        spec_ref(MessageType::BootstrapToken),
+        "50 sat cashuB V4 (top-up)"
+    );
     let msgs = provider_session.handle_message(topup_msg).await;
     match &msgs[0] {
         Message::BootstrapAck(ack) => {
+            trace_event!(
+                "Provider",
+                "Client",
+                "Response",
+                "BootstrapAck",
+                spec_ref(MessageType::BootstrapAck),
+                "Accepted (top-up)"
+            );
             tracing::info!("Top-up BootstrapAck: status={:?}", ack.status);
             assert_eq!(ack.status, BootstrapStatus::Accepted);
         }
@@ -394,9 +496,6 @@ async fn cdk_bootstrap_lifecycle() {
         .await
         .expect("provider final balance");
     tracing::info!("Provider balance after bootstrap + top-up: {provider_final} sat");
-    // testnut.cashu.space charges input_fee_ppk=100 (1 sat per proof).
-    // 100 sat token → 99 sat received, 50 sat token → 49 sat received = 148 total.
-    // Assert >= 140 to account for variable number of proofs / fees.
     assert!(
         provider_final >= 140,
         "provider should have at least 140 sat from bootstrap + topup (after mint fees), got {provider_final}"
@@ -406,6 +505,14 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("");
     tracing::info!("━━━ Step 10: Session Teardown ━━━");
     tracing::info!("Per docs/design/core/tollgate-protocol.md §3.5: Graceful disconnect");
+    trace_event!(
+        "Client",
+        "Provider",
+        "Request",
+        "Disconnect",
+        spec_ref(MessageType::Disconnect),
+        "Other"
+    );
     let disconnect = Message::Disconnect(Disconnect {
         msg_type: MessageType::Disconnect as u8,
         reason_code: ReasonCode::Other,
@@ -440,6 +547,23 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("║  Tokens transferred: 150 sat (100 bootstrap + 50 top-up)    ║");
     tracing::info!("║  Metering intervals: {num_intervals}                                  ║");
     tracing::info!("╚══════════════════════════════════════════════════════════════╝");
+
+    let trace_dir =
+        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("target")
+            .join("protocol-traces");
+
+    trace
+        .write_artifacts(&trace_dir, "cdk_bootstrap_lifecycle")
+        .expect("write trace artifacts");
+    tracing::info!(
+        "Protocol trace artifacts written to {}",
+        trace_dir.display()
+    );
 }
 
 // Helper trait to get product count from PriceSheet message

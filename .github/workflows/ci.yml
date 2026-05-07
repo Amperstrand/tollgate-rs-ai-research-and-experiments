@@ -115,7 +115,23 @@ jobs:
           path: |
             protocol-report.log
             build.log
+            target/protocol-traces/
           retention-days: 14
+
+      - name: Upload protocol trace artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protocol-trace
+          path: target/protocol-traces/
+          retention-days: 14
+
+      - name: Render Mermaid diagram
+        if: always()
+        uses: nielsvaneck/render-md-mermaid@v1
+        with:
+          paths: target/protocol-traces/cdk_bootstrap_lifecycle.md
+        continue-on-error: true
 
       - name: Check test result
         if: steps.run-tests.outputs.exit_code != '0'

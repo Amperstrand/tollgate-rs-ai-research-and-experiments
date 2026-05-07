@@ -18,5 +18,6 @@ pub mod peer;
 pub mod pricing;
 pub mod protocol;
 pub mod session;
+pub mod trace;
 pub mod types;
 pub mod wallet;
