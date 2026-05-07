@@ -173,20 +173,32 @@ impl Wallet for CdkWallet {
                 token_str.len(),
                 &token_str[..token_str.len().min(20)]
             );
-            let cdk_amount = match self
-                .wallet
-                .receive(&token_str, ReceiveOptions::default())
-                .await
-            {
-                Ok(amount) => amount,
-                Err(e) => {
-                    tracing::error!("[NUT-00] CDK receive failed: {e}");
-                    return Err(WalletError::TokenRejected(format!("CDK receive: {e}")));
+
+            let mut last_err = String::new();
+            for attempt in 0..3 {
+                match self
+                    .wallet
+                    .receive(&token_str, ReceiveOptions::default())
+                    .await
+                {
+                    Ok(amount) => {
+                        let amount = Amount(u64::from(amount));
+                        tracing::info!("[NUT-00] Token received successfully: {} sat", amount.0);
+                        return Ok(amount);
+                    }
+                    Err(e) => {
+                        last_err = format!("{e}");
+                        tracing::warn!("[NUT-00] Receive attempt {}/3 failed: {e}", attempt + 1);
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                    }
                 }
-            };
-            let amount = Amount(u64::from(cdk_amount));
-            tracing::info!("[NUT-00] Token received successfully: {} sat", amount.0);
-            Ok(amount)
+            }
+            tracing::error!("[NUT-00] CDK receive failed after 3 attempts: {last_err}");
+            Err(WalletError::TokenRejected(format!(
+                "CDK receive: {last_err}"
+            )))
         }
     }
 
