@@ -120,7 +120,7 @@ jobs:
           <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>TollGate Protocol Traces</title>
+            <title>TollGate — Bootstrap Token Payment</title>
             <script type="module">
               import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
               mermaid.initialize({
@@ -130,46 +130,220 @@ jobs:
               });
             </script>
             <style>
-              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f6f8fa; }
-              h1 { color: #1f2328; border-bottom: 1px solid #d1d9e0; padding-bottom: 12px; }
-              .info { background: #ddf4ff; border: 1px solid #54aeff; border-radius: 6px; padding: 12px 16px; margin-bottom: 20px; }
-              .info code { background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
-              .mermaid { background: white; border: 1px solid #d1d9e0; border-radius: 6px; padding: 20px; overflow-x: auto; }
-              pre { background: #1f2328; color: #e6edf3; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
-              a { color: #0969da; }
-              details { margin-bottom: 16px; }
-              summary { cursor: pointer; font-weight: 600; color: #1f2328; }
+              :root { --buyer: #0969da; --seller: #1a7f37; --mint: #9a6700; --bg: #f6f8fa; --card: #ffffff; --border: #d1d9e0; --text: #1f2328; --muted: #656d76; }
+              * { box-sizing: border-box; margin: 0; padding: 0; }
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 960px; margin: 0 auto; padding: 24px; background: var(--bg); color: var(--text); line-height: 1.6; }
+              header { margin-bottom: 32px; }
+              header h1 { font-size: 1.75rem; margin-bottom: 4px; }
+              header p { color: var(--muted); font-size: 0.95rem; }
+              h2 { font-size: 1.25rem; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+              .actors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+              .actor { padding: 14px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); }
+              .actor h3 { font-size: 0.95rem; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+              .actor p { font-size: 0.85rem; color: var(--muted); }
+              .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+              .dot-buyer { background: var(--buyer); }
+              .dot-seller { background: var(--seller); }
+              .dot-mint { background: var(--mint); }
+              .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 24px; overflow-x: auto; margin-bottom: 24px; }
+              .no-data { color: var(--muted); font-style: italic; padding: 16px; text-align: center; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+              .legend { font-size: 0.82rem; color: var(--muted); margin: -16px 0 24px; }
+              .step { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-bottom: 12px; }
+              .step-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+              .step-num { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 24px; }
+              .step-dir { font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
+              .step-dir.req { background: #ddf4ff; color: var(--buyer); }
+              .step-dir.res { background: #dafbe1; color: var(--seller); }
+              .step-title { font-weight: 600; font-size: 0.95rem; }
+              .step-explain { font-size: 0.88rem; color: var(--muted); margin-bottom: 8px; }
+              .step-meta { font-size: 0.78rem; color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap; }
+              .step-meta code { background: rgba(0,0,0,0.04); padding: 1px 5px; border-radius: 3px; font-size: 0.78rem; }
+              details { margin: 24px 0; }
+              summary { cursor: pointer; font-weight: 600; color: var(--text); font-size: 0.9rem; }
+              pre { background: var(--text); color: #e6edf3; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; max-height: 400px; }
+              @media (max-width: 640px) { .actors { grid-template-columns: 1fr; } }
             </style>
           </head>
           <body>
-            <h1>TollGate Protocol Trace</h1>
-            <div class="info">
-              Auto-generated from <code>cdk_bootstrap_lifecycle</code> integration test run on <code>testnut.cashu.space</code>.
-              See <a href="trace.json">trace.json</a> for machine-readable output.
-            </div>
+            <header>
+              <h1>TollGate Protocol Trace</h1>
+              <p>Bootstrap token payment — auto-generated from <code>cdk_bootstrap_lifecycle</code> integration test</p>
+            </header>
+
+            <section>
+              <h2>What is happening here?</h2>
+              <p style="margin-bottom:16px">
+                A <strong>Buyer</strong> wants network access from a <strong>Seller</strong>.
+                The Buyer pays with <a href="https://cashu.space/" target="_blank">Cashu ecash</a> —
+                digital bearer tokens that work like electronic cash.
+                The <strong>Mint</strong> issues and verifies these tokens.
+                No accounts, no registration — the Buyer just sends tokens and gets access.
+              </p>
+              <div class="actors">
+                <div class="actor">
+                  <h3><span class="dot dot-buyer"></span>Buyer</h3>
+                  <p>Wants network access. Pays the Seller with Cashu ecash tokens minted from the Mint.</p>
+                </div>
+                <div class="actor">
+                  <h3><span class="dot dot-seller"></span>Seller</h3>
+                  <p>Sells bandwidth at <strong>10 sat/second + 1 sat/byte</strong>. Verifies every token with the Mint before granting access.</p>
+                </div>
+                <div class="actor">
+                  <h3><span class="dot dot-mint"></span>Mint</h3>
+                  <p>Issues and verifies Cashu ecash. This test uses <code>testnut.cashu.space</code> (auto-paying fake wallet).</p>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h2>Protocol sequence</h2>
+              <p class="legend">
+                Solid arrows (→) are requests &middot;
+                Dashed arrows (⇢) are responses &middot;
+                Numbers are auto-sequenced &middot;
+                Timing is relative to start
+              </p>
           HTMLEOF
 
           if [ -f "$TRACE_DIR/cdk_bootstrap_lifecycle.mmd" ]; then
-            echo '<h2>Sequence Diagram</h2>' >> pages/index.html
             echo '<div class="mermaid">' >> pages/index.html
             cat "$TRACE_DIR/cdk_bootstrap_lifecycle.mmd" >> pages/index.html
             echo '</div>' >> pages/index.html
+          else
+            echo '<p class="no-data">No sequence diagram — test did not produce trace artifacts.</p>' >> pages/index.html
           fi
 
-          if [ -f "$TRACE_DIR/cdk_bootstrap_lifecycle.md" ]; then
-            echo '<details><summary>Step-by-step report</summary><pre>' >> pages/index.html
-            cat "$TRACE_DIR/cdk_bootstrap_lifecycle.md" >> pages/index.html
-            echo '</pre></details>' >> pages/index.html
-          fi
+          cat >> pages/index.html << 'HTMLEOF'
+            </section>
+
+            <section>
+              <h2>Step-by-step walkthrough</h2>
+              <div id="steps"><p class="no-data">Loading trace data…</p></div>
+            </section>
+
+            <section>
+              <details>
+                <summary>Raw JSON trace (machine-readable)</summary>
+                <pre id="raw-json"></pre>
+              </details>
+            </section>
+
+            <script>
+          const STEP_INFO = {
+            'MintQuote': {
+              Request: {
+                title: 'Buyer requests ecash from the Mint',
+                explain: 'The Buyer needs digital cash to pay the Seller. It asks the Mint to create a Lightning invoice for new ecash. On testnet, the FakeWallet auto-pays instantly.'
+              },
+              Response: {
+                title: 'Mint issues the ecash tokens',
+                explain: 'The Mint creates ecash tokens and sends them to the Buyer. These are blind-signed proofs — the Mint can verify them later but cannot trace them to the Buyer.'
+              }
+            },
+            'Announce': {
+              Request: {
+                title: 'Peer announces itself',
+                explain: 'Each peer identifies itself as a TollGate node: protocol version (v1), what it meters (bytes), and capabilities (0x01 = Spilman channel support). No handshake needed — peers are already authenticated by the transport layer.'
+              }
+            },
+            'PriceSheet': {
+              Request: {
+                title: 'Seller offers pricing',
+                explain: 'The Seller sends a PriceSheet: one product at 10 sat/second + 1 sat/byte, with 1000× scaling for sub-satoshi precision. This is a take-it-or-leave-it offer — the Buyer picks a product or disconnects.'
+              }
+            },
+            'Accept': {
+              Request: {
+                title: 'Buyer accepts the offer',
+                explain: 'The Buyer selects a product and proposes a metering interval range (2.5s–10s). Both sides deterministically compute the final interval as the midpoint of the overlapping range.'
+              }
+            },
+            'BootstrapToken': {
+              Request: {
+                title: 'Buyer pays with Cashu ecash',
+                explain: 'The Buyer creates a Cashu ecash token and sends it to the Seller. This is real digital cash — the Seller will verify it with the Mint before granting any access. No verification = no service.'
+              }
+            },
+            'BootstrapAck': {
+              Response: {
+                title: 'Seller confirms payment accepted',
+                explain: 'The Seller verified the token with the Mint and credited the Buyer\'s balance. Balance is tracked at 1000× precision (milli-sats) so sub-sat costs accumulate correctly across metering intervals. The Buyer now has network access.'
+              }
+            },
+            'MeteringReport': {
+              Request: {
+                title: 'Metering interval — both sides report usage',
+                explain: 'Every ~5 seconds, both sides exchange cumulative counters: how many bytes delivered, how many received. The Seller deducts the interval cost from the Buyer\'s balance: cost = elapsed_ms × pps + bytes_delivered × ppu (all in scaled units).'
+              }
+            },
+            'Disconnect': {
+              Request: {
+                title: 'Buyer disconnects',
+                explain: 'The Buyer is done and sends Disconnect. The Seller confirms and immediately revokes network access. Any remaining bootstrap balance is kept by the Seller (v1 behavior).'
+              }
+            }
+          };
+
+          fetch('trace.json')
+            .then(function(r) { return r.ok ? r.text() : Promise.reject('no trace'); })
+            .then(function(text) {
+              var events = text.trim().split('\n').filter(function(l) { return l.length > 0; }).map(function(l) { return JSON.parse(l); });
+
+              document.getElementById('raw-json').textContent = text;
+
+              if (events.length === 0) {
+                document.getElementById('steps').innerHTML = '<p class="no-data">No events recorded.</p>';
+                return;
+              }
+
+              var firstTs = events[0].timestamp_ms;
+              var html = '';
+
+              for (var i = 0; i < events.length; i++) {
+                var e = events[i];
+                var delta = e.timestamp_ms - firstTs;
+                var dir = e.direction;
+                var dirClass = dir === 'Response' ? 'res' : 'req';
+                var dirLabel = dir === 'Response' ? 'Response' : 'Request';
+
+                var info = (STEP_INFO[e.msg_type] || {})[dir] || {
+                  title: e.msg_type,
+                  explain: ''
+                };
+
+                var arrow = (e.actor && e.target)
+                  ? e.actor + ' → ' + e.target
+                  : e.actor || '';
+
+                html += '<div class="step">'
+                  + '<div class="step-head">'
+                  + '<span class="step-num">#' + (i + 1) + '</span>'
+                  + '<span class="step-dir ' + dirClass + '">' + dirLabel + '</span>'
+                  + '<span class="step-title">' + info.title + '</span>'
+                  + '</div>'
+                  + '<p class="step-explain">' + info.explain + '</p>'
+                  + '<div class="step-meta">'
+                  + '<span>' + arrow + '</span>'
+                  + '<span><code>' + e.payload + '</code></span>'
+                  + '<span>Spec: <code>' + e.spec_ref + '</code></span>'
+                  + '<span>+' + delta + 'ms</span>'
+                  + '</div>'
+                  + '</div>';
+              }
+
+              document.getElementById('steps').innerHTML = html;
+            })
+            .catch(function() {
+              document.getElementById('steps').innerHTML = '<p class="no-data">No trace data available — the test may not have completed.</p>';
+            });
+            </script>
+          </body>
+          </html>
+          HTMLEOF
 
           if [ -f "$TRACE_DIR/cdk_bootstrap_lifecycle.json" ]; then
             cp "$TRACE_DIR/cdk_bootstrap_lifecycle.json" pages/trace.json
-            echo '<details><summary>Raw JSON trace</summary><pre>' >> pages/index.html
-            cat "$TRACE_DIR/cdk_bootstrap_lifecycle.json" >> pages/index.html
-            echo '</pre></details>' >> pages/index.html
           fi
-
-          echo '</body></html>' >> pages/index.html
 
       - name: Upload protocol report
         if: always()

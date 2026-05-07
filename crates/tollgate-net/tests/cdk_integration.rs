@@ -126,12 +126,12 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("");
     tracing::info!("━━━ Step 2: Create Client Wallet + Mint Tokens ━━━");
     trace_event!(
-        "Client",
+        "Buyer",
         "Mint",
         "Request",
         "MintQuote",
         "NUT-04",
-        "200 sat from testnut"
+        "request 200 sat from testnut"
     );
     tracing::info!("[NUT-04] Minting 200 sat from testnut (FakeWallet auto-pays)");
     let client_wallet = Arc::new(
@@ -146,7 +146,7 @@ async fn cdk_bootstrap_lifecycle() {
     let client_bal = client_wallet.total_balance().await.expect("client balance");
     trace_event!(
         "Mint",
-        "Client",
+        "Buyer",
         "Response",
         "MintQuote",
         "NUT-04",
@@ -192,8 +192,8 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("Per docs/design/core/tollgate-protocol.md §3.1: Peer announcement");
     let client_announce = client_session.create_announce();
     trace_event!(
-        "Client",
-        "Provider",
+        "Buyer",
+        "Seller",
         "Request",
         "Announce",
         spec_ref(MessageType::Announce),
@@ -214,8 +214,8 @@ async fn cdk_bootstrap_lifecycle() {
 
     let provider_announce = provider_session.create_announce();
     trace_event!(
-        "Provider",
-        "Client",
+        "Seller",
+        "Buyer",
         "Request",
         "Announce",
         spec_ref(MessageType::Announce),
@@ -226,8 +226,8 @@ async fn cdk_bootstrap_lifecycle() {
 
     let price_sheet = provider_session.create_price_sheet();
     trace_event!(
-        "Provider",
-        "Client",
+        "Seller",
+        "Buyer",
         "Request",
         "PriceSheet",
         spec_ref(MessageType::PriceSheet),
@@ -270,8 +270,8 @@ async fn cdk_bootstrap_lifecycle() {
         channel_funding: vec![],
     });
     trace_event!(
-        "Client",
-        "Provider",
+        "Buyer",
+        "Seller",
         "Request",
         "Accept",
         spec_ref(MessageType::Accept),
@@ -322,8 +322,8 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("Provider balance BEFORE receive: {pre_bal} sat");
 
     trace_event!(
-        "Client",
-        "Provider",
+        "Buyer",
+        "Seller",
         "Request",
         "BootstrapToken",
         spec_ref(MessageType::BootstrapToken),
@@ -344,8 +344,8 @@ async fn cdk_bootstrap_lifecycle() {
     match &msgs[0] {
         Message::BootstrapAck(ack) => {
             trace_event!(
-                "Provider",
-                "Client",
+                "Seller",
+                "Buyer",
                 "Response",
                 "BootstrapAck",
                 spec_ref(MessageType::BootstrapAck),
@@ -426,8 +426,8 @@ async fn cdk_bootstrap_lifecycle() {
         });
 
         trace_event!(
-            "Client",
-            "Provider",
+            "Buyer",
+            "Seller",
             "Request",
             "MeteringReport",
             spec_ref(MessageType::MeteringReport),
@@ -467,8 +467,8 @@ async fn cdk_bootstrap_lifecycle() {
     });
 
     trace_event!(
-        "Client",
-        "Provider",
+        "Buyer",
+        "Seller",
         "Request",
         "BootstrapToken",
         spec_ref(MessageType::BootstrapToken),
@@ -478,8 +478,8 @@ async fn cdk_bootstrap_lifecycle() {
     match &msgs[0] {
         Message::BootstrapAck(ack) => {
             trace_event!(
-                "Provider",
-                "Client",
+                "Seller",
+                "Buyer",
                 "Response",
                 "BootstrapAck",
                 spec_ref(MessageType::BootstrapAck),
@@ -506,8 +506,8 @@ async fn cdk_bootstrap_lifecycle() {
     tracing::info!("━━━ Step 10: Session Teardown ━━━");
     tracing::info!("Per docs/design/core/tollgate-protocol.md §3.5: Graceful disconnect");
     trace_event!(
-        "Client",
-        "Provider",
+        "Buyer",
+        "Seller",
         "Request",
         "Disconnect",
         spec_ref(MessageType::Disconnect),
