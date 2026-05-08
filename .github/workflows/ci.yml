@@ -236,6 +236,7 @@ jobs:
               .dot-seller { background: var(--seller); }
               .dot-mint { background: var(--mint); }
               .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 24px; overflow-x: auto; margin-bottom: 24px; max-width: 100%; position: relative; -webkit-overflow-scrolling: touch; }
+              .mermaid svg { max-width: 100%; height: auto; }
               .mermaid::after { content: '\2190 scroll \2192'; display: block; text-align: center; color: var(--muted); font-size: 0.72rem; padding-top: 8px; }
               @media (min-width: 800px) { .mermaid::after { display: none; } }
               .no-data { color: var(--muted); font-style: italic; padding: 16px; text-align: center; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
