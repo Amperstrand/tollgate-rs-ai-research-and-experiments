@@ -983,9 +983,16 @@ jobs:
             });
 
           var channelStates = [];
+          var msgStateMap = [];
           fetch('spilman-channel-states.json')
             .then(function(r) { return r.ok ? r.json() : Promise.reject('no states'); })
-            .then(function(s) { channelStates = s; })
+            .then(function(s) {
+              channelStates = s;
+              msgStateMap = s.reduce(function(m, st, i) {
+                if (st.direction === 'Request' || st.direction === 'Response') m.push(i);
+                return m;
+              }, []);
+            })
             .catch(function() { /* states not available */ });
 
           var popupEl = null;
@@ -1098,8 +1105,9 @@ jobs:
                   }
                 }
               }
-              if (clickedIdx >= 0 && channelStates[clickedIdx]) {
-                showStatePopup(clickedIdx, e.pageX, e.pageY);
+              var stateIdx = msgStateMap[clickedIdx];
+              if (clickedIdx >= 0 && stateIdx !== undefined && channelStates[stateIdx]) {
+                showStatePopup(stateIdx, e.pageX, e.pageY);
               }
             });
           }
