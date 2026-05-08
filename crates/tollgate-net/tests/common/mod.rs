@@ -515,20 +515,13 @@ fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u6
     out.push_str("ms\n");
 }
 
-/// Escapes characters that are special in Mermaid diagram syntax.
-///
-/// Mermaid uses `{}` for block delimiters (alt, opt, loop, rect),
-/// `<>` for some HTML-like constructs, and `#` for entity references.
-/// Payload text inserted into Note/arrow labels must escape these.
 pub fn mermaid_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
-            '{' => out.push_str("#123;"),
-            '}' => out.push_str("#125;"),
-            '<' => out.push_str("#lt;"),
-            '>' => out.push_str("#gt;"),
-            '#' => out.push_str("#35;"),
+            '{' => out.push('('),
+            '}' => out.push(')'),
+            ';' => out.push(','),
             _ => out.push(c),
         }
     }
