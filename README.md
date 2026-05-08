@@ -22,8 +22,52 @@ project and consumes the same `tollgate-core`.
 
 → **Start here:** [tollgate-intro.md](docs/design/core/tollgate-intro.md) — goals, architecture, payment model, security.
 
-> tollgate-rs is in the design phase. The protocol and design documents
-> are being finalized before implementation begins.
+## Implementation Status
+
+Milestones M1–M2 are complete. M3 (Spilman payment channels) has a working
+demonstration against a public Cashu mint.
+
+| Milestone | Description | Status |
+|-----------|-------------|--------|
+| M1 | Core Types, Protocol Codec, Peer State Machine | ✅ Complete |
+| M2 | Bootstrap Token Payment, CDK Wallet Integration | ✅ Complete |
+| M3 | Spilman Payment Channels (demo) | 🔄 In Progress |
+| M4 | tollgate-net — IP Peering Deployment | Open |
+| M5 | Dynamic Pricing and Operator Controls | Open |
+| M6 | FIPS Mesh Integration | Open |
+| M7 | Production Hardening and Packaging | Open |
+
+### What's Implemented
+
+- **`tollgate-core`** — Full CBOR codec (minicbor), protocol messages, peer state machine,
+  quota exhaustion (Terminate/Restrict/Allow), metering types
+- **`tollgate-net`** — Binary with CDK-based Cashu wallet for bootstrap token operations
+  (receive, verify, send, balance) and Spilman channel demo
+- **Protocol trace visualization** — Interactive Mermaid diagrams of protocol flows,
+  deployed to GitHub Pages with clickable per-step channel state popups
+
+### Dependencies and Attribution
+
+| Component | Source | What We Use It For |
+|-----------|--------|--------------------|
+| **`cdk`** v0.16 | [cashubtc/cdk](https://github.com/cashubtc/cdk) (crates.io) | Cashu wallet operations: token receive/verify, balance tracking, mint HTTP client |
+| **`cdk-spilman`** v0.15.1 | [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) (git) | Spilman channel primitives: `construct_proofs()`, `parse_keyset_info_from_json()`, `KeysetInfo` |
+| **`cashu`** | [cashubtc/cdk](https://github.com/cashubtc/cdk) at rev `63866dc6` (git) | Cashu proof types (`Proof`, `Secret`, `Amount`) used in test artifacts |
+| **`minicbor`** | crates.io | CBOR encoding for wire protocol (ADR-0002: integer keys, no_std compatible) |
+| **`tollgate-core`** | Our implementation | Protocol codec, state machine, pricing types, quota exhaustion |
+| **`SpilmanChannelManager`** | Our implementation (`spilman_wallet.rs`) | HTTP orchestration: keyset fetch, mint quote, blind signature → proof construction. Calls `cdk-spilman` for crypto primitives |
+| **Channel lifecycle test** | Our implementation (`spilman_integration.rs`) | End-to-end Spilman channel flow against a live mint, with trace artifact generation for visualization |
+
+**What's ours vs what's library code:**
+
+- The **Spilman crypto** (blinding, proof construction, DLEQ verification) comes from
+  `cdk-spilman` (SatsAndSports). We do not implement the cryptographic primitives.
+- The **channel orchestration** (HTTP calls to mint, quote polling, balance update signing,
+  cooperative close flow) is our code in `SpilmanChannelManager`. It wires the library
+  primitives together into a working channel lifecycle.
+- The **protocol codec and state machine** in `tollgate-core` is entirely our implementation.
+- The **visualization** (Mermaid diagrams, interactive state popups, denomination bars) is
+  our implementation, generated from test trace artifacts.
 
 ## Overview
 
@@ -118,7 +162,8 @@ tollgate-core (lib)              Pure logic, resource-agnostic
     ├── tollgate-net (this binary)  Network forwarding, feature-flagged per OS
     │     ├── Linux / macOS / Windows / OpenWrt
     │     ├── FIPS or IP network adapter
-    │     └── Cashu wallet (cdk-spilman based)
+    │     ├── Cashu wallet (cdk — bootstrap tokens)
+    │     └── Spilman channels (cdk-spilman — payment channels)
     │
     └── tollgate-net-esp32 (separate project)
           ├── ESP-IDF / constrained runtime
@@ -135,7 +180,8 @@ different runtime constraints.
 
 - [TollGate v1](https://github.com/OpenTollGate/tollgate-module-basic-go) — Go implementation for OpenWrt, tree topology, Cashu token payments
 - [FIPS](https://github.com/nicobao/fips) — Self-organizing encrypted mesh network
-- [Cashu Spilman Channels](reference/cashu_spilman_channels/ARCHITECTURE.md) — Unidirectional payment channels for Cashu ecash
+- [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) — Cashu Spilman channel crypto primitives (used as `cdk-spilman` dependency)
+- [CDK](https://github.com/cashubtc/cdk) — Cashu Development Kit, official Rust Cashu wallet library
 - [Cashu Protocol](https://cashu.space/) — Ecash protocol
 
 ## License

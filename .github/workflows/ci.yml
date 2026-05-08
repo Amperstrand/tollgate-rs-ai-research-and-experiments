@@ -310,12 +310,12 @@ jobs:
               .timelock::after { content: 'expiry unlock'; position: absolute; left: 70%; top: 14px; transform: translateX(-50%); color: var(--muted); font-size: 0.72rem; }
               html { scroll-padding-top: 60px; }
               @media (max-width: 720px) { .lesson-grid, .claim-lab-grid { grid-template-columns: 1fr; } }
-              #state-popup { display: none; position: fixed; z-index: 200; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.18); max-width: 520px; min-width: 340px; max-height: 80vh; overflow-y: auto; font-size: 0.85rem; }
-              #state-popup .sp-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); background: #f6f8fa; border-radius: 12px 12px 0 0; }
+              #state-popup { display: none; position: fixed; z-index: 200; top: 0; left: 0; right: 0; background: var(--card); border-bottom: 2px solid var(--border); box-shadow: 0 8px 32px rgba(0,0,0,0.18); max-height: 90vh; overflow-y: auto; font-size: 0.85rem; }
+              #state-popup .sp-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; border-bottom: 1px solid var(--border); background: #f6f8fa; }
               #state-popup .sp-header h4 { font-size: 0.95rem; margin: 0; }
               #state-popup .sp-close { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--muted); padding: 0 4px; }
               #state-popup .sp-close:hover { color: var(--text); }
-              #state-popup .sp-body { padding: 14px 16px; }
+              #state-popup .sp-body { padding: 14px 24px; }
               .sp-state-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
               .sp-state-card { border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: #fbfcfd; }
               .sp-state-card h5 { font-size: 0.82rem; margin: 0 0 6px; }
@@ -350,7 +350,7 @@ jobs:
               .sp-denom-legend { font-size: 0.7rem; color: var(--muted); margin-top: 8px; }
               .sp-denom-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
               @media (max-width: 520px) { .sp-denom-bar { flex-wrap: wrap; } .sp-denom-block { min-width: 28px; } }
-              @media (max-width: 520px) { #state-popup { min-width: 280px; max-width: 95vw; } .sp-state-grid { grid-template-columns: 1fr; } }
+              @media (max-width: 520px) { #state-popup { max-height: 95vh; } .sp-state-grid { grid-template-columns: 1fr; } }
              </style>
           </head>
           <body>
@@ -1131,13 +1131,6 @@ jobs:
             window._spFullSecrets = cs.alice_proofs.map(function(p) { return p.full_secret || p.secret_preview; });
 
             popupEl.style.display = 'block';
-            var pw = popupEl.offsetWidth, ph = popupEl.offsetHeight;
-            var left = x + 16, top = y - 20;
-            if (left + pw > window.innerWidth - 16) left = x - pw - 16;
-            if (top + ph > window.innerHeight - 16) top = window.innerHeight - ph - 16;
-            if (top < 16) top = 16;
-            popupEl.style.left = left + 'px';
-            popupEl.style.top = top + 'px';
           }
 
           function renderClaimTab(cp, key) {

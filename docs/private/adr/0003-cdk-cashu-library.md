@@ -31,14 +31,9 @@ Use **`cdk`** (cashubtc/cdk) as the Cashu library for `tollgate-core`.
 
 ### Spilman Channels (M3)
 
-**No current Rust library implements Spilman channels.** CDK has no Spilman API in its wallet or mint traits. The only reference is a meeting agenda note.
+We use **[SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels)** (`cdk-spilman` crate) for Spilman channel crypto primitives: proof construction, keyset parsing, and DLEQ operations.
 
-Options for M3:
-1. Implement Spilman channels ourselves on top of CDK's proof primitives
-2. Wait for CDK to add Spilman support
-3. Use the reference implementation in `reference/cashu_spilman_channels/`
-
-This decision is deferred to M3 planning.
+The channel orchestration (HTTP calls to mint, quote polling, balance update signing, cooperative close flow) is our own code in `SpilmanChannelManager` (`spilman_wallet.rs`). It calls `cdk-spilman` for the cryptographic operations and handles the HTTP/network layer itself.
 
 ### Token Format Notes
 
