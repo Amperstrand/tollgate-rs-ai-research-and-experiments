@@ -23,10 +23,17 @@ serde_json = { version = "1", optional = true }
 
 [features]
 default = []
-spilman = ["dep:cdk-spilman", "dep:cashu", "cdk-spilman/wallet", "dep:serde_json"]
+spilman = [
+    "dep:cdk-spilman",
+    "dep:cashu",
+    "cdk-spilman/wallet",
+    "cdk-spilman/configurable-host-reqwest",
+    "dep:serde_json",
+]
 
 [dev-dependencies]
 rand = "0.9"
+async-trait = "0.1"
 
 [lints]
 workspace = true
