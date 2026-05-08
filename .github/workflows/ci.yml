@@ -337,6 +337,19 @@ jobs:
               .sp-claim-val { font-size: 0.78rem; color: var(--muted); }
               .sp-timelock-mini { height: 6px; border-radius: 999px; background: linear-gradient(90deg, #fee2e2 0 70%, #dcfce7 70% 100%); margin: 8px 0 4px; }
               .sp-timelock-label { font-size: 0.7rem; color: var(--muted); display: flex; justify-content: space-between; }
+              .sp-denom-section { background: #f8fbff; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+              .sp-denom-title { font-size: 0.82rem; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+              .sp-denom-bar { display: flex; gap: 3px; align-items: stretch; min-height: 48px; flex-wrap: wrap; }
+              .sp-denom-block { display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 4px; padding: 6px 4px; min-width: 0; transition: opacity 0.15s ease; }
+              .sp-denom-block:hover { opacity: 0.85; }
+              .sp-denom-amount { font-size: 0.72rem; font-weight: 600; line-height: 1.2; }
+              .sp-denom-power { font-size: 0.62rem; opacity: 0.75; margin-top: 2px; }
+              .sp-denom-count { font-size: 0.6rem; opacity: 0.7; margin-top: 1px; }
+              .sp-denom-split { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; font-size: 0.8rem; }
+              .sp-denom-split-arrow { display: inline-block; width: 16px; text-align: center; }
+              .sp-denom-legend { font-size: 0.7rem; color: var(--muted); margin-top: 8px; }
+              .sp-denom-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
+              @media (max-width: 520px) { .sp-denom-bar { flex-wrap: wrap; } .sp-denom-block { min-width: 28px; } }
               @media (max-width: 520px) { #state-popup { min-width: 280px; max-width: 95vw; } .sp-state-grid { grid-template-columns: 1fr; } }
              </style>
           </head>
@@ -995,6 +1008,20 @@ jobs:
             })
             .catch(function() { /* states not available */ });
 
+          function superscript(n) {
+            var sups = {'0':'\u2070','1':'\u00B9','2':'\u00B2','3':'\u00B3','4':'\u2074','5':'\u2075','6':'\u2076','7':'\u2077','8':'\u2078','9':'\u2079'};
+            return String(n).split('').map(function(c) { return sups[c] || c; }).join('');
+          }
+
+          function decomposeDenoms(amount) {
+            if (amount <= 0) return '0';
+            var parts = [];
+            for (var d = 1; d <= amount; d *= 2) {
+              if (amount & d) parts.unshift(d);
+            }
+            return parts.join(' + ');
+          }
+
           var popupEl = null;
           function closeStatePopup() { if (popupEl) popupEl.style.display = 'none'; }
 
@@ -1012,6 +1039,59 @@ jobs:
             html += '<div class="sp-state-card" style="border-left:3px solid var(--seller)"><h5 style="color:var(--seller)">🔑 Charlie (Seller)</h5><ul>';
             cs.charlie_holds.forEach(function(h) { html += '<li>' + escHtml(h) + '</li>'; });
             html += '</ul></div></div>';
+
+            if (cs.alice_proofs.length > 0) {
+              var totalFunding = cs.alice_proofs.reduce(function(a,p) { return a + p.amount; }, 0);
+              var maxDenom = Math.pow(2, Math.floor(Math.log2(totalFunding)));
+
+              var denoms = [];
+              for (var d = 1; d <= maxDenom; d *= 2) denoms.push(d);
+              denoms.reverse();
+
+              var proofAmounts = cs.alice_proofs.map(function(p) { return p.amount; });
+
+              html += '<div class="sp-denom-section">';
+              html += '<div class="sp-denom-title">Token Denominations (' + totalFunding + ' sat)</div>';
+              html += '<div class="sp-denom-bar">';
+
+              denoms.forEach(function(den) {
+                var count = proofAmounts.filter(function(a) { return a === den; }).length;
+                var power = Math.log2(den);
+                var widthPct = Math.max(8, (den / maxDenom) * 100);
+                if (count > 0) {
+                  html += '<div class="sp-denom-block" style="width:' + widthPct + '%;background:#0969da;color:#fff">';
+                  html += '<div class="sp-denom-amount">' + den + ' sat</div>';
+                  html += '<div class="sp-denom-power">2' + superscript(power) + '</div>';
+                  if (count > 1) html += '<div class="sp-denom-count">\u00D7' + count + '</div>';
+                  html += '</div>';
+                } else {
+                  html += '<div class="sp-denom-block" style="width:' + widthPct + '%;background:#eff2f5;color:#8b949e;opacity:0.5">';
+                  html += '<div class="sp-denom-amount">' + den + '</div>';
+                  html += '</div>';
+                }
+              });
+
+              html += '</div>';
+              html += '<div class="sp-denom-legend">';
+              html += '<span class="sp-denom-legend-dot" style="background:#0969da"></span>Funded token &nbsp; ';
+              html += '<span class="sp-denom-legend-dot" style="background:#eff2f5;border:1px solid #d1d9e0"></span>Not used';
+              html += '</div>';
+
+              var balance = cs.cumulative_balance_sat;
+              var remaining = cs.capacity_remaining_sat;
+              var isSettlement = s.msg_type === 'ChannelClose' || s.msg_type === 'SwapProofs' || s.msg_type === 'SwapComplete' || s.msg_type === 'Refund' || (s.msg_type && s.msg_type.indexOf('ClaimPath') === 0);
+              if (isSettlement) {
+                html += '<div class="sp-denom-split">';
+                html += '<div style="display:flex;justify-content:space-between;margin-top:4px">';
+                html += '<div><span style="color:var(--seller);font-weight:600">Charlie settles:</span> ' + balance + ' sat = ' + decomposeDenoms(balance) + '</div>';
+                html += '</div>';
+                html += '<div style="display:flex;justify-content:space-between">';
+                html += '<div><span style="color:var(--buyer);font-weight:600">Alice refund:</span> ' + remaining + ' sat = ' + decomposeDenoms(remaining) + '</div>';
+                html += '</div></div>';
+              }
+
+              html += '</div>';
+            }
 
             if (cs.alice_proofs.length > 0) {
               html += '<div style="margin-bottom:12px"><div style="font-size:0.8rem;font-weight:600;margin-bottom:4px">Proofs in channel</div>';
