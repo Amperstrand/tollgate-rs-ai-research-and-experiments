@@ -310,7 +310,35 @@ jobs:
               .timelock::after { content: 'expiry unlock'; position: absolute; left: 70%; top: 14px; transform: translateX(-50%); color: var(--muted); font-size: 0.72rem; }
               html { scroll-padding-top: 60px; }
               @media (max-width: 720px) { .lesson-grid, .claim-lab-grid { grid-template-columns: 1fr; } }
-            </style>
+              #state-popup { display: none; position: fixed; z-index: 200; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.18); max-width: 520px; min-width: 340px; max-height: 80vh; overflow-y: auto; font-size: 0.85rem; }
+              #state-popup .sp-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); background: #f6f8fa; border-radius: 12px 12px 0 0; }
+              #state-popup .sp-header h4 { font-size: 0.95rem; margin: 0; }
+              #state-popup .sp-close { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--muted); padding: 0 4px; }
+              #state-popup .sp-close:hover { color: var(--text); }
+              #state-popup .sp-body { padding: 14px 16px; }
+              .sp-state-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+              .sp-state-card { border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: #fbfcfd; }
+              .sp-state-card h5 { font-size: 0.82rem; margin: 0 0 6px; }
+              .sp-state-card ul { margin: 0; padding-left: 16px; font-size: 0.8rem; color: var(--muted); }
+              .sp-balance-bar { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; margin: 8px 0 4px; background: var(--border); }
+              .sp-balance-bar-fill { height: 100%; }
+              .sp-proof-row { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; padding: 3px 0; }
+              .sp-proof-amount { font-weight: 600; min-width: 32px; }
+              .sp-proof-hex { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+              .sp-copy-btn { background: none; border: 1px solid var(--border); border-radius: 3px; font-size: 0.7rem; cursor: pointer; padding: 1px 6px; color: var(--muted); }
+              .sp-copy-btn:hover { background: rgba(0,0,0,0.04); color: var(--text); }
+              .sp-claim-tabs { display: flex; gap: 0; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+              .sp-claim-tab { flex: 1; text-align: center; padding: 8px 6px; font-size: 0.8rem; font-weight: 500; cursor: pointer; background: var(--card); border: none; color: var(--muted); border-right: 1px solid var(--border); }
+              .sp-claim-tab:last-child { border-right: none; }
+              .sp-claim-tab.active { background: #ddf4ff; color: var(--buyer); font-weight: 600; }
+              .sp-claim-content { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #f8fbff; }
+              .sp-claim-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+              .sp-claim-label { font-size: 0.78rem; font-weight: 600; }
+              .sp-claim-val { font-size: 0.78rem; color: var(--muted); }
+              .sp-timelock-mini { height: 6px; border-radius: 999px; background: linear-gradient(90deg, #fee2e2 0 70%, #dcfce7 70% 100%); margin: 8px 0 4px; }
+              .sp-timelock-label { font-size: 0.7rem; color: var(--muted); display: flex; justify-content: space-between; }
+              @media (max-width: 520px) { #state-popup { min-width: 280px; max-width: 95vw; } .sp-state-grid { grid-template-columns: 1fr; } }
+             </style>
           </head>
           <body>
             <nav class="section-nav" id="nav">
@@ -954,7 +982,133 @@ jobs:
               document.getElementById('claim-lab-content').innerHTML = '<p class="no-data">No claim lab data — the Spilman test may not have produced the artifact.</p>';
             });
 
-          waitForMermaid(function() { attachTooltips(allEvents); });
+          var channelStates = [];
+          fetch('spilman-channel-states.json')
+            .then(function(r) { return r.ok ? r.json() : Promise.reject('no states'); })
+            .then(function(s) { channelStates = s; })
+            .catch(function() { /* states not available */ });
+
+          var popupEl = null;
+          function closeStatePopup() { if (popupEl) popupEl.style.display = 'none'; }
+          document.getElementById('sp-close').addEventListener('click', closeStatePopup);
+
+          function showStatePopup(stepIdx, x, y) {
+            if (!popupEl) popupEl = document.getElementById('state-popup');
+            if (!channelStates || stepIdx >= channelStates.length) return;
+            var s = channelStates[stepIdx];
+            var cs = s.channel_state;
+            var html = '';
+
+            html += '<div class="sp-state-grid">';
+            html += '<div class="sp-state-card" style="border-left:3px solid var(--buyer)"><h5 style="color:var(--buyer)">🔑 Alice (Buyer)</h5><ul>';
+            cs.alice_holds.forEach(function(h) { html += '<li>' + escHtml(h) + '</li>'; });
+            html += '</ul></div>';
+            html += '<div class="sp-state-card" style="border-left:3px solid var(--seller)"><h5 style="color:var(--seller)">🔑 Charlie (Seller)</h5><ul>';
+            cs.charlie_holds.forEach(function(h) { html += '<li>' + escHtml(h) + '</li>'; });
+            html += '</ul></div></div>';
+
+            if (cs.alice_proofs.length > 0) {
+              html += '<div style="margin-bottom:12px"><div style="font-size:0.8rem;font-weight:600;margin-bottom:4px">Proofs in channel</div>';
+              cs.alice_proofs.forEach(function(p, pi) {
+                html += '<div class="sp-proof-row"><span class="sp-proof-amount">' + p.amount + ' sat</span><span class="sp-proof-hex">' + escHtml(p.secret_preview) + '</span>';
+                html += '<button class="sp-copy-btn" onclick="navigator.clipboard.writeText(window._spFullSecrets[' + pi + '])">copy</button></div>';
+              });
+              html += '</div>';
+            }
+
+            var balPct = cs.capacity_remaining_sat > 0 ? (cs.cumulative_balance_sat / (cs.cumulative_balance_sat + cs.capacity_remaining_sat)) * 100 : 100;
+            html += '<div style="margin-bottom:12px"><div style="font-size:0.8rem;font-weight:600">Balance: ' + cs.cumulative_balance_sat + ' sat paid / ' + cs.capacity_remaining_sat + ' sat remaining</div>';
+            html += '<div class="sp-balance-bar"><div class="sp-balance-bar-fill" style="width:' + balPct + '%;background:var(--seller)"></div><div class="sp-balance-bar-fill" style="width:' + (100 - balPct) + '%;background:var(--buyer);opacity:0.4"></div></div></div>';
+
+            if (cs.latest_signature_preview) {
+              html += '<div style="font-size:0.78rem;color:var(--muted);margin-bottom:12px">Latest sig: <code>' + escHtml(cs.latest_signature_preview) + '…</code></div>';
+            }
+
+            var cp = s.claim_paths;
+            var anyAvailable = cp.cooperative.available || cp.unilateral.available || cp.timeout.available;
+            if (anyAvailable) {
+              html += '<div class="sp-claim-tabs">';
+              html += '<button class="sp-claim-tab active" data-sp-tab="cooperative" onclick="window._switchClaimTab(\'cooperative\')">🤝 Cooperate</button>';
+              html += '<button class="sp-claim-tab" data-sp-tab="unilateral" onclick="window._switchClaimTab(\'unilateral\')">⚡ Force-close</button>';
+              html += '<button class="sp-claim-tab" data-sp-tab="timeout" onclick="window._switchClaimTab(\'timeout\')">⏰ Timeout</button>';
+              html += '</div>';
+              html += '<div id="sp-claim-output">';
+              html += renderClaimTab(cp, 'cooperative');
+              html += '</div>';
+              window._spClaimPaths = cp;
+            } else {
+              html += '<div style="font-size:0.82rem;color:var(--muted);font-style:italic;padding:8px 0">No claim paths available at this step.</div>';
+            }
+
+            document.getElementById('sp-title').textContent = 'Step ' + (stepIdx + 1) + ': ' + s.msg_type;
+            document.getElementById('sp-body').innerHTML = html;
+            window._spFullSecrets = cs.alice_proofs.map(function(p) { return p.full_secret || p.secret_preview; });
+
+            popupEl.style.display = 'block';
+            var pw = popupEl.offsetWidth, ph = popupEl.offsetHeight;
+            var left = x + 16, top = y - 20;
+            if (left + pw > window.innerWidth - 16) left = x - pw - 16;
+            if (top + ph > window.innerHeight - 16) top = window.innerHeight - ph - 16;
+            if (top < 16) top = 16;
+            popupEl.style.left = left + 'px';
+            popupEl.style.top = top + 'px';
+          }
+
+          function renderClaimTab(cp, key) {
+            var p = cp[key];
+            var html = '<div class="sp-claim-content">';
+            html += '<div class="sp-claim-row">';
+            html += '<div><div class="sp-claim-label" style="color:var(--buyer)">Buyer gets</div><div class="sp-claim-val">' + (p.buyer_gets || 'nothing') + '</div></div>';
+            html += '<div><div class="sp-claim-label" style="color:var(--seller)">Seller gets</div><div class="sp-claim-val">' + (p.seller_gets || 'nothing') + '</div></div>';
+            html += '</div>';
+            if (p.buyer_action) html += '<div class="sp-claim-row"><div><div class="sp-claim-label">Buyer action</div><div class="sp-claim-val">' + escHtml(p.buyer_action) + '</div></div>';
+            if (p.seller_action) html += '<div><div class="sp-claim-label">Seller action</div><div class="sp-claim-val">' + escHtml(p.seller_action) + '</div></div></div>';
+            html += '</div>';
+            return html;
+          }
+
+          window._switchClaimTab = function(key) {
+            document.querySelectorAll('.sp-claim-tab').forEach(function(t) {
+              t.classList.toggle('active', t.getAttribute('data-sp-tab') === key);
+            });
+            var out = document.getElementById('sp-claim-output');
+            if (out && window._spClaimPaths) out.innerHTML = renderClaimTab(window._spClaimPaths, key);
+          };
+
+          function attachStateClickHandlers() {
+            var svgs = document.querySelectorAll('.mermaid svg');
+            if (svgs.length < 2) return;
+            var svg = svgs[1];
+            svg.style.cursor = 'pointer';
+            svg.addEventListener('click', function(e) {
+              var texts = svg.querySelectorAll('.messageText');
+              var lines = svg.querySelectorAll('.messageLine0, .messageLine1');
+              var clickedIdx = -1;
+
+              for (var i = 0; i < texts.length; i++) {
+                var r = texts[i].getBoundingClientRect();
+                if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+                  clickedIdx = i; break;
+                }
+              }
+              if (clickedIdx === -1) {
+                for (var j = 0; j < lines.length; j++) {
+                  var lr = lines[j].getBoundingClientRect();
+                  if (e.clientX >= lr.left - 8 && e.clientX <= lr.right + 8 && e.clientY >= lr.top - 12 && e.clientY <= lr.bottom + 12) {
+                    clickedIdx = j; break;
+                  }
+                }
+              }
+              if (clickedIdx >= 0 && channelStates[clickedIdx]) {
+                showStatePopup(clickedIdx, e.pageX, e.pageY);
+              }
+            });
+          }
+
+          waitForMermaid(function() {
+            attachTooltips(allEvents);
+            setTimeout(attachStateClickHandlers, 500);
+          });
 
           // Scroll spy for nav highlighting
           var sections = ['bootstrap', 'spilman'];
@@ -972,9 +1126,13 @@ jobs:
           }
           window.addEventListener('scroll', updateNav, { passive: true });
           updateNav();
-           </script>
-           <div id="tooltip"></div>
-          </body>
+            </script>
+            <div id="tooltip"></div>
+            <div id="state-popup">
+              <div class="sp-header"><h4 id="sp-title">Channel State</h4><button class="sp-close" id="sp-close">&times;</button></div>
+              <div class="sp-body" id="sp-body"></div>
+            </div>
+           </body>
           </html>
           HTMLEOF
 
@@ -987,6 +1145,9 @@ jobs:
           fi
           if [ -f "traces/spilman/spilman_claim_lab.json" ]; then
             cp "traces/spilman/spilman_claim_lab.json" pages/spilman-claim-lab.json
+          fi
+          if [ -f "traces/spilman/spilman_channel_states.json" ]; then
+            cp "traces/spilman/spilman_channel_states.json" pages/spilman-channel-states.json
           fi
 
       - name: Upload Pages artifact

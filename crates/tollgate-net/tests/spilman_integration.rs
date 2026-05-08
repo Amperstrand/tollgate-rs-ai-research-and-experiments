@@ -261,6 +261,23 @@ async fn spilman_channel_lifecycle() {
         "proofs total must equal funding_token_amount"
     );
 
+    // Build proof previews for channel state snapshot artifact
+    let proof_previews: Vec<serde_json::Value> = proofs
+        .iter()
+        .map(|p| {
+            let secret_str = serde_json::to_string(&p.secret).unwrap_or_default();
+            let secret_preview = if secret_str.len() > 18 {
+                format!("{}...", &secret_str[..16])
+            } else {
+                secret_str
+            };
+            serde_json::json!({
+                "amount": u64::from(p.amount),
+                "secret_preview": secret_preview,
+            })
+        })
+        .collect();
+
     // ─── Phase 6: Channel Verification (Charlie's perspective) ───
 
     trace_event!(
@@ -299,6 +316,7 @@ async fn spilman_channel_lifecycle() {
 
     let balances = [10u64, 25, 40];
     let mut final_update_json = String::new();
+    let mut balance_signatures: Vec<String> = Vec::new();
 
     for (i, &balance) in balances.iter().enumerate() {
         let interval_num = i + 1;
@@ -329,6 +347,13 @@ async fn spilman_channel_lifecycle() {
         let sig_preview = update["signature"]
             .as_str()
             .map_or("?", |s| &s[..s.len().min(16)]);
+
+        balance_signatures.push(
+            update["signature"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned(),
+        );
 
         assert_eq!(update_amount, balance, "balance amount mismatch");
         assert_eq!(
@@ -522,5 +547,176 @@ async fn spilman_channel_lifecycle() {
         serde_json::to_string_pretty(&claim_lab).expect("serialize claim lab"),
     )
     .expect("write claim lab artifact");
+
+    // ─── Channel State Snapshot Artifact ───
+    let all_events = trace.collect();
+    let mut channel_states: Vec<serde_json::Value> = Vec::new();
+    let mut cumulative_balance: u64 = 0;
+    let mut alice_holds: Vec<String> = Vec::new();
+    let mut charlie_holds: Vec<String> = Vec::new();
+    let mut alice_proofs_state: Vec<serde_json::Value> = Vec::new();
+    let mut funding_proof_previews_state: Vec<serde_json::Value> = Vec::new();
+    let mut latest_signature_preview: Option<String> = None;
+    let mut phase_reached = "setup";
+
+    let mut balance_update_idx: usize = 0;
+
+    for (step_index, evt) in all_events.iter().enumerate() {
+        let msg_type = evt.msg_type.as_str();
+        let direction = evt.direction.as_str();
+        let actor = evt.actor.0.as_str();
+
+        match msg_type {
+            "KeyGen" => {
+                alice_holds = vec!["own secret key".to_owned()];
+                charlie_holds = vec!["own secret key".to_owned()];
+                alice_proofs_state = Vec::new();
+                funding_proof_previews_state = Vec::new();
+            }
+            "ECDH" => {
+                alice_holds = vec!["shared channel secret".to_owned()];
+                charlie_holds = vec!["shared channel secret".to_owned()];
+            }
+            "ChannelParams" | "ChannelId" => {
+                alice_holds = vec!["channel parameters".to_owned()];
+                charlie_holds = vec!["channel parameters".to_owned()];
+            }
+            "FundingOutputs" => {
+                alice_holds = vec!["deterministic blinded messages".to_owned()];
+            }
+            "MintQuote" | "KeysetFetch" | "KeysetInfo" => {}
+            "MintProofs" => {
+                alice_holds = vec![format!(
+                    "funding proofs ({} proofs, {} sat total)",
+                    proofs.len(),
+                    total_proofs_value
+                )];
+                alice_proofs_state = proof_previews.clone();
+                funding_proof_previews_state = proof_previews.clone();
+                phase_reached = "funded";
+            }
+            "VerifyChannel" | "ChannelVerified" => {
+                if msg_type == "VerifyChannel" {
+                    charlie_holds = vec!["channel verified (DLEQ OK, value OK)".to_owned()];
+                    phase_reached = "verified";
+                }
+            }
+            "BalanceUpdate" => {
+                if balance_update_idx < balances.len() {
+                    cumulative_balance = balances[balance_update_idx];
+                }
+                let sig_preview = if balance_update_idx < balance_signatures.len() {
+                    let sig = &balance_signatures[balance_update_idx];
+                    if sig.len() > 16 {
+                        format!("{}...", &sig[..16])
+                    } else {
+                        sig.clone()
+                    }
+                } else {
+                    "?".to_owned()
+                };
+                alice_holds = vec![
+                    format!(
+                        "funding proofs ({} proofs, {} sat total)",
+                        proofs.len(),
+                        total_proofs_value
+                    ),
+                    format!("signed balance update ({cumulative_balance} sat)"),
+                ];
+                charlie_holds = vec![
+                    "verified channel".to_owned(),
+                    format!("latest signed balance update ({cumulative_balance} sat)"),
+                ];
+                latest_signature_preview = Some(sig_preview);
+                phase_reached = "active";
+                balance_update_idx += 1;
+            }
+            "BalanceAck" => {
+                // ack doesn't change state, keep previous holds
+            }
+            "ChannelClose" | "SwapProofs" | "SwapComplete" | "Refund"
+            | "ClaimPathCooperative" | "ClaimPathUnilateral" | "ClaimPathTimeout" => {
+                let refund_amount = CHANNEL_CAPACITY.saturating_sub(cumulative_balance);
+                alice_holds = vec![format!("refund ({refund_amount} sat)")];
+                charlie_holds = vec![format!("swapped tokens ({cumulative_balance} sat)")];
+                phase_reached = "settled";
+            }
+            _ => {}
+        }
+
+        let (cooperative_available, unilateral_available, timeout_available) = match phase_reached {
+            "setup" | "funded" => (false, false, false),
+            "verified" => (false, false, true),
+            "active" => (true, true, true),
+            "settled" => (false, false, false),
+            _ => (false, false, false),
+        };
+
+        let buyer_gets_sat = CHANNEL_CAPACITY.saturating_sub(cumulative_balance);
+        let seller_gets_sat = cumulative_balance;
+
+        let make_claim = |available: bool,
+                          buyer: Option<&str>,
+                          seller: Option<&str>|
+         -> serde_json::Value {
+            if phase_reached == "settled" {
+                return serde_json::json!({
+                    "available": false,
+                    "buyer_gets": "channel closed",
+                    "seller_gets": "channel closed",
+                    "buyer_action": serde_json::Value::Null,
+                    "seller_action": serde_json::Value::Null,
+                });
+            }
+            serde_json::json!({
+                "available": available,
+                "buyer_gets": if available { Some(format!("{buyer_gets_sat} sat")) } else { None::<String> },
+                "seller_gets": if available { Some(format!("{seller_gets_sat} sat")) } else { None::<String> },
+                "buyer_action": if available { buyer.map(|s| s.to_owned()) } else { None::<String> },
+                "seller_action": if available { seller.map(|s| s.to_owned()) } else { None::<String> },
+            })
+        };
+
+        channel_states.push(serde_json::json!({
+            "step_index": step_index,
+            "msg_type": msg_type,
+            "direction": direction,
+            "actor": actor,
+            "channel_state": {
+                "alice_holds": alice_holds,
+                "charlie_holds": charlie_holds,
+                "alice_proofs": alice_proofs_state,
+                "charlie_proofs": Vec::<String>::new(),
+                "cumulative_balance_sat": cumulative_balance,
+                "capacity_remaining_sat": CHANNEL_CAPACITY.saturating_sub(cumulative_balance),
+                "funding_proof_previews": funding_proof_previews_state,
+                "latest_signature_preview": latest_signature_preview,
+            },
+            "claim_paths": {
+                "cooperative": make_claim(
+                    cooperative_available,
+                    Some("sign/agree to close at latest balance"),
+                    Some("settle latest balance update with mint"),
+                ),
+                "unilateral": make_claim(
+                    unilateral_available,
+                    Some("no action required"),
+                    Some("submit latest signed update via unilateral-close"),
+                ),
+                "timeout": make_claim(
+                    timeout_available,
+                    Some("wait for expiry, then use refund path"),
+                    Some("settle before expiry"),
+                ),
+            },
+        }));
+    }
+
+    std::fs::write(
+        trace_dir.join("spilman_channel_states.json"),
+        serde_json::to_string_pretty(&channel_states).expect("serialize channel states"),
+    )
+    .expect("write channel states artifact");
+
     tracing::info!("Trace artifacts written to {}", trace_dir.display());
 }
