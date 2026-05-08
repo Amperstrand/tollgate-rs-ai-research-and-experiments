@@ -17,10 +17,10 @@ mod common;
 use {
     cashu::nuts::{CurrencyUnit, Id, PublicKey, SecretKey},
     cdk_spilman::{
-        compute_channel_secret_from_hex, sign_with_tweaked_key_util, ChannelFunding,
-        ChannelPolicy, ChannelState, ClosingData, ConfigurableClientHost, MemoryClientStorage,
-        PaymentProof, SpilmanBridge, SpilmanClientAsyncNetworking, SpilmanClientBridge,
-        SpilmanClientNetworking, SpilmanHost,
+        compute_channel_secret_from_hex, sign_with_tweaked_key_util, ChannelFunding, ChannelPolicy,
+        ChannelState, ClosingData, ConfigurableClientHost, MemoryClientStorage, PaymentProof,
+        SpilmanBridge, SpilmanClientAsyncNetworking, SpilmanClientBridge, SpilmanClientNetworking,
+        SpilmanHost,
     },
     std::cell::{Cell, RefCell},
     std::collections::HashMap,
@@ -161,12 +161,8 @@ impl SpilmanHost<()> for SpikeServerHost {
     }
 
     fn save_funding(&self, cid: &str, funding: ChannelFunding, payment: PaymentProof) {
-        self.channels
-            .borrow_mut()
-            .insert(cid.to_string(), funding);
-        self.payments
-            .borrow_mut()
-            .insert(cid.to_string(), payment);
+        self.channels.borrow_mut().insert(cid.to_string(), funding);
+        self.payments.borrow_mut().insert(cid.to_string(), payment);
         self.states
             .borrow_mut()
             .insert(cid.to_string(), ChannelState::Open);
@@ -177,9 +173,7 @@ impl SpilmanHost<()> for SpikeServerHost {
     }
 
     fn record_payment(&self, cid: &str, payment: PaymentProof, _ctx: &()) {
-        self.payments
-            .borrow_mut()
-            .insert(cid.to_string(), payment);
+        self.payments.borrow_mut().insert(cid.to_string(), payment);
     }
 
     fn get_channel_state(&self, cid: &str) -> ChannelState {
@@ -229,10 +223,7 @@ impl SpilmanHost<()> for SpikeServerHost {
             .unwrap_or(0)
     }
 
-    fn get_balance_and_signature_for_unilateral_exit(
-        &self,
-        cid: &str,
-    ) -> Option<PaymentProof> {
+    fn get_balance_and_signature_for_unilateral_exit(&self, cid: &str) -> Option<PaymentProof> {
         self.payments.borrow().get(cid).cloned()
     }
 
@@ -290,7 +281,11 @@ impl SpilmanHost<()> for SpikeServerHost {
                 "signer pubkey mismatch: expected {expected}, got {signer_pk_hex}"
             ));
         }
-        sign_with_tweaked_key_util(&self.receiver_secret.to_secret_hex(), message_hex, tweak_hex)
+        sign_with_tweaked_key_util(
+            &self.receiver_secret.to_secret_hex(),
+            message_hex,
+            tweak_hex,
+        )
     }
 }
 
@@ -351,7 +346,10 @@ async fn cdk_spilman_bridge_spike() {
         .await
         .expect("fetch keyset info");
     let keyset_id = keyset_info.keyset_id;
-    tracing::info!("Keyset: id={keyset_id} fee_ppk={}", keyset_info.input_fee_ppk);
+    tracing::info!(
+        "Keyset: id={keyset_id} fee_ppk={}",
+        keyset_info.input_fee_ppk
+    );
 
     // ─── Phase 3: Setup client bridge (buyer) and server bridge (seller) ───
     tracing::info!("Phase 3: Setting up bridges");
@@ -402,7 +400,10 @@ async fn cdk_spilman_bridge_spike() {
         open_result.capacity,
         open_result.funding_token_amount,
     );
-    assert!(!open_result.channel_id.is_empty(), "channel ID must not be empty");
+    assert!(
+        !open_result.channel_id.is_empty(),
+        "channel ID must not be empty"
+    );
     assert!(open_result.capacity > 0, "capacity must be positive");
 
     // ─── Phase 5: First payment with funding ───

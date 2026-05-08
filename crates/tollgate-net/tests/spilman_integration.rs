@@ -348,12 +348,7 @@ async fn spilman_channel_lifecycle() {
             .as_str()
             .map_or("?", |s| &s[..s.len().min(16)]);
 
-        balance_signatures.push(
-            update["signature"]
-                .as_str()
-                .unwrap_or("")
-                .to_owned(),
-        );
+        balance_signatures.push(update["signature"].as_str().unwrap_or("").to_owned());
 
         assert_eq!(update_amount, balance, "balance amount mismatch");
         assert_eq!(
@@ -634,8 +629,13 @@ async fn spilman_channel_lifecycle() {
             "BalanceAck" => {
                 // ack doesn't change state, keep previous holds
             }
-            "ChannelClose" | "SwapProofs" | "SwapComplete" | "Refund"
-            | "ClaimPathCooperative" | "ClaimPathUnilateral" | "ClaimPathTimeout" => {
+            "ChannelClose"
+            | "SwapProofs"
+            | "SwapComplete"
+            | "Refund"
+            | "ClaimPathCooperative"
+            | "ClaimPathUnilateral"
+            | "ClaimPathTimeout" => {
                 let refund_amount = CHANNEL_CAPACITY.saturating_sub(cumulative_balance);
                 alice_holds = vec![format!("refund ({refund_amount} sat)")];
                 charlie_holds = vec![format!("swapped tokens ({cumulative_balance} sat)")];
