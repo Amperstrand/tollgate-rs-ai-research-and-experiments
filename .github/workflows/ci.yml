@@ -990,7 +990,6 @@ jobs:
 
           var popupEl = null;
           function closeStatePopup() { if (popupEl) popupEl.style.display = 'none'; }
-          document.getElementById('sp-close').addEventListener('click', closeStatePopup);
 
           function showStatePopup(stepIdx, x, y) {
             if (!popupEl) popupEl = document.getElementById('state-popup');
@@ -1128,11 +1127,12 @@ jobs:
           updateNav();
             </script>
             <div id="tooltip"></div>
-            <div id="state-popup">
-              <div class="sp-header"><h4 id="sp-title">Channel State</h4><button class="sp-close" id="sp-close">&times;</button></div>
-              <div class="sp-body" id="sp-body"></div>
-            </div>
-           </body>
+             <div id="state-popup">
+               <div class="sp-header"><h4 id="sp-title">Channel State</h4><button class="sp-close" id="sp-close">&times;</button></div>
+               <div class="sp-body" id="sp-body"></div>
+             </div>
+             <script>document.getElementById('sp-close').addEventListener('click', function() { var p = document.getElementById('state-popup'); if (p) p.style.display = 'none'; });</script>
+            </body>
           </html>
           HTMLEOF
 
