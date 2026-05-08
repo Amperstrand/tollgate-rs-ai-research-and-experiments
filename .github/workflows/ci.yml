@@ -222,7 +222,7 @@ jobs:
             <style>
               :root { --buyer: #0969da; --seller: #1a7f37; --mint: #9a6700; --bg: #f6f8fa; --card: #ffffff; --border: #d1d9e0; --text: #1f2328; --muted: #656d76; }
               * { box-sizing: border-box; margin: 0; padding: 0; }
-              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 960px; margin: 0 auto; padding: 24px; background: var(--bg); color: var(--text); line-height: 1.6; }
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1440px; margin: 0 auto; padding: 24px 32px; background: var(--bg); color: var(--text); line-height: 1.6; }
               header { margin-bottom: 32px; }
               header h1 { font-size: 1.75rem; margin-bottom: 4px; }
               header p { color: var(--muted); font-size: 0.95rem; }
@@ -277,7 +277,7 @@ jobs:
               .section-divider-inner { display: flex; align-items: center; gap: 16px; margin: 48px 0 40px; }
               .section-divider-inner::before, .section-divider-inner::after { content: ''; flex: 1; border-top: 2px solid var(--border); }
               .section-divider-label { font-size: 0.85rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
-              nav.section-nav { position: sticky; top: 0; z-index: 50; background: rgba(246,248,250,0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); margin: 0 -24px 24px; padding: 10px 24px; display: flex; gap: 24px; align-items: center; }
+              nav.section-nav { position: sticky; top: 0; z-index: 50; background: rgba(246,248,250,0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); margin: 0 -32px 24px; padding: 10px 32px; display: flex; gap: 24px; align-items: center; }
               nav.section-nav .nav-brand { font-weight: 700; font-size: 0.95rem; color: var(--text); margin-right: auto; }
               nav.section-nav a { font-size: 0.85rem; font-weight: 500; color: var(--muted); text-decoration: none; padding: 4px 12px; border-radius: 6px; transition: all 0.15s ease; }
               nav.section-nav a:hover { color: var(--text); background: rgba(0,0,0,0.04); }
