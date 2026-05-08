@@ -424,14 +424,14 @@ fn append_spec_ref_note(out: &mut String, remaining: &[ProtocolTraceEvent], spec
             out.push(',');
             out.push_str(t);
             out.push_str(": ");
-            out.push_str(spec_ref);
+            out.push_str(&mermaid_escape(spec_ref));
             out.push('\n');
         }
         (Some(a), None) => {
             out.push_str("    Note over ");
             out.push_str(a);
             out.push_str(": ");
-            out.push_str(spec_ref);
+            out.push_str(&mermaid_escape(spec_ref));
             out.push('\n');
         }
         _ => {}
@@ -459,6 +459,8 @@ fn close_phase_block(out: &mut String, _phase: Phase) {
 fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u64, indented: bool) {
     let indent = if indented { "        " } else { "    " };
     let delta = evt.timestamp_ms.saturating_sub(first_ts);
+    let payload = mermaid_escape(&evt.payload);
+    let msg_type = mermaid_escape(&evt.msg_type);
 
     match (evt.direction, &evt.target) {
         (TraceDirection::Request, Some(target)) => {
@@ -467,9 +469,9 @@ fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u6
             out.push_str("->>");
             out.push_str(&target.0);
             out.push_str(": ");
-            out.push_str(&evt.msg_type);
+            out.push_str(&msg_type);
             out.push(' ');
-            out.push_str(&evt.payload);
+            out.push_str(&payload);
             out.push('\n');
         }
         (TraceDirection::Response, Some(target)) => {
@@ -478,9 +480,9 @@ fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u6
             out.push_str("-->>");
             out.push_str(&target.0);
             out.push_str(": ");
-            out.push_str(&evt.msg_type);
+            out.push_str(&msg_type);
             out.push(' ');
-            out.push_str(&evt.payload);
+            out.push_str(&payload);
             out.push('\n');
         }
         (TraceDirection::Note, Some(target)) => {
@@ -490,7 +492,7 @@ fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u6
             out.push(',');
             out.push_str(&target.0);
             out.push_str(": ");
-            out.push_str(&evt.payload);
+            out.push_str(&payload);
             out.push('\n');
         }
         _ => {
@@ -498,9 +500,9 @@ fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u6
             out.push_str("Note over ");
             out.push_str(&evt.actor.0);
             out.push_str(": ");
-            out.push_str(&evt.msg_type);
+            out.push_str(&msg_type);
             out.push(' ');
-            out.push_str(&evt.payload);
+            out.push_str(&payload);
             out.push('\n');
         }
     }
@@ -511,6 +513,26 @@ fn append_mermaid_event(out: &mut String, evt: &ProtocolTraceEvent, first_ts: u6
     out.push_str(": +");
     out.push_str(&delta.to_string());
     out.push_str("ms\n");
+}
+
+/// Escapes characters that are special in Mermaid diagram syntax.
+///
+/// Mermaid uses `{}` for block delimiters (alt, opt, loop, rect),
+/// `<>` for some HTML-like constructs, and `#` for entity references.
+/// Payload text inserted into Note/arrow labels must escape these.
+pub fn mermaid_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '{' => out.push_str("#123;"),
+            '}' => out.push_str("#125;"),
+            '<' => out.push_str("#lt;"),
+            '>' => out.push_str("#gt;"),
+            '#' => out.push_str("#35;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 pub fn json_escape(s: &str) -> String {
