@@ -579,7 +579,6 @@ async fn spilman_channel_lifecycle() {
             "FundingOutputs" => {
                 alice_holds = vec!["deterministic blinded messages".to_owned()];
             }
-            "MintQuote" | "KeysetFetch" | "KeysetInfo" => {}
             "MintProofs" => {
                 alice_holds = vec![format!(
                     "funding proofs ({} proofs, {} sat total)",
@@ -626,9 +625,6 @@ async fn spilman_channel_lifecycle() {
                 phase_reached = "active";
                 balance_update_idx += 1;
             }
-            "BalanceAck" => {
-                // ack doesn't change state, keep previous holds
-            }
             "ChannelClose"
             | "SwapProofs"
             | "SwapComplete"
@@ -645,10 +641,8 @@ async fn spilman_channel_lifecycle() {
         }
 
         let (cooperative_available, unilateral_available, timeout_available) = match phase_reached {
-            "setup" | "funded" => (false, false, false),
             "verified" => (false, false, true),
             "active" => (true, true, true),
-            "settled" => (false, false, false),
             _ => (false, false, false),
         };
 
@@ -672,8 +666,8 @@ async fn spilman_channel_lifecycle() {
                 "available": available,
                 "buyer_gets": if available { Some(format!("{buyer_gets_sat} sat")) } else { None::<String> },
                 "seller_gets": if available { Some(format!("{seller_gets_sat} sat")) } else { None::<String> },
-                "buyer_action": if available { buyer.map(|s| s.to_owned()) } else { None::<String> },
-                "seller_action": if available { seller.map(|s| s.to_owned()) } else { None::<String> },
+                "buyer_action": if available { buyer.map(std::borrow::ToOwned::to_owned) } else { None::<String> },
+                "seller_action": if available { seller.map(std::borrow::ToOwned::to_owned) } else { None::<String> },
             })
         };
 
