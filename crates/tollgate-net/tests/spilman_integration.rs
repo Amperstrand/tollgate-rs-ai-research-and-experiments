@@ -298,6 +298,7 @@ async fn spilman_channel_lifecycle() {
     // ─── Phase 7: Balance Updates ───
 
     let balances = [10u64, 25, 40];
+    let mut final_update_json = String::new();
 
     for (i, &balance) in balances.iter().enumerate() {
         let interval_num = i + 1;
@@ -334,6 +335,9 @@ async fn spilman_channel_lifecycle() {
             update_channel_id, channel_id,
             "channel_id mismatch in balance update"
         );
+        if balance == 40 {
+            final_update_json = update_json.clone();
+        }
 
         trace_event!(
             "Charlie",
@@ -397,6 +401,33 @@ async fn spilman_channel_lifecycle() {
         CHANNEL_CAPACITY.saturating_sub(40)
     );
 
+    trace_event!(
+        "Alice",
+        "Charlie",
+        "Note",
+        "ClaimPathCooperative",
+        "Spilman-Settlement",
+        "cooperative: Alice and Charlie use latest balance=40; Charlie claims 40, Alice receives 60 change"
+    );
+    trace_event!(
+        "Charlie",
+        "Mint",
+        "Note",
+        "ClaimPathUnilateral",
+        "Spilman-Settlement",
+        "unilateral: Charlie can submit latest signed update via /channel/{id}/unilateral-close if Alice disappears"
+    );
+    trace_event!(
+        "Alice",
+        "Mint",
+        "Note",
+        "ClaimPathTimeout",
+        "Spilman-Settlement",
+        format!(
+            "timeout: after expiry_timestamp={expiry_ts}, Alice can use refund path for unclaimed remainder"
+        )
+    );
+
     // ─── Summary ───
     tracing::info!("");
     tracing::info!("=== Spilman Channel Test Complete ===");
@@ -429,5 +460,67 @@ async fn spilman_channel_lifecycle() {
     trace
         .write_artifacts(&trace_dir, "spilman_channel_lifecycle")
         .expect("write trace artifacts");
+
+    let claim_lab = serde_json::json!({
+        "warning": "Public CI testnut demo data only. Do not model production key handling on this artifact.",
+        "mint_url": MINT_URL,
+        "channel_id": channel_id,
+        "capacity_sat": CHANNEL_CAPACITY,
+        "funding_token_amount_sat": funding_token_amount,
+        "latest_balance_sat": 40,
+        "refund_sat": CHANNEL_CAPACITY - 40,
+        "setup_timestamp": setup_ts,
+        "expiry_timestamp": expiry_ts,
+        "buyer": {
+            "role": "Alice / sender / funder / buyer",
+            "secret_hex": alice_secret_hex,
+            "pubkey_hex": alice_pubkey_hex,
+            "can_do_now": [
+                "Cooperate with Charlie to close at the latest signed balance",
+                "Keep the refund artifacts and wait for expiry if Charlie never settles"
+            ],
+            "can_do_after_timeout": "Use the funding token refund path after expiry_timestamp for funds not claimed by valid receiver settlement"
+        },
+        "seller": {
+            "role": "Charlie / receiver / seller",
+            "secret_hex": charlie_secret_hex,
+            "pubkey_hex": charlie_pubkey_hex,
+            "can_do_now": [
+                "Verify channel funding from deterministic secrets and DLEQ proofs",
+                "Accept newer monotonic BalanceUpdate signatures",
+                "Unilaterally close with the latest signed update if Alice disappears"
+            ]
+        },
+        "shared": {
+            "channel_secret_hex": channel_secret_hex,
+            "keyset_info_json": keyset_info_json,
+            "params_json": params_json,
+            "funding_outputs_json": funding_outputs_json,
+            "funding_proofs_json": proofs_json,
+            "latest_balance_update_json": final_update_json
+        },
+        "claim_paths": {
+            "cooperative": {
+                "buyer_action": "Sign/agree to close at latest_balance_sat and receive refund_sat change.",
+                "seller_action": "Settle latest_balance_update_json with the mint and receive latest_balance_sat.",
+                "demo_command": "Use cdk-spilman cooperative-close helpers with params_json, funding_proofs_json, and latest_balance_update_json."
+            },
+            "unilateral": {
+                "buyer_action": "No action required; buyer cannot reduce Charlie's latest valid signed balance.",
+                "seller_action": "Submit latest_balance_update_json through SatsAndSports /channel/{id}/unilateral-close semantics.",
+                "demo_command": "POST /channel/{channel_id}/unilateral-close with the latest stored balance update in a cdk-spilman server integration."
+            },
+            "timeout": {
+                "buyer_action": "Wait until expiry_timestamp, then use the funding token refund path for unclaimed remainder.",
+                "seller_action": "Settle before expiry if seller wants to claim the latest signed balance.",
+                "demo_command": "After expiry_timestamp, use the funding token refund condition from params_json/funding_proofs_json; this is not a separate close endpoint."
+            }
+        }
+    });
+    std::fs::write(
+        trace_dir.join("spilman_claim_lab.json"),
+        serde_json::to_string_pretty(&claim_lab).expect("serialize claim lab"),
+    )
+    .expect("write claim lab artifact");
     tracing::info!("Trace artifacts written to {}", trace_dir.display());
 }

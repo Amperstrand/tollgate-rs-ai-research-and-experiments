@@ -136,6 +136,18 @@ Settlement produces two sets of proofs (Stage 1 → Stage 2 in Spilman terminolo
 - Receiver's earned balance (receiver can spend)
 - Sender's remaining change (sender can reclaim)
 
+### Claim Paths
+
+A useful teaching model is a locked box: the sender funds the box, the receiver can claim only the latest balance the sender signed over, and the sender's refund path is time-locked.
+
+| Path | Who acts | What they can claim |
+|------|----------|---------------------|
+| Cooperative close | Sender and receiver agree on the latest balance | Receiver receives the signed balance; sender receives the remaining change |
+| Receiver unilateral close | Receiver acts without sender cooperation | Receiver presents the latest signed balance update and cannot claim more than that cumulative amount |
+| Sender timeout refund | Sender waits until the funding-token expiry path is valid | Sender recovers funds not claimed by a valid receiver settlement |
+
+In SatsAndSports `cdk-spilman` terminology, the receiver force-close path is a **unilateral close**. The timeout/refund path is not a separate close endpoint; it is part of the funding token's expiry/refund condition.
+
 ### Closed
 
 Settlement complete. Proofs distributed. Channel is done.

@@ -301,8 +301,15 @@ jobs:
               .claim-matrix { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 0.84rem; }
               .claim-matrix th, .claim-matrix td { border: 1px solid var(--border); padding: 9px 10px; text-align: left; vertical-align: top; }
               .claim-matrix th { background: #f6f8fa; font-weight: 600; }
+              .claim-lab { margin-top: 18px; }
+              .claim-lab-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 12px 0; }
+              .claim-lab-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #fbfcfd; }
+              .claim-lab-card h4 { font-size: 0.9rem; margin-bottom: 6px; }
+              .claim-lab-code { white-space: pre-wrap; word-break: break-all; background: #1f2328; color: #e6edf3; padding: 12px; border-radius: 8px; font-size: 0.75rem; max-height: 220px; overflow: auto; }
+              .timelock { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #fee2e2 0 70%, #dcfce7 70% 100%); margin: 10px 0 6px; position: relative; }
+              .timelock::after { content: 'expiry unlock'; position: absolute; left: 70%; top: 14px; transform: translateX(-50%); color: var(--muted); font-size: 0.72rem; }
               html { scroll-padding-top: 60px; }
-              @media (max-width: 720px) { .lesson-grid { grid-template-columns: 1fr; } }
+              @media (max-width: 720px) { .lesson-grid, .claim-lab-grid { grid-template-columns: 1fr; } }
             </style>
           </head>
           <body>
@@ -433,7 +440,7 @@ jobs:
                 </div>
                 <div class="scenario-buttons" role="group" aria-label="Claim path scenarios">
                   <button type="button" class="active" data-scenario="cooperate">Cooperate</button>
-                  <button type="button" data-scenario="force">Charlie force-closes</button>
+                  <button type="button" data-scenario="force">Charlie force-closes (unilateral)</button>
                   <button type="button" data-scenario="timeout">Alice waits for timeout</button>
                 </div>
                 <div class="scenario-output" id="claim-scenario" aria-live="polite"></div>
@@ -445,6 +452,10 @@ jobs:
                     <tr><td>After expiry if Charlie never settles</td><td>No newer claim than the latest update he still holds</td><td>Refund path becomes available to Alice</td></tr>
                   </tbody>
                 </table>
+                <details class="claim-lab" open>
+                  <summary>Public testnut claim lab: keys, artifacts, and actions</summary>
+                  <div id="claim-lab-content"><p class="no-data">Loading public testnut claim artifacts…</p></div>
+                </details>
               </div>
             </section>
 
@@ -801,17 +812,17 @@ jobs:
               ]
             },
             force: {
-              title: 'Receiver force-close: Charlie uses the latest signed update',
-              body: 'Charlie does not need Alice online once he has a valid signed update. He can present the latest update he holds and claim exactly that amount, not more.',
+              title: 'Receiver force-close: Charlie uses SatsAndSports unilateral close',
+              body: 'Charlie does not need Alice online once he has a valid signed update. In SatsAndSports terms, this is the unilateral close path: Charlie presents the latest update he holds and can claim exactly that amount, not more.',
               steps: [
                 'Charlie keeps the newest valid <span class="call-pill">BalanceUpdate</span> signature from Alice.',
-                'If Alice disappears, Charlie submits that latest state to the mint-side settlement path.',
+                'If Alice disappears, Charlie submits that latest state through <span class="call-pill">/channel/{id}/unilateral-close</span>.',
                 'The mint-side split pays Charlie the signed balance and preserves Alice\'s remaining change/refund path.'
               ]
             },
             timeout: {
               title: 'Sender timeout refund: Alice waits until the refund path unlocks',
-              body: 'The channel is funded as a locked token: Charlie can claim signed balances before expiry, but Alice has a time-locked path that protects the unspent remainder.',
+              body: 'The channel is funded as a locked token: Charlie can claim signed balances before expiry, but Alice has a time-locked refund path in the funding token. This is separate from the close endpoint.',
               steps: [
                 'Alice cannot simply claw back the box while the channel is live.',
                 'After <span class="call-pill">expiry_timestamp</span>, the sender refund condition becomes valid.',
@@ -837,6 +848,85 @@ jobs:
           });
           renderClaimScenario('cooperate');
 
+          function escHtml(s) {
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          }
+
+          function renderClaimLab(lab) {
+            var h = '';
+            h += '<p style="color:var(--muted);font-size:0.82rem;margin-bottom:12px;font-style:italic">' + escHtml(lab.warning) + '</p>';
+            h += '<div style="font-size:0.85rem;margin-bottom:14px">';
+            h += '<strong>Channel:</strong> <code>' + escHtml(lab.channel_id.substring(0, 20)) + '…</code> ';
+            h += '| <strong>Capacity:</strong> ' + lab.capacity_sat + ' sat ';
+            h += '| <strong>Latest balance:</strong> ' + lab.latest_balance_sat + ' sat ';
+            h += '| <strong>Refund:</strong> ' + lab.refund_sat + ' sat';
+            h += '</div>';
+
+            h += '<div class="claim-lab-grid">';
+            h += '<div class="claim-lab-card" style="border-left:3px solid var(--buyer)">';
+            h += '<h4 style="color:var(--buyer)">🔑 Alice (Buyer / Sender)</h4>';
+            h += '<div style="font-size:0.82rem;margin-bottom:6px"><strong>Public key:</strong> <code>' + escHtml(lab.buyer.pubkey_hex.substring(0, 32)) + '…</code></div>';
+            h += '<div style="font-size:0.82rem;margin-bottom:6px"><strong>Can do now:</strong><ul style="margin:4px 0 0 16px">';
+            lab.buyer.can_do_now.forEach(function(a) { h += '<li>' + escHtml(a) + '</li>'; });
+            h += '</ul></div>';
+            h += '<div style="font-size:0.82rem"><strong>After timeout:</strong> ' + escHtml(lab.buyer.can_do_after_timeout) + '</div>';
+            h += '</div>';
+
+            h += '<div class="claim-lab-card" style="border-left:3px solid var(--seller)">';
+            h += '<h4 style="color:var(--seller)">🔑 Charlie (Seller / Receiver)</h4>';
+            h += '<div style="font-size:0.82rem;margin-bottom:6px"><strong>Public key:</strong> <code>' + escHtml(lab.seller.pubkey_hex.substring(0, 32)) + '…</code></div>';
+            h += '<div style="font-size:0.82rem"><strong>Can do now:</strong><ul style="margin:4px 0 0 16px">';
+            lab.seller.can_do_now.forEach(function(a) { h += '<li>' + escHtml(a) + '</li>'; });
+            h += '</ul></div>';
+            h += '</div>';
+
+            h += '</div>';
+
+            h += '<div style="margin:18px 0 16px">';
+            h += '<div style="font-size:0.82rem;font-weight:600;margin-bottom:6px">⏱ Timelock countdown</div>';
+            h += '<div class="timelock"></div>';
+            h += '<div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--muted);margin-top:22px">';
+            h += '<span>Setup: ' + new Date(lab.setup_timestamp * 1000).toISOString().replace('.000Z', 'Z') + '</span>';
+            h += '<span>Expiry: ' + new Date(lab.expiry_timestamp * 1000).toISOString().replace('.000Z', 'Z') + '</span>';
+            h += '</div>';
+            h += '</div>';
+
+            var paths = [
+              { key: 'cooperative', icon: '🤝', label: 'Cooperative close' },
+              { key: 'unilateral', icon: '⚡', label: 'Unilateral force-close' },
+              { key: 'timeout', icon: '⏰', label: 'Timeout refund' }
+            ];
+
+            paths.forEach(function(p) {
+              var cp = lab.claim_paths[p.key];
+              h += '<div style="margin:14px 0;padding:14px 16px;border:1px solid var(--border);border-radius:8px;background:#fbfcfd">';
+              h += '<div style="font-weight:600;font-size:0.92rem;margin-bottom:8px">' + p.icon + ' ' + p.label + '</div>';
+              h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+              h += '<div style="font-size:0.82rem"><strong style="color:var(--buyer)">Buyer action:</strong> ' + escHtml(cp.buyer_action) + '</div>';
+              h += '<div style="font-size:0.82rem"><strong style="color:var(--seller)">Seller action:</strong> ' + escHtml(cp.seller_action) + '</div>';
+              h += '</div>';
+              h += '<div style="margin-top:10px;font-size:0.78rem;color:var(--muted)">Demo command:</div>';
+              h += '<div class="claim-lab-code">' + escHtml(cp.demo_command) + '</div>';
+              h += '</div>';
+            });
+
+            var sharedPreview = {};
+            Object.keys(lab.shared).forEach(function(k) {
+              var v = lab.shared[k];
+              if (typeof v === 'string' && v.length > 200) {
+                sharedPreview[k] = v.substring(0, 200) + '… (' + v.length + ' chars total)';
+              } else {
+                sharedPreview[k] = v;
+              }
+            });
+            h += '<details style="margin-top:16px">';
+            h += '<summary>Shared artifacts (JSON — truncated preview)</summary>';
+            h += '<div class="claim-lab-code">' + escHtml(JSON.stringify(sharedPreview, null, 2)) + '</div>';
+            h += '</details>';
+
+            document.getElementById('claim-lab-content').innerHTML = h;
+          }
+
           fetch('trace.json')
             .then(function(r) { return r.ok ? r.text() : Promise.reject('no trace'); })
             .then(function(text) {
@@ -855,6 +945,13 @@ jobs:
             })
             .catch(function() {
               document.getElementById('steps-spilman').innerHTML = '<p class="no-data">No Spilman trace data available — the test may not have completed.</p>';
+            });
+
+          fetch('spilman-claim-lab.json')
+            .then(function(r) { return r.ok ? r.json() : Promise.reject('no claim lab'); })
+            .then(function(lab) { renderClaimLab(lab); })
+            .catch(function() {
+              document.getElementById('claim-lab-content').innerHTML = '<p class="no-data">No claim lab data — the Spilman test may not have produced the artifact.</p>';
             });
 
           waitForMermaid(function() { attachTooltips(allEvents); });
@@ -887,6 +984,9 @@ jobs:
           fi
           if [ -f "traces/spilman/spilman_channel_lifecycle.json" ]; then
             cp "traces/spilman/spilman_channel_lifecycle.json" pages/spilman-trace.json
+          fi
+          if [ -f "traces/spilman/spilman_claim_lab.json" ]; then
+            cp "traces/spilman/spilman_claim_lab.json" pages/spilman-claim-lab.json
           fi
 
       - name: Upload Pages artifact
