@@ -375,9 +375,11 @@ enum Phase {
 impl Phase {
     fn from_event(evt: &ProtocolTraceEvent) -> Self {
         match evt.msg_type.as_str() {
-            "BootstrapToken" | "BootstrapAck" | "Balance" => Phase::Payment,
+            "BootstrapToken" | "BootstrapAck" | "Balance" | "BalanceUpdate" | "BalanceAck" => {
+                Phase::Payment
+            }
             "MeteringReport" => Phase::Metering,
-            "Disconnect" => Phase::Teardown,
+            "ChannelClose" | "CloseAck" | "UnilateralClose" | "Disconnect" => Phase::Teardown,
             _ => Phase::Setup,
         }
     }
