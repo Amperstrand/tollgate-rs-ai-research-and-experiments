@@ -464,7 +464,12 @@ async fn spilman_send_payment(
 }
 
 #[cfg(feature = "spilman")]
-#[allow(clippy::missing_panics_doc, clippy::too_many_lines, deprecated)]
+#[allow(
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    deprecated
+)]
 pub async fn run_spilman(
     peer_url: &str,
     intervals: u32,
@@ -473,6 +478,7 @@ pub async fn run_spilman(
     spilman: Arc<SpilmanService>,
     receiver_pubkey_hex: &str,
     mint_url: &str,
+    no_close: bool,
 ) {
     let adapter = Arc::new(MockAdapter::new());
     let config = client_config();
@@ -556,6 +562,13 @@ pub async fn run_spilman(
             payment_per_interval,
         )
         .await;
+    }
+
+    if no_close {
+        tracing::info!(
+            "[spilman] --no-close: skipping cooperative close, channel={channel_id} balance={current_balance}"
+        );
+        return;
     }
 
     tracing::info!("[spilman] Requesting cooperative close at balance={current_balance}...");

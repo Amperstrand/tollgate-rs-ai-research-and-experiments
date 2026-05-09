@@ -55,6 +55,9 @@ enum Commands {
         /// Seller's Spilman receiver public key (hex, required for --wallet spilman)
         #[arg(long)]
         receiver_pubkey: Option<String>,
+        /// Skip cooperative close and disconnect (for unilateral close testing)
+        #[arg(long, default_value = "false")]
+        no_close: bool,
     },
 }
 
@@ -101,13 +104,14 @@ async fn main() {
             wallet: wt,
             mint_url,
             receiver_pubkey,
+            no_close,
         } => match wt {
             WalletType::Mock => {
-                let _ = &receiver_pubkey;
+                let _ = (&receiver_pubkey, &no_close);
                 client::run_mock(&peer, intervals, interval_secs, 200).await;
             }
             WalletType::Cdk => {
-                let _ = &receiver_pubkey;
+                let _ = (&receiver_pubkey, &no_close);
                 let wallet = Arc::new(
                     cdk_wallet::CdkWallet::new(&mint_url, [2u8; 64])
                         .await
@@ -140,6 +144,7 @@ async fn main() {
                     spilman,
                     receiver_pk,
                     &mint_url,
+                    no_close,
                 )
                 .await;
             }
