@@ -481,6 +481,14 @@ pub async fn run_spilman(
 
     let server_host = ServerSpilmanHost::new(receiver_secret);
     let receiver_pubkey_hex = server_host.receiver_pubkey_hex();
+
+    tracing::info!("Fetching keyset info from {mint_url}...");
+    let (keyset_info_json, keyset_info) = crate::spilman_wallet::fetch_active_keyset_info(mint_url)
+        .await
+        .expect("fetch keyset info");
+    server_host.add_keyset(mint_url, keyset_info.keyset_id, keyset_info_json);
+    tracing::info!("Keyset loaded: id={}", keyset_info.keyset_id.to_string());
+
     let server_bridge = SpilmanBridge::new(server_host);
 
     let spilman_state = SpilmanServerState {

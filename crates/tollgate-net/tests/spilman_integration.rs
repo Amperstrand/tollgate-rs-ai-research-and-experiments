@@ -590,6 +590,7 @@ async fn spilman_channel_lifecycle() {
                 funding_proof_previews_state = proof_previews.clone();
                 phase_reached = "funded";
             }
+            #[allow(clippy::collapsible_match)]
             "VerifyChannel" | "ChannelVerified" => {
                 if msg_type == "VerifyChannel" {
                     charlie_holds = vec!["channel verified (DLEQ OK, value OK)".to_owned()];
