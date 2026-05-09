@@ -488,10 +488,7 @@ pub async fn run_spilman(
         .with_state(state);
 
     tracing::info!("Spilman provider listening on port {port}");
-    tracing::info!(
-        "Receiver pubkey: {}...",
-        &receiver_pubkey_hex[..receiver_pubkey_hex.len().min(16)]
-    );
+    tracing::info!("Receiver pubkey: {receiver_pubkey_hex}");
 
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)

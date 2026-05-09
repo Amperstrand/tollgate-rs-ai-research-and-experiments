@@ -453,6 +453,11 @@ pub async fn run_spilman(
     let http = reqwest::Client::new();
 
     tracing::info!("[spilman] Connecting to {peer_url}");
+    tracing::info!("[spilman] Minting tokens from {mint_url}...");
+    wallet.mint_test_tokens(2000).await.expect("mint test tokens");
+    let bal = wallet.total_balance().await.expect("balance check");
+    tracing::info!("[spilman] Wallet balance: {bal} sat");
+
     let announce = session.create_announce();
     let responses = send_message(&http, peer_url, &announce).await;
 
