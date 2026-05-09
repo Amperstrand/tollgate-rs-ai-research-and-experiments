@@ -184,8 +184,8 @@ use {
         ChannelState, ClosingData,
     },
     serde_json,
-    std::cell::{Cell, RefCell},
     std::collections::HashMap,
+    std::sync::atomic::{AtomicU64, Ordering},
     std::time::{SystemTime, UNIX_EPOCH},
     tollgate_core::protocol::{BalanceAck, CloseAck, MessageType},
 };
@@ -252,13 +252,13 @@ impl SpilmanAsyncNetworking for ServerNetworking {
 #[cfg(feature = "spilman")]
 struct ServerSpilmanHost {
     receiver_secret: SecretKey,
-    channels: RefCell<HashMap<String, ChannelFunding>>,
-    payments: RefCell<HashMap<String, PaymentProof>>,
-    states: RefCell<HashMap<String, ChannelState>>,
-    closing_data: RefCell<HashMap<String, ClosingData>>,
-    keyset_infos: RefCell<HashMap<Id, String>>,
-    active_keysets: RefCell<HashMap<String, Vec<Id>>>,
-    amount_due: Cell<u64>,
+    channels: std::sync::Mutex<HashMap<String, ChannelFunding>>,
+    payments: std::sync::Mutex<HashMap<String, PaymentProof>>,
+    states: std::sync::Mutex<HashMap<String, ChannelState>>,
+    closing_data: std::sync::Mutex<HashMap<String, ClosingData>>,
+    keyset_infos: std::sync::Mutex<HashMap<Id, String>>,
+    active_keysets: std::sync::Mutex<HashMap<String, Vec<Id>>>,
+    amount_due: AtomicU64,
 }
 
 #[cfg(feature = "spilman")]
@@ -266,23 +266,25 @@ impl ServerSpilmanHost {
     fn new(receiver_secret: SecretKey) -> Self {
         Self {
             receiver_secret,
-            channels: RefCell::new(HashMap::new()),
-            payments: RefCell::new(HashMap::new()),
-            states: RefCell::new(HashMap::new()),
-            closing_data: RefCell::new(HashMap::new()),
-            keyset_infos: RefCell::new(HashMap::new()),
-            active_keysets: RefCell::new(HashMap::new()),
-            amount_due: Cell::new(0),
+            channels: std::sync::Mutex::new(HashMap::new()),
+            payments: std::sync::Mutex::new(HashMap::new()),
+            states: std::sync::Mutex::new(HashMap::new()),
+            closing_data: std::sync::Mutex::new(HashMap::new()),
+            keyset_infos: std::sync::Mutex::new(HashMap::new()),
+            active_keysets: std::sync::Mutex::new(HashMap::new()),
+            amount_due: AtomicU64::new(0),
         }
     }
 
     #[allow(dead_code)]
     fn add_keyset(&self, mint_url: &str, keyset_id: Id, keyset_info_json: String) {
         self.keyset_infos
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(keyset_id, keyset_info_json);
         self.active_keysets
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .entry(mint_url.to_string())
             .or_default()
             .push(keyset_id);
@@ -304,31 +306,40 @@ impl SpilmanHost<()> for ServerSpilmanHost {
     }
 
     fn get_funding(&self, cid: &str) -> Option<ChannelFunding> {
-        self.channels.borrow().get(cid).cloned()
+        self.channels.lock().unwrap().get(cid).cloned()
     }
 
     fn save_funding(&self, cid: &str, funding: ChannelFunding, payment: PaymentProof) {
-        self.channels.borrow_mut().insert(cid.to_string(), funding);
-        self.payments.borrow_mut().insert(cid.to_string(), payment);
+        self.channels
+            .lock()
+            .unwrap()
+            .insert(cid.to_string(), funding);
+        self.payments
+            .lock()
+            .unwrap()
+            .insert(cid.to_string(), payment);
         self.states
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(cid.to_string(), ChannelState::Open);
     }
 
     fn get_amount_due(&self, _cid: &str, _ctx: Option<&()>) -> u64 {
-        self.amount_due.get()
+        self.amount_due.load(Ordering::SeqCst)
     }
 
     fn record_payment(&self, cid: &str, payment: PaymentProof, _ctx: &()) {
         self.payments
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(cid.to_string(), payment.clone());
-        self.amount_due.set(payment.balance);
+        self.amount_due.store(payment.balance, Ordering::SeqCst);
     }
 
     fn get_channel_state(&self, cid: &str) -> ChannelState {
         self.states
-            .borrow()
+            .lock()
+            .unwrap()
             .get(cid)
             .copied()
             .unwrap_or(ChannelState::Open)
@@ -341,9 +352,10 @@ impl SpilmanHost<()> for ServerSpilmanHost {
         payment: PaymentProof,
     ) -> Result<(), String> {
         self.states
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(cid.to_string(), ChannelState::Closing);
-        self.closing_data.borrow_mut().insert(
+        self.closing_data.lock().unwrap().insert(
             cid.to_string(),
             ClosingData {
                 expiry_timestamp: expiry_ts,
@@ -355,7 +367,7 @@ impl SpilmanHost<()> for ServerSpilmanHost {
     }
 
     fn get_closing_data(&self, cid: &str) -> Option<ClosingData> {
-        self.closing_data.borrow().get(cid).cloned()
+        self.closing_data.lock().unwrap().get(cid).cloned()
     }
 
     fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
@@ -374,19 +386,20 @@ impl SpilmanHost<()> for ServerSpilmanHost {
     }
 
     fn get_balance_and_signature_for_unilateral_exit(&self, cid: &str) -> Option<PaymentProof> {
-        self.payments.borrow().get(cid).cloned()
+        self.payments.lock().unwrap().get(cid).cloned()
     }
 
     fn get_active_keyset_ids(&self, mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
         self.active_keysets
-            .borrow()
+            .lock()
+            .unwrap()
             .get(mint)
             .cloned()
             .unwrap_or_default()
     }
 
     fn get_keyset_info(&self, _mint: &str, kid: &Id) -> Option<String> {
-        self.keyset_infos.borrow().get(kid).cloned()
+        self.keyset_infos.lock().unwrap().get(kid).cloned()
     }
 
     fn mark_channel_closed(
@@ -400,7 +413,8 @@ impl SpilmanHost<()> for ServerSpilmanHost {
         _sender_sum: u64,
     ) -> Result<(), String> {
         self.states
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(cid.to_string(), ChannelState::Closed);
         Ok(())
     }
@@ -499,6 +513,7 @@ pub async fn run_spilman(
 }
 
 #[cfg(feature = "spilman")]
+#[allow(clippy::too_many_lines)]
 async fn handle_spilman_message(
     State(state): State<Arc<SpilmanAppState>>,
     body: axum::body::Bytes,

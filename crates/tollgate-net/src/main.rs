@@ -103,9 +103,11 @@ async fn main() {
             receiver_pubkey,
         } => match wt {
             WalletType::Mock => {
+                let _ = &receiver_pubkey;
                 client::run_mock(&peer, intervals, interval_secs, 200).await;
             }
             WalletType::Cdk => {
+                let _ = &receiver_pubkey;
                 let wallet = Arc::new(
                     cdk_wallet::CdkWallet::new(&mint_url, [2u8; 64])
                         .await
