@@ -44,11 +44,15 @@ impl std::ops::Sub for Amount {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelState {
     Proposed,
-    Active { cumulative_balance: Amount },
+    Active {
+        cumulative_balance: Amount,
+    },
     RollingOver {
         old_channel_id: Hash32,
         new_channel_id: Option<Hash32>,
     },
-    Settling { final_balance: Amount },
+    Settling {
+        final_balance: Amount,
+    },
     Closed,
 }

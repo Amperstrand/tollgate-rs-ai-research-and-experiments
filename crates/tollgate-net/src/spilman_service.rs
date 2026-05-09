@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use cashu::nuts::SecretKey;
 use cdk_spilman::{
-    ConfigurableClientHost, MemoryClientStorage, SpilmanClientAsyncNetworking,
-    SpilmanClientBridge, SpilmanClientNetworking,
+    ConfigurableClientHost, MemoryClientStorage, SpilmanClientAsyncNetworking, SpilmanClientBridge,
+    SpilmanClientNetworking,
 };
 
 pub use cdk_spilman::{

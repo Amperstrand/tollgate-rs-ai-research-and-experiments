@@ -4,10 +4,7 @@ use clap::{Parser, Subcommand};
 use tollgate_net::{cdk_wallet, client, mock, server};
 
 #[cfg(feature = "spilman")]
-use {
-    cashu::nuts::SecretKey,
-    tollgate_net::spilman_service::SpilmanService,
-};
+use {cashu::nuts::SecretKey, tollgate_net::spilman_service::SpilmanService};
 
 #[derive(Parser)]
 #[command(name = "tollgate-net", about = "TollGate v2 network node")]
@@ -35,7 +32,7 @@ enum Commands {
         #[arg(long, default_value = "mock")]
         wallet: WalletType,
         /// Mint URL (only used with --wallet cdk)
-        #[arg(long, default_value = "https://testnut.cashu.space")]
+        #[arg(long, default_value = "https://testnut.cashu.exchange")]
         mint_url: String,
     },
     /// Run as a client (buys network access)
@@ -53,7 +50,7 @@ enum Commands {
         #[arg(long, default_value = "mock")]
         wallet: WalletType,
         /// Mint URL (only used with --wallet cdk)
-        #[arg(long, default_value = "https://testnut.cashu.space")]
+        #[arg(long, default_value = "https://testnut.cashu.exchange")]
         mint_url: String,
         /// Seller's Spilman receiver public key (hex, required for --wallet spilman)
         #[arg(long)]
@@ -126,13 +123,13 @@ async fn main() {
                 let sender_secret = SecretKey::generate();
                 #[allow(clippy::arc_with_non_send_sync)]
                 let spilman = Arc::new(SpilmanService::new(&mint_url, sender_secret));
-                let receiver_pk = receiver_pubkey
-                    .as_deref()
-                    .unwrap_or_else(|| {
-                        eprintln!("ERROR: --receiver-pubkey is required for --wallet spilman");
-                        eprintln!("Start the provider first; it prints its receiver pubkey on startup.");
-                        std::process::exit(1);
-                    });
+                let receiver_pk = receiver_pubkey.as_deref().unwrap_or_else(|| {
+                    eprintln!("ERROR: --receiver-pubkey is required for --wallet spilman");
+                    eprintln!(
+                        "Start the provider first; it prints its receiver pubkey on startup."
+                    );
+                    std::process::exit(1);
+                });
                 client::run_spilman(
                     &peer,
                     intervals,

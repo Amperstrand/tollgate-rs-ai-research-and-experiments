@@ -213,7 +213,7 @@ jobs:
           EXIT_CODE=0
 
           # Start provider in background, capture output
-          cargo run --features spilman --release -- provider --wallet spilman --port 3001 > provider.log 2>&1 &
+          cargo run --features spilman --release -- provider --wallet spilman --port 3001 --mint-url https://testnut.cashu.exchange > provider.log 2>&1 &
           PROVIDER_PID=$!
 
           # Wait for build + startup
@@ -233,7 +233,7 @@ jobs:
           echo "Captured receiver pubkey: $RECEIVER_PUBKEY"
 
           # Run client
-          cargo run --features spilman --release -- client --wallet spilman --receiver-pubkey "$RECEIVER_PUBKEY" --intervals 3 --interval-secs 2 > client.log 2>&1 || EXIT_CODE=$?
+          cargo run --features spilman --release -- client --wallet spilman --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url https://testnut.cashu.exchange --intervals 3 --interval-secs 2 > client.log 2>&1 || EXIT_CODE=$?
 
           # Stop provider
           kill $PROVIDER_PID 2>/dev/null || true

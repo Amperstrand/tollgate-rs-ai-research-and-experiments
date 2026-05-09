@@ -176,20 +176,18 @@ fn message_name(msg: &Message) -> &'static str {
 
 #[cfg(feature = "spilman")]
 use {
+    crate::spilman_service::{PaymentProof, SpilmanAsyncNetworking, SpilmanBridge, SpilmanHost},
     async_trait::async_trait,
     cashu::nuts::{CurrencyUnit, Id, Proof as CashuProof, PublicKey, SecretKey},
     cdk_spilman::{
-        ChannelFunding, ChannelPolicy, ChannelState, ClosingData,
-        compute_channel_secret_from_hex, sign_with_tweaked_key_util,
+        compute_channel_secret_from_hex, sign_with_tweaked_key_util, ChannelFunding, ChannelPolicy,
+        ChannelState, ClosingData,
     },
     serde_json,
     std::cell::{Cell, RefCell},
     std::collections::HashMap,
     std::time::{SystemTime, UNIX_EPOCH},
     tollgate_core::protocol::{BalanceAck, CloseAck, MessageType},
-    crate::spilman_service::{
-        PaymentProof, SpilmanAsyncNetworking, SpilmanBridge, SpilmanHost,
-    },
 };
 
 #[cfg(feature = "spilman")]
@@ -541,9 +539,13 @@ async fn handle_spilman_message(
         let channel_id_hex = encode_hex(&update.channel_id.0);
         let signature_hex = encode_hex(&update.balance_signature.0);
 
-        let params_val = update.channel_params_json.as_ref()
+        let params_val = update
+            .channel_params_json
+            .as_ref()
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
-        let proofs_val: Option<Vec<CashuProof>> = update.funding_proofs_json.as_ref()
+        let proofs_val: Option<Vec<CashuProof>> = update
+            .funding_proofs_json
+            .as_ref()
             .and_then(|b| serde_json::from_slice(b).ok());
 
         let spilman_state = state.spilman.lock().await;
@@ -581,9 +583,13 @@ async fn handle_spilman_message(
     if let Message::ChannelClose(ref close) = msg {
         let channel_id_hex = encode_hex(&close.channel_id.0);
 
-        let close_params_val = close.channel_params_json.as_ref()
+        let close_params_val = close
+            .channel_params_json
+            .as_ref()
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
-        let close_proofs_val: Option<Vec<CashuProof>> = close.funding_proofs_json.as_ref()
+        let close_proofs_val: Option<Vec<CashuProof>> = close
+            .funding_proofs_json
+            .as_ref()
             .and_then(|b| serde_json::from_slice(b).ok());
 
         let _ = (close_params_val, close_proofs_val);

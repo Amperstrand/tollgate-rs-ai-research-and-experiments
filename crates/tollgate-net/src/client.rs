@@ -14,12 +14,12 @@ use crate::mock::MockAdapter;
 
 #[cfg(feature = "spilman")]
 use {
+    crate::spilman_service::{ReqwestNetworking, SpilmanService},
     cashu::mint_url::MintUrl,
     cashu::nuts::{CurrencyUnit, Proof as CashuProof, Token as CashuToken},
     serde_json,
     std::str::FromStr,
     tollgate_core::protocol::{BalanceUpdate, ChannelClose, CloseReason, Signature as TgSignature},
-    crate::spilman_service::{ReqwestNetworking, SpilmanService},
 };
 
 #[cfg(feature = "spilman")]
@@ -336,8 +336,7 @@ async fn spilman_open_channel(
     mint_url: &str,
 ) -> String {
     let proofs_json = wallet.unspent_proofs_json().await.expect("get proofs");
-    let all_proofs: Vec<CashuProof> =
-        serde_json::from_str(&proofs_json).expect("parse proofs");
+    let all_proofs: Vec<CashuProof> = serde_json::from_str(&proofs_json).expect("parse proofs");
 
     let mut selected_proofs = Vec::new();
     let mut selected_total = 0u64;
@@ -363,7 +362,14 @@ async fn spilman_open_channel(
 
     let net = ReqwestNetworking::new();
     let open_result = spilman
-        .open_channel(&token_str, receiver_pubkey_hex, 3600, &keyset_info_json, 64, &net)
+        .open_channel(
+            &token_str,
+            receiver_pubkey_hex,
+            3600,
+            &keyset_info_json,
+            64,
+            &net,
+        )
         .await
         .expect("open channel");
 
@@ -397,12 +403,20 @@ async fn spilman_send_payment(
     .expect("create spilman payment");
 
     let (params_bytes, proofs_bytes) = if interval_index == 1 {
-        let p = serde_json::to_vec(payment.params.as_ref()
-            .expect("payment with funding must have params"))
-            .expect("serialize params");
-        let f = serde_json::to_vec(payment.funding_proofs.as_ref()
-            .expect("payment with funding must have proofs"))
-            .expect("serialize proofs");
+        let p = serde_json::to_vec(
+            payment
+                .params
+                .as_ref()
+                .expect("payment with funding must have params"),
+        )
+        .expect("serialize params");
+        let f = serde_json::to_vec(
+            payment
+                .funding_proofs
+                .as_ref()
+                .expect("payment with funding must have proofs"),
+        )
+        .expect("serialize proofs");
         (Some(p), Some(f))
     } else {
         (None, None)
@@ -468,7 +482,10 @@ pub async fn run_spilman(
 
     tracing::info!("[spilman] Connecting to {peer_url}");
     tracing::info!("[spilman] Minting tokens from {mint_url}...");
-    wallet.mint_test_tokens(2000).await.expect("mint test tokens");
+    wallet
+        .mint_test_tokens(2000)
+        .await
+        .expect("mint test tokens");
     let bal = wallet.total_balance().await.expect("balance check");
     tracing::info!("[spilman] Wallet balance: {bal} sat");
 
@@ -493,7 +510,10 @@ pub async fn run_spilman(
     });
     let _ = send_message(&http, peer_url, &accept).await;
 
-    let token_bytes = wallet.create_token(Amount(100), mint_url).await.expect("create bootstrap token");
+    let token_bytes = wallet
+        .create_token(Amount(100), mint_url)
+        .await
+        .expect("create bootstrap token");
     let bootstrap = Message::BootstrapToken(BootstrapToken {
         msg_type: MessageType::BootstrapToken as u8,
         token: token_bytes,
@@ -525,9 +545,18 @@ pub async fn run_spilman(
         delivered += 1000;
         current_balance += payment_per_interval;
         spilman_send_payment(
-            &http, peer_url, &mut session, &spilman, &channel_id,
-            i, current_balance, elapsed_ms, delivered, payment_per_interval,
-        ).await;
+            &http,
+            peer_url,
+            &mut session,
+            &spilman,
+            &channel_id,
+            i,
+            current_balance,
+            elapsed_ms,
+            delivered,
+            payment_per_interval,
+        )
+        .await;
     }
 
     tracing::info!("[spilman] Requesting cooperative close at balance={current_balance}...");
@@ -538,10 +567,16 @@ pub async fn run_spilman(
     let close_ch: [u8; 32] = decode_hex(&close_payment.channel_id).unwrap_or([0u8; 32]);
     let close_sig: [u8; 64] = decode_hex(&close_payment.signature).unwrap_or([0u8; 64]);
 
-    let (close_params_json, close_proofs_json) =
-        spilman.create_payment_with_funding(&channel_id, current_balance).ok().map_or((None, None), |fp| {
-            let p = fp.params.map(|v| serde_json::to_vec(&v).expect("serialize params"));
-            let f = fp.funding_proofs.map(|proofs| serde_json::to_vec(&proofs).expect("serialize proofs"));
+    let (close_params_json, close_proofs_json) = spilman
+        .create_payment_with_funding(&channel_id, current_balance)
+        .ok()
+        .map_or((None, None), |fp| {
+            let p = fp
+                .params
+                .map(|v| serde_json::to_vec(&v).expect("serialize params"));
+            let f = fp
+                .funding_proofs
+                .map(|proofs| serde_json::to_vec(&proofs).expect("serialize proofs"));
             (p, f)
         });
 
@@ -558,7 +593,10 @@ pub async fn run_spilman(
     let close_responses = send_message(&http, peer_url, &channel_close).await;
     for msg in &close_responses {
         if let Message::CloseAck(ack) = msg {
-            tracing::info!("[spilman] CloseAck: accepted_balance={}", ack.accepted_balance);
+            tracing::info!(
+                "[spilman] CloseAck: accepted_balance={}",
+                ack.accepted_balance
+            );
         }
         session.handle_message(msg.clone()).await;
     }
