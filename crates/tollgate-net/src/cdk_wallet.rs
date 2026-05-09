@@ -4,8 +4,7 @@
 //! Connects to a Cashu mint (e.g., testnut.cashu.space) and handles real
 //! Cashu token operations via NUT-00/04/23.
 //!
-//! Spilman channel methods (fund_channel, sign_balance_update, etc.) return
-//! `WalletError::Internal` and will be implemented in M3.
+//! Spilman payment channel operations are in [`crate::spilman_service::SpilmanService`].
 
 use std::future::Future;
 use std::sync::Arc;
@@ -14,10 +13,7 @@ use cdk::nuts::{CurrencyUnit, MintQuoteState, PaymentMethod};
 use cdk::wallet::{ReceiveOptions, SendOptions};
 use cdk_sqlite::wallet::memory;
 use tollgate_core::error::WalletError;
-use tollgate_core::protocol::{Hash32, PubKey, Signature};
-use tollgate_core::types::{
-    Amount, ChannelFundParams, ChannelSecret, FundingProof, SettlementResult,
-};
+use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
 
 /// CDK-backed wallet implementing [`Wallet`].
@@ -157,11 +153,11 @@ impl CdkWallet {
         Ok(u64::from(bal))
     }
 
-    /// Get unspent proofs serialized as JSON.
+    /// Get unspent proofs serialized as JSON (requires `spilman` feature).
     ///
     /// Returns proofs in standard Cashu JSON format, compatible with both
-    /// `cashu` v0.15.1 and v0.16.0 crate types. Use this when you need
-    /// raw proofs without the CDK wallet's send/swap machinery.
+    /// `cashu` v0.15.1 and v0.16.0 crate types.
+    #[cfg(feature = "spilman")]
     #[allow(clippy::missing_errors_doc)]
     pub async fn unspent_proofs_json(&self) -> Result<String, WalletError> {
         let proofs = self
@@ -245,66 +241,6 @@ impl Wallet for CdkWallet {
         }
     }
 
-    fn fund_channel(
-        &self,
-        _: &ChannelFundParams,
-        _: &ChannelSecret,
-    ) -> impl Future<Output = Result<FundingProof, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal(
-                "Spilman channels not yet implemented (M3)".into(),
-            ))
-        }
-    }
-
-    fn verify_funding(
-        &self,
-        _: &Hash32,
-        _: &[u8],
-    ) -> impl Future<Output = Result<Amount, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal(
-                "Spilman channels not yet implemented (M3)".into(),
-            ))
-        }
-    }
-
-    fn sign_balance_update(
-        &self,
-        _: &Hash32,
-        _: Amount,
-    ) -> impl Future<Output = Result<Signature, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal(
-                "Spilman channels not yet implemented (M3)".into(),
-            ))
-        }
-    }
-
-    fn verify_balance_update(
-        &self,
-        _: &Hash32,
-        _: Amount,
-        _: &Signature,
-    ) -> impl Future<Output = Result<(), WalletError>> + Send {
-        async {
-            Err(WalletError::Internal(
-                "Spilman channels not yet implemented (M3)".into(),
-            ))
-        }
-    }
-
-    fn settle_channel(
-        &self,
-        _: &Hash32,
-    ) -> impl Future<Output = Result<SettlementResult, WalletError>> + Send {
-        async {
-            Err(WalletError::Internal(
-                "Spilman channels not yet implemented (M3)".into(),
-            ))
-        }
-    }
-
     fn mint_reachable(
         &self,
         mint_url: &str,
@@ -324,12 +260,5 @@ impl Wallet for CdkWallet {
                 .map_err(|e| WalletError::Internal(format!("balance: {e}")))?;
             Ok(Amount(u64::from(bal)))
         }
-    }
-
-    fn compute_channel_secret(
-        &self,
-        _: &PubKey,
-    ) -> impl Future<Output = Result<ChannelSecret, WalletError>> + Send {
-        async { Ok(ChannelSecret([0u8; 32])) }
     }
 }

@@ -6,10 +6,7 @@ use tollgate_core::access::AccessLevel;
 use tollgate_core::adapter::ResourceAdapter;
 use tollgate_core::error::{AdapterError, WalletError};
 use tollgate_core::metering::PeerMetrics;
-use tollgate_core::protocol::{Hash32, PubKey, Signature};
-use tollgate_core::types::{
-    Amount, ChannelFundParams, ChannelSecret, FundingProof, SettlementResult,
-};
+use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
 
 pub struct MockWallet {
@@ -62,46 +59,6 @@ impl Wallet for MockWallet {
         async move { result }
     }
 
-    fn fund_channel(
-        &self,
-        _: &ChannelFundParams,
-        _: &ChannelSecret,
-    ) -> impl Future<Output = Result<FundingProof, WalletError>> + Send {
-        async { Err(WalletError::Internal("not implemented".to_owned())) }
-    }
-
-    fn verify_funding(
-        &self,
-        _: &Hash32,
-        _: &[u8],
-    ) -> impl Future<Output = Result<Amount, WalletError>> + Send {
-        async { Err(WalletError::Internal("not implemented".to_owned())) }
-    }
-
-    fn sign_balance_update(
-        &self,
-        _: &Hash32,
-        _: Amount,
-    ) -> impl Future<Output = Result<Signature, WalletError>> + Send {
-        async { Err(WalletError::Internal("not implemented".to_owned())) }
-    }
-
-    fn verify_balance_update(
-        &self,
-        _: &Hash32,
-        _: Amount,
-        _: &Signature,
-    ) -> impl Future<Output = Result<(), WalletError>> + Send {
-        async { Err(WalletError::Internal("not implemented".to_owned())) }
-    }
-
-    fn settle_channel(
-        &self,
-        _: &Hash32,
-    ) -> impl Future<Output = Result<SettlementResult, WalletError>> + Send {
-        async { Err(WalletError::Internal("not implemented".to_owned())) }
-    }
-
     fn mint_reachable(&self, _: &str) -> impl Future<Output = Result<bool, WalletError>> + Send {
         async { Ok(true) }
     }
@@ -109,13 +66,6 @@ impl Wallet for MockWallet {
     fn balance(&self) -> impl Future<Output = Result<Amount, WalletError>> + Send {
         let amount = *self.balance.lock().expect("lock not poisoned");
         async move { Ok(Amount(amount)) }
-    }
-
-    fn compute_channel_secret(
-        &self,
-        _: &PubKey,
-    ) -> impl Future<Output = Result<ChannelSecret, WalletError>> + Send {
-        async { Ok(ChannelSecret([0u8; 32])) }
     }
 }
 

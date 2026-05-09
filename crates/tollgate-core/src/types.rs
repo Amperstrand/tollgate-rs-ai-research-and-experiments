@@ -40,48 +40,15 @@ impl std::ops::Sub for Amount {
     }
 }
 
-/// Secret used to derive channel IDs and fund Spilman channels.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChannelSecret(pub [u8; 32]);
-
-/// Proof that a channel has been funded (mint signature over channel params).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FundingProof {
-    pub channel_id: Hash32,
-    pub proof_data: Vec<u8>,
-}
-
-/// Result of settling a channel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SettlementResult {
-    /// Channel settled successfully, tokens redeemed.
-    Settled { redeemed: Amount },
-    /// Settlement failed — dispute may be needed.
-    Failed { reason: String },
-}
-
-/// Parameters for funding a new Spilman channel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChannelFundParams {
-    pub channel_id: Hash32,
-    pub funding_amount: Amount,
-    pub direction: crate::protocol::Direction,
-}
-
 /// State of a single Spilman payment channel within a peer session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelState {
-    /// Channel has been proposed but not yet confirmed by the peer.
     Proposed,
-    /// Channel is funded and active — balance updates can flow.
     Active { cumulative_balance: Amount },
-    /// Channel is being rolled over to a new channel.
     RollingOver {
         old_channel_id: Hash32,
         new_channel_id: Option<Hash32>,
     },
-    /// Cooperative close in progress.
     Settling { final_balance: Amount },
-    /// Channel is closed.
     Closed,
 }

@@ -1,70 +1,41 @@
-//! Wallet trait — abstracts Cashu/Spilman wallet operations.
+//! Wallet trait — abstracts Cashu wallet operations for bootstrap token payments.
 //!
-//! Implementations connect to a Cashu mint and manage Spilman payment channels.
-//! The trait uses async methods (via RPITIT) to allow for network calls to the mint.
+//! Implementations connect to a Cashu mint and handle token creation/reception.
+//! Spilman payment channel operations are handled separately by `SpilmanService`
+//! in `tollgate-net`, which wraps cdk-spilman's bridge API directly.
 //!
-//! See `docs/design/core/tollgate-payment-channels.md` for the full Wallet specification.
+//! See `docs/design/core/tollgate-bootstrap.md` for bootstrap token specification.
+//! See `docs/design/core/tollgate-payment-channels.md` for Spilman channel design.
 
 use crate::error::WalletError;
-use crate::protocol::{Hash32, PubKey, Signature};
-use crate::types::{Amount, ChannelFundParams, ChannelSecret, FundingProof, SettlementResult};
+use crate::types::Amount;
 
 use std::future::Future;
 
-/// Wallet trait — abstracts Cashu/Spilman wallet operations.
+/// Wallet trait — abstracts Cashu wallet operations for bootstrap token payments.
 ///
-/// Implementations connect to a Cashu mint and manage Spilman payment channels.
-/// The trait is async to allow for network calls to the mint.
+/// This trait covers only stateless bootstrap token operations (receive, create,
+/// balance, mint reachability). Spilman payment channel operations — which are
+/// stateful, involve async networking to the mint, and have fundamentally different
+/// buyer/seller roles — are handled by `SpilmanService` in `tollgate-net`.
 ///
-/// See `docs/design/core/tollgate-payment-channels.md` for the full Wallet specification.
+/// Splitting these concerns keeps `tollgate-core` dependency-free and accurately
+/// reflects the architectural boundary: bootstrap tokens are simple Cashu transfers,
+/// while Spilman channels are stateful multi-step protocols with dedicated bridge
+/// infrastructure in cdk-spilman.
 pub trait Wallet: Send + Sync {
-    /// Receive and validate a regular Cashu token (for bootstrap payment).
+    /// Receive and validate a Cashu token (for bootstrap payment).
     fn receive_token(
         &self,
         token: &[u8],
     ) -> impl Future<Output = Result<Amount, WalletError>> + Send;
 
-    /// Create a regular Cashu token of the given amount (for paying bootstrap).
+    /// Create a Cashu token of the given amount (for paying bootstrap).
     fn create_token(
         &self,
         amount: Amount,
         mint_url: &str,
     ) -> impl Future<Output = Result<Vec<u8>, WalletError>> + Send;
-
-    /// Fund a new Spilman channel.
-    fn fund_channel(
-        &self,
-        params: &ChannelFundParams,
-        secret: &ChannelSecret,
-    ) -> impl Future<Output = Result<FundingProof, WalletError>> + Send;
-
-    /// Verify that channel funding from the peer is valid.
-    fn verify_funding(
-        &self,
-        channel_id: &Hash32,
-        funding_data: &[u8],
-    ) -> impl Future<Output = Result<Amount, WalletError>> + Send;
-
-    /// Sign a balance update (debtor side).
-    fn sign_balance_update(
-        &self,
-        channel_id: &Hash32,
-        cumulative_balance: Amount,
-    ) -> impl Future<Output = Result<Signature, WalletError>> + Send;
-
-    /// Verify a balance update signature (creditor side).
-    fn verify_balance_update(
-        &self,
-        channel_id: &Hash32,
-        cumulative_balance: Amount,
-        signature: &Signature,
-    ) -> impl Future<Output = Result<(), WalletError>> + Send;
-
-    /// Cooperatively settle (close) a channel.
-    fn settle_channel(
-        &self,
-        channel_id: &Hash32,
-    ) -> impl Future<Output = Result<SettlementResult, WalletError>> + Send;
 
     /// Check if a mint is reachable and trusted.
     fn mint_reachable(
@@ -72,12 +43,6 @@ pub trait Wallet: Send + Sync {
         mint_url: &str,
     ) -> impl Future<Output = Result<bool, WalletError>> + Send;
 
-    /// Get current wallet balance across all channels.
+    /// Get current wallet balance.
     fn balance(&self) -> impl Future<Output = Result<Amount, WalletError>> + Send;
-
-    /// Compute the channel secret for a new channel (derived from session params).
-    fn compute_channel_secret(
-        &self,
-        peer_pubkey: &PubKey,
-    ) -> impl Future<Output = Result<ChannelSecret, WalletError>> + Send;
 }
