@@ -1,429 +1,3 @@
-name: CI
-
-on:
-  push:
-    branches: ["**"]
-  pull_request:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
-
-jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-      - run: cargo check --workspace --all-targets
-      - run: cargo check -p tollgate-net --features spilman --all-targets
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    needs: [check]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-      - run: cargo test --workspace
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    needs: [check]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo clippy -p tollgate-net --features spilman --all-targets -- -D warnings
-
-  msrv:
-    name: MSRV
-    runs-on: ubuntu-latest
-    needs: [check]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - run: cargo check -p tollgate-core
-
-  cdk-integration:
-    name: CDK Integration (testnut)
-    runs-on: ubuntu-latest
-    needs: [check]
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Run CDK integration tests
-        id: run-tests
-        run: |
-          set -o pipefail
-          cargo test -p tollgate-net --test cdk_integration -- --ignored --nocapture 2>build.log | tee protocol-report.log
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-
-      - name: Upload protocol report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: protocol-report
-          path: |
-            protocol-report.log
-            build.log
-          retention-days: 14
-
-      - name: Upload bootstrap trace artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bootstrap-trace-artifact
-          path: target/protocol-traces/
-          retention-days: 14
-
-      - name: Check test result
-        if: steps.run-tests.outputs.exit_code != '0'
-        run: |
-          echo "::error::CDK integration tests failed (exit code ${{ steps.run-tests.outputs.exit_code }})"
-          exit ${{ steps.run-tests.outputs.exit_code }}
-
-  spilman-integration:
-    name: Spilman Integration (testnut)
-    runs-on: ubuntu-latest
-    needs: [check]
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Run Spilman integration tests
-        id: run-tests
-        run: |
-          set -o pipefail
-          cargo test -p tollgate-net --test spilman_integration --features spilman -- --ignored --nocapture 2>build.log | tee spilman-report.log
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-
-      - name: Upload spilman protocol report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: spilman-protocol-report
-          path: |
-            spilman-report.log
-            build.log
-          retention-days: 14
-
-      - name: Upload spilman trace artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: spilman-trace-artifact
-          path: target/protocol-traces/
-          retention-days: 14
-
-      - name: Check test result
-        if: steps.run-tests.outputs.exit_code != '0'
-        run: |
-          echo "::error::Spilman integration tests failed (exit code ${{ steps.run-tests.outputs.exit_code }})"
-          exit ${{ steps.run-tests.outputs.exit_code }}
-
-  spilman-e2e:
-    name: Spilman E2E (provider+client)
-    runs-on: ubuntu-latest
-    needs: [check]
-    timeout-minutes: 15
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Build tollgate-net binary
-        run: cargo build -p tollgate-net --features spilman --release
-
-      - name: Clone and build test mint
-        run: |
-          git clone --depth 1 https://github.com/SatsAndSports/cashu_spilman_channels.git /tmp/spilman-channels
-          cargo build --manifest-path /tmp/spilman-channels/Cargo.toml -p cdk-spilman-test-mint --release
-
-      - name: Run Spilman E2E provider+client
-        id: run-tests
-        run: |
-          set -o pipefail
-          EXIT_CODE=0
-          MINT_URL="http://127.0.0.1:3338"
-
-          # Start local test mint (no auth, FakeWallet auto-pays, zero fees)
-          TEST_MINT_FEE_PPK_SAT=0 /tmp/spilman-channels/target/release/cdk-spilman-test-mintd --port 3338 > mint.log 2>&1 &
-          MINT_PID=$!
-          sleep 3
-
-          # Verify mint is up
-          if ! curl -sf "$MINT_URL/v1/info" > /dev/null; then
-            echo "::error::Test mint failed to start"
-            cat mint.log
-            kill $MINT_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "Test mint running on $MINT_URL"
-
-          # Start provider in background
-          cargo run --features spilman --release -- provider --wallet spilman --port 3001 --mint-url "$MINT_URL" > provider.log 2>&1 &
-          PROVIDER_PID=$!
-          sleep 5
-
-          # Capture receiver pubkey from provider output
-          RECEIVER_PUBKEY=$(grep 'Receiver pubkey:' provider.log | sed 's/.*Receiver pubkey: //')
-          if [ -z "$RECEIVER_PUBKEY" ]; then
-            echo "::error::Failed to capture receiver pubkey from provider output"
-            cat provider.log
-            kill $PROVIDER_PID 2>/dev/null || true
-            kill $MINT_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          echo "Captured receiver pubkey: $RECEIVER_PUBKEY"
-
-          # Run client
-          cargo run --features spilman --release -- client --wallet spilman --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url "$MINT_URL" --intervals 3 --interval-secs 2 > client.log 2>&1 || EXIT_CODE=$?
-
-          # Stop provider and mint
-          kill $PROVIDER_PID 2>/dev/null || true
-          kill $MINT_PID 2>/dev/null || true
-          wait $PROVIDER_PID 2>/dev/null || true
-          wait $MINT_PID 2>/dev/null || true
-
-          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-          exit $EXIT_CODE
-
-      - name: Upload E2E logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: spilman-e2e-logs
-          path: |
-            provider.log
-            client.log
-          retention-days: 14
-
-      - name: Check test result
-        if: steps.run-tests.outputs.exit_code != '0'
-        run: |
-          echo "::error::Spilman E2E test failed (exit code ${{ steps.run-tests.outputs.exit_code }})"
-          exit ${{ steps.run-tests.outputs.exit_code }}
-
-  spilman-e2e-unilateral:
-    name: Spilman E2E Unilateral Close
-    runs-on: ubuntu-latest
-    needs: [check]
-    timeout-minutes: 15
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Build tollgate-net binary
-        run: cargo build -p tollgate-net --features spilman --release
-
-      - name: Clone and build test mint
-        run: |
-          git clone --depth 1 https://github.com/SatsAndSports/cashu_spilman_channels.git /tmp/spilman-channels
-          cargo build --manifest-path /tmp/spilman-channels/Cargo.toml -p cdk-spilman-test-mint --release
-
-      - name: Run unilateral close E2E test
-        id: run-tests
-        run: |
-          set -o pipefail
-          EXIT_CODE=1
-          MINT_URL="http://127.0.0.1:3338"
-
-
-          TEST_MINT_FEE_PPK_SAT=0 /tmp/spilman-channels/target/release/cdk-spilman-test-mintd --port 3338 > mint.log 2>&1 &
-          MINT_PID=$!
-          sleep 3
-
-          if ! curl -sf "$MINT_URL/v1/info" > /dev/null; then
-            echo "::error::Test mint failed to start"
-            cat mint.log
-            kill $MINT_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "Test mint running on $MINT_URL"
-
-          # Start provider in background
-          cargo run --features spilman --release -- provider --wallet spilman --port 3002 --mint-url "$MINT_URL" > provider.log 2>&1 &
-          PROVIDER_PID=$!
-          sleep 5
-
-          RECEIVER_PUBKEY=$(grep 'Receiver pubkey:' provider.log | sed 's/.*Receiver pubkey: //')
-          if [ -z "$RECEIVER_PUBKEY" ]; then
-            echo "::error::Failed to capture receiver pubkey"
-            cat provider.log
-            kill $PROVIDER_PID 2>/dev/null || true
-            kill $MINT_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "Receiver pubkey: $RECEIVER_PUBKEY"
-
-          # Run client for 2 intervals, skip cooperative close (leave channel open for force-close)
-          timeout --signal=KILL 30 cargo run --features spilman --release -- client --wallet spilman --peer http://localhost:3002 --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url "$MINT_URL" --intervals 2 --interval-secs 3 --no-close > client.log 2>&1 || true
-
-          # Extract channel_id from client log
-          CHANNEL_ID=$(grep 'Channel opened: id=' client.log | sed 's/.*id=\([a-f0-9]*\).*/\1/' | head -1)
-          if [ -z "$CHANNEL_ID" ]; then
-            echo "::error::Failed to capture channel_id from client output"
-            cat client.log
-            kill $PROVIDER_PID 2>/dev/null || true
-            kill $MINT_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "Channel ID: $CHANNEL_ID"
-
-          sleep 2
-
-          # Call force-close endpoint on provider
-          FORCE_CLOSE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://127.0.0.1:3002/tollgate/force-close" -H "Content-Type: application/json" -d "{\"channel_id\": \"$CHANNEL_ID\"}")
-          HTTP_CODE=$(echo "$FORCE_CLOSE_RESPONSE" | tail -1)
-          RESPONSE_BODY=$(echo "$FORCE_CLOSE_RESPONSE" | sed '$d')
-
-          echo "Force-close HTTP status: $HTTP_CODE"
-          echo "Force-close response: $RESPONSE_BODY"
-
-          kill $PROVIDER_PID 2>/dev/null || true
-          kill $MINT_PID 2>/dev/null || true
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Force-close failed with HTTP $HTTP_CODE"
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          if ! echo "$RESPONSE_BODY" | grep -q '"status":"closed"'; then
-            echo "::error::Force-close response missing 'closed' status"
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          echo "Unilateral close succeeded!"
-          echo "exit_code=0" >> "$GITHUB_OUTPUT"
-
-      - name: Upload unilateral close logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: spilman-e2e-unilateral-logs
-          path: |
-            provider.log
-            client.log
-            mint.log
-          retention-days: 14
-
-      - name: Check test result
-        if: steps.run-tests.outputs.exit_code != '0'
-        run: |
-          echo "::error::Spilman E2E unilateral close test failed (exit code ${{ steps.run-tests.outputs.exit_code }})"
-          exit ${{ steps.run-tests.outputs.exit_code }}
-
-  build-pages:
-    name: Build Protocol Trace Pages
-    if: github.ref == 'refs/heads/experimental'
-    needs: [cdk-integration, spilman-integration, spilman-e2e]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v5
-        with:
-          name: bootstrap-trace-artifact
-          path: traces/bootstrap
-
-      - uses: actions/download-artifact@v5
-        with:
-          name: spilman-trace-artifact
-          path: traces/spilman
-
-      - name: Build unified protocol trace page
-        run: |
-          mkdir -p pages
-
-          cat > pages/index.html << 'HTMLEOF'
           <!DOCTYPE html>
           <html lang="en">
           <head>
@@ -721,17 +295,23 @@ jobs:
                  <li class="phase-badge"><span class="phase-swatch" style="background:#fef3c7"></span>Metering</li>
                  <li class="phase-badge"><span class="phase-swatch" style="background:#fee2e2"></span>Teardown</li>
                 </ul>
-          HTMLEOF
-
-          if [ -f "traces/bootstrap/cdk_bootstrap_lifecycle.mmd" ]; then
-            echo '<div class="mermaid">' >> pages/index.html
-            cat "traces/bootstrap/cdk_bootstrap_lifecycle.mmd" >> pages/index.html
-            echo '</div>' >> pages/index.html
-          else
-            echo '<p class="no-data">No bootstrap sequence diagram — test did not produce trace artifacts.</p>' >> pages/index.html
-          fi
-
-          cat >> pages/index.html << 'HTMLEOF'
+           <!-- BOOTSTRAP_MERMAID_PLACEHOLDER: In ci.yml, this is where traces/bootstrap/cdk_bootstrap_lifecycle.mmd gets injected -->
+           <div class="mermaid">
+           sequenceDiagram
+               participant B as Buyer
+               participant S as Seller
+               participant M as Mint
+               B->>M: MintQuote Request (auto-generated placeholder)
+               M-->>B: MintQuote Response
+               B->>S: Announce
+               S->>B: PriceSheet
+               B->>S: Accept
+               B->>S: BootstrapToken
+               S-->>B: BootstrapAck
+               B->>S: MeteringReport
+               S-->>B: MeteringReport
+               B->>S: Disconnect
+           </div>
               </section>
 
               <section>
@@ -921,17 +501,32 @@ jobs:
                  <li class="phase-badge"><span class="phase-swatch" style="background:#fef3c7"></span>Spilman-Balance</li>
                  <li class="phase-badge"><span class="phase-swatch" style="background:#fee2e2"></span>Spilman-Settlement</li>
                 </ul>
-          HTMLEOF
-
-          if [ -f "traces/spilman/spilman_channel_lifecycle.mmd" ]; then
-            echo '<div class="mermaid">' >> pages/index.html
-            cat "traces/spilman/spilman_channel_lifecycle.mmd" >> pages/index.html
-            echo '</div>' >> pages/index.html
-          else
-            echo '<p class="no-data">No Spilman sequence diagram — test did not produce trace artifacts.</p>' >> pages/index.html
-          fi
-
-          cat >> pages/index.html << 'HTMLEOF'
+           <!-- SPILMAN_MERMAID_PLACEHOLDER: In ci.yml, this is where traces/spilman/spilman_channel_lifecycle.mmd gets injected -->
+           <div class="mermaid">
+           sequenceDiagram
+               participant A as Alice
+               participant C as Charlie
+               participant M as Mint
+               Note over A: KeyGen
+               Note over C: KeyGen
+               Note over A,C: ECDH → shared secret
+               A->>M: KeysetFetch
+               M-->>A: KeysetInfo
+               Note over A: ChannelParams, ChannelId
+               Note over A: FundingOutputs (deterministic)
+               A->>M: MintQuote (102 sat)
+               M-->>A: MintProofs (blind signatures)
+               Note over C: VerifyChannel
+               Note over C: ChannelVerified ✅
+               A->>C: BalanceUpdate (10 sat)
+               C-->>A: BalanceAck
+               A->>C: BalanceUpdate (40 sat)
+               C-->>A: BalanceAck
+               A->>C: ChannelClose
+               C->>M: SwapProofs
+               M-->>C: SwapComplete
+               Note over A: Refund (60 sat)
+           </div>
               </section>
 
              <section>
@@ -2032,36 +1627,3 @@ jobs:
              <script>document.getElementById('sp-close').addEventListener('click', function() { var p = document.getElementById('state-popup'); if (p) p.style.display = 'none'; });</script>
             </body>
           </html>
-          HTMLEOF
-
-          # Copy trace JSON files
-          if [ -f "traces/bootstrap/cdk_bootstrap_lifecycle.json" ]; then
-            cp "traces/bootstrap/cdk_bootstrap_lifecycle.json" pages/trace.json
-          fi
-          if [ -f "traces/spilman/spilman_channel_lifecycle.json" ]; then
-            cp "traces/spilman/spilman_channel_lifecycle.json" pages/spilman-trace.json
-          fi
-          if [ -f "traces/spilman/spilman_claim_lab.json" ]; then
-            cp "traces/spilman/spilman_claim_lab.json" pages/spilman-claim-lab.json
-          fi
-          if [ -f "traces/spilman/spilman_channel_states.json" ]; then
-            cp "traces/spilman/spilman_channel_states.json" pages/spilman-channel-states.json
-          fi
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: pages
-
-  deploy-pages:
-    name: Deploy Protocol Traces
-    if: github.ref == 'refs/heads/experimental'
-    needs: [build-pages]
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
