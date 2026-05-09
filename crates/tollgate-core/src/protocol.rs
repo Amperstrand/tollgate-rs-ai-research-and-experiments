@@ -304,6 +304,14 @@ pub struct BalanceUpdate {
     pub balance_signature: Signature,
     #[n(4)]
     pub net_amount: u64,
+    /// JSON-encoded channel params (first update only).
+    #[n(5)]
+    #[cbor(with = "minicbor::bytes")]
+    pub channel_params_json: Option<Vec<u8>>,
+    /// JSON-encoded funding proofs (first update only).
+    #[n(6)]
+    #[cbor(with = "minicbor::bytes")]
+    pub funding_proofs_json: Option<Vec<u8>>,
 }
 
 /// 0x06 BalanceAck — creditor confirms balance update.
@@ -380,6 +388,14 @@ pub struct ChannelClose {
     pub final_signature: Signature,
     #[n(4)]
     pub reason: CloseReason,
+    /// JSON-encoded channel params (included if channel not yet registered).
+    #[n(5)]
+    #[cbor(with = "minicbor::bytes")]
+    pub channel_params_json: Option<Vec<u8>>,
+    /// JSON-encoded funding proofs (included if channel not yet registered).
+    #[n(6)]
+    #[cbor(with = "minicbor::bytes")]
+    pub funding_proofs_json: Option<Vec<u8>>,
 }
 
 /// 0x0C CloseAck — acknowledge cooperative close.
@@ -608,6 +624,8 @@ mod tests {
             cumulative_balance: 1000,
             balance_signature: Signature([0xBB; 64]),
             net_amount: 50,
+            channel_params_json: None,
+            funding_proofs_json: None,
         }));
     }
 
@@ -715,6 +733,8 @@ mod tests {
             final_balance: 500,
             final_signature: Signature([0xCC; 64]),
             reason: CloseReason::Normal,
+            channel_params_json: None,
+            funding_proofs_json: None,
         }));
     }
 

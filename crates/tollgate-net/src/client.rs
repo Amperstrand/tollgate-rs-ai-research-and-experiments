@@ -396,6 +396,18 @@ async fn spilman_send_payment(
     }
     .expect("create spilman payment");
 
+    let (params_bytes, proofs_bytes) = if interval_index == 1 {
+        let p = serde_json::to_vec(payment.params.as_ref()
+            .expect("payment with funding must have params"))
+            .expect("serialize params");
+        let f = serde_json::to_vec(payment.funding_proofs.as_ref()
+            .expect("payment with funding must have proofs"))
+            .expect("serialize proofs");
+        (Some(p), Some(f))
+    } else {
+        (None, None)
+    };
+
     let report = Message::MeteringReport(MeteringReport {
         msg_type: MessageType::MeteringReport as u8,
         elapsed_ms,
@@ -414,6 +426,8 @@ async fn spilman_send_payment(
         cumulative_balance: payment.balance,
         balance_signature: TgSignature(sig_bytes),
         net_amount: payment_per_interval,
+        channel_params_json: params_bytes,
+        funding_proofs_json: proofs_bytes,
     });
 
     let report_responses = send_message(http, peer_url, &report).await;
@@ -524,12 +538,21 @@ pub async fn run_spilman(
     let close_ch: [u8; 32] = decode_hex(&close_payment.channel_id).unwrap_or([0u8; 32]);
     let close_sig: [u8; 64] = decode_hex(&close_payment.signature).unwrap_or([0u8; 64]);
 
+    let (close_params_json, close_proofs_json) =
+        spilman.create_payment_with_funding(&channel_id, current_balance).ok().map_or((None, None), |fp| {
+            let p = fp.params.map(|v| serde_json::to_vec(&v).expect("serialize params"));
+            let f = fp.funding_proofs.map(|proofs| serde_json::to_vec(&proofs).expect("serialize proofs"));
+            (p, f)
+        });
+
     let channel_close = Message::ChannelClose(ChannelClose {
         msg_type: MessageType::ChannelClose as u8,
         channel_id: Hash32(close_ch),
         final_balance: close_payment.balance,
         final_signature: TgSignature(close_sig),
         reason: CloseReason::Normal,
+        channel_params_json: close_params_json,
+        funding_proofs_json: close_proofs_json,
     });
 
     let close_responses = send_message(&http, peer_url, &channel_close).await;
