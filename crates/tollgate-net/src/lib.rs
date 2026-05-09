@@ -4,4 +4,7 @@ pub mod mock;
 pub mod server;
 
 #[cfg(feature = "spilman")]
+pub mod spilman_service;
+
+#[cfg(feature = "spilman")]
 pub mod spilman_wallet;
