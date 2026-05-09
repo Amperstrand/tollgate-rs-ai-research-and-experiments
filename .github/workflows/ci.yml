@@ -347,7 +347,7 @@ jobs:
           timeout --signal=KILL 30 cargo run --features spilman --release -- client --wallet spilman --peer http://localhost:3002 --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url "$MINT_URL" --intervals 2 --interval-secs 3 --no-close > client.log 2>&1 || true
 
           # Extract channel_id from client log
-          CHANNEL_ID=$(grep 'Channel opened: id=' client.log | sed 's/.*id=//' | head -1)
+          CHANNEL_ID=$(grep 'Channel opened: id=' client.log | sed 's/.*id=\([a-f0-9]*\).*/\1/' | head -1)
           if [ -z "$CHANNEL_ID" ]; then
             echo "::error::Failed to capture channel_id from client output"
             cat client.log

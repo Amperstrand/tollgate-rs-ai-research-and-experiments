@@ -374,7 +374,7 @@ async fn spilman_open_channel(
 
     tracing::info!(
         "[spilman] Channel opened: id={} capacity={} sat",
-        &open_result.channel_id[..open_result.channel_id.len().min(16)],
+        open_result.channel_id,
         open_result.capacity
     );
     open_result.channel_id
