@@ -20,8 +20,11 @@ use {
     std::str::FromStr,
     tollgate_core::protocol::{BalanceUpdate, ChannelClose, CloseReason, Signature as TgSignature},
     crate::spilman_service::{ReqwestNetworking, SpilmanService},
-    crate::spilman_wallet::SpilmanChannelManager,
 };
+
+#[cfg(feature = "spilman")]
+#[allow(deprecated)]
+use crate::spilman_wallet::SpilmanChannelManager;
 
 #[cfg(feature = "spilman")]
 fn decode_hex<const N: usize>(hex: &str) -> Option<[u8; N]> {
@@ -354,6 +357,7 @@ async fn spilman_open_channel(
     let token = CashuToken::new(mint_url_obj, selected_proofs, None, CurrencyUnit::Sat);
     let token_str = token.to_string();
 
+    #[allow(deprecated)]
     let mgr = SpilmanChannelManager::new(mint_url);
     let (keyset_info_json, _) = mgr.fetch_active_keyset_info().await.expect("fetch keyset");
 
@@ -433,7 +437,7 @@ async fn spilman_send_payment(
 }
 
 #[cfg(feature = "spilman")]
-#[allow(clippy::missing_panics_doc, clippy::too_many_lines)]
+#[allow(clippy::missing_panics_doc, clippy::too_many_lines, deprecated)]
 pub async fn run_spilman(
     peer_url: &str,
     intervals: u32,

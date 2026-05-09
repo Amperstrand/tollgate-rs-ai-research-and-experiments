@@ -1,13 +1,25 @@
+//! Legacy Spilman channel management.
+//!
+//! **Deprecated**: Channel operations now use [`crate::spilman_service::SpilmanService`]
+//! which wraps cdk-spilman's bridge API directly. This module is kept for the
+//! `fetch_active_keyset_info()` method used during channel setup and for
+//! backward compatibility with existing tests.
+
 use std::time::Duration;
 
 use cdk_spilman::{construct_proofs, parse_keyset_info_from_json, KeysetInfo};
 use serde_json::Value;
 
+#[deprecated(
+    since = "0.2.0",
+    note = "Use SpilmanService for channel ops. Only fetch_active_keyset_info() is still needed."
+)]
 pub struct SpilmanChannelManager {
     mint_url: String,
     client: reqwest::Client,
 }
 
+#[allow(deprecated)]
 impl SpilmanChannelManager {
     /// Creates a new Spilman channel manager targeting the given mint URL.
     ///
