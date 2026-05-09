@@ -302,7 +302,7 @@ jobs:
           echo "Receiver pubkey: $RECEIVER_PUBKEY"
 
           # Run client for 2 intervals, then kill it (don't let it close cooperatively)
-          timeout --signal=TERM 20 cargo run --features spilman --release -- client --wallet spilman --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url https://testnut.cashu.exchange --intervals 2 --interval-secs 3 > client.log 2>&1 || true
+          timeout --signal=TERM 20 cargo run --features spilman --release -- client --wallet spilman --peer http://localhost:3002 --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url https://testnut.cashu.exchange --intervals 2 --interval-secs 3 > client.log 2>&1 || true
 
           # Extract channel_id from client log
           CHANNEL_ID=$(grep 'Channel opened: id=' client.log | sed 's/.*id=//' | head -1)
