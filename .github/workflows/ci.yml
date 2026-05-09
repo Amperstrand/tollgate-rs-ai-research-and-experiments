@@ -184,10 +184,84 @@ jobs:
           echo "::error::Spilman integration tests failed (exit code ${{ steps.run-tests.outputs.exit_code }})"
           exit ${{ steps.run-tests.outputs.exit_code }}
 
+  spilman-e2e:
+    name: Spilman E2E (provider+client)
+    runs-on: ubuntu-latest
+    needs: [check]
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build binary with Spilman feature
+        run: cargo build -p tollgate-net --features spilman --release
+
+      - name: Run Spilman E2E provider+client
+        id: run-tests
+        run: |
+          set -o pipefail
+          EXIT_CODE=0
+
+          # Start provider in background, capture output
+          cargo run --features spilman --release -- provider --wallet spilman --port 3001 > provider.log 2>&1 &
+          PROVIDER_PID=$!
+
+          # Wait for build + startup
+          sleep 15
+
+          # Capture receiver pubkey from provider output
+          RECEIVER_PUBKEY=$(grep 'Receiver pubkey:' provider.log | sed 's/.*Receiver pubkey: //')
+          if [ -z "$RECEIVER_PUBKEY" ]; then
+            echo "::error::Failed to capture receiver pubkey from provider output"
+            echo "Provider log:"
+            cat provider.log
+            kill $PROVIDER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "Captured receiver pubkey: $RECEIVER_PUBKEY"
+
+          # Run client
+          cargo run --features spilman --release -- client --wallet spilman --receiver-pubkey "$RECEIVER_PUBKEY" --intervals 3 --interval-secs 2 > client.log 2>&1 || EXIT_CODE=$?
+
+          # Stop provider
+          kill $PROVIDER_PID 2>/dev/null || true
+          wait $PROVIDER_PID 2>/dev/null || true
+
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
+
+      - name: Upload E2E logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spilman-e2e-logs
+          path: |
+            provider.log
+            client.log
+          retention-days: 14
+
+      - name: Check test result
+        if: steps.run-tests.outputs.exit_code != '0'
+        run: |
+          echo "::error::Spilman E2E test failed (exit code ${{ steps.run-tests.outputs.exit_code }})"
+          exit ${{ steps.run-tests.outputs.exit_code }}
+
   build-pages:
     name: Build Protocol Trace Pages
     if: github.ref == 'refs/heads/experimental'
-    needs: [cdk-integration, spilman-integration]
+    needs: [cdk-integration, spilman-integration, spilman-e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v5
