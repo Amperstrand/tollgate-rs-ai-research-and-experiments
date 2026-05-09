@@ -55,6 +55,9 @@ enum Commands {
         /// Mint URL (only used with --wallet cdk)
         #[arg(long, default_value = "https://testnut.cashu.space")]
         mint_url: String,
+        /// Seller's Spilman receiver public key (hex, required for --wallet spilman)
+        #[arg(long)]
+        receiver_pubkey: Option<String>,
     },
 }
 
@@ -100,6 +103,7 @@ async fn main() {
             interval_secs,
             wallet: wt,
             mint_url,
+            receiver_pubkey,
         } => match wt {
             WalletType::Mock => {
                 client::run_mock(&peer, intervals, interval_secs, 200).await;
@@ -122,17 +126,20 @@ async fn main() {
                 let sender_secret = SecretKey::generate();
                 #[allow(clippy::arc_with_non_send_sync)]
                 let spilman = Arc::new(SpilmanService::new(&mint_url, sender_secret));
-                // TODO: receiver pubkey should come from server via protocol negotiation
-                // For now, read from env var or accept via CLI arg
-                let receiver_pubkey = std::env::var("TOLLGATE_RECEIVER_PUBKEY")
-                    .unwrap_or_else(|_| "TODO_GET_FROM_SERVER".to_owned());
+                let receiver_pk = receiver_pubkey
+                    .as_deref()
+                    .unwrap_or_else(|| {
+                        eprintln!("ERROR: --receiver-pubkey is required for --wallet spilman");
+                        eprintln!("Start the provider first; it prints its receiver pubkey on startup.");
+                        std::process::exit(1);
+                    });
                 client::run_spilman(
                     &peer,
                     intervals,
                     interval_secs,
                     wallet,
                     spilman,
-                    &receiver_pubkey,
+                    receiver_pk,
                     &mint_url,
                 )
                 .await;
