@@ -169,3 +169,437 @@ fn message_name(msg: &Message) -> &'static str {
         Message::MeteringReportResponse(_) => "MeteringReportResponse",
     }
 }
+
+// ---------------------------------------------------------------------------
+// Spilman payment channel server (requires --features spilman)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "spilman")]
+use {
+    async_trait::async_trait,
+    cashu::nuts::{CurrencyUnit, Id, PublicKey, SecretKey},
+    cdk_spilman::{
+        ChannelFunding, ChannelPolicy, ChannelState, ClosingData,
+        compute_channel_secret_from_hex, sign_with_tweaked_key_util,
+    },
+    std::cell::{Cell, RefCell},
+    std::collections::HashMap,
+    std::time::{SystemTime, UNIX_EPOCH},
+    tollgate_core::protocol::{BalanceAck, CloseAck, MessageType},
+    crate::spilman_service::{
+        PaymentProof, SpilmanAsyncNetworking, SpilmanBridge, SpilmanHost,
+    },
+};
+
+#[cfg(feature = "spilman")]
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+#[cfg(feature = "spilman")]
+struct ServerNetworking {
+    client: reqwest::Client,
+}
+
+#[cfg(feature = "spilman")]
+impl ServerNetworking {
+    fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[cfg(feature = "spilman")]
+#[async_trait]
+impl SpilmanAsyncNetworking for ServerNetworking {
+    async fn call_mint_swap(
+        &self,
+        mint_url: &str,
+        swap_request_json: &str,
+    ) -> Result<String, String> {
+        let url = format!("{mint_url}/v1/swap");
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .body(swap_request_json.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("server swap failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("server swap failed: {status} - {body}"));
+        }
+
+        resp.text()
+            .await
+            .map_err(|e| format!("read swap response: {e}"))
+    }
+
+    async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
+        tracing::info!("[server-net] keyset refresh skipped (mint={mint})");
+        Ok(())
+    }
+}
+
+#[cfg(feature = "spilman")]
+struct ServerSpilmanHost {
+    receiver_secret: SecretKey,
+    channels: RefCell<HashMap<String, ChannelFunding>>,
+    payments: RefCell<HashMap<String, PaymentProof>>,
+    states: RefCell<HashMap<String, ChannelState>>,
+    closing_data: RefCell<HashMap<String, ClosingData>>,
+    keyset_infos: RefCell<HashMap<Id, String>>,
+    active_keysets: RefCell<HashMap<String, Vec<Id>>>,
+    amount_due: Cell<u64>,
+}
+
+#[cfg(feature = "spilman")]
+impl ServerSpilmanHost {
+    fn new(receiver_secret: SecretKey) -> Self {
+        Self {
+            receiver_secret,
+            channels: RefCell::new(HashMap::new()),
+            payments: RefCell::new(HashMap::new()),
+            states: RefCell::new(HashMap::new()),
+            closing_data: RefCell::new(HashMap::new()),
+            keyset_infos: RefCell::new(HashMap::new()),
+            active_keysets: RefCell::new(HashMap::new()),
+            amount_due: Cell::new(0),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn add_keyset(&self, mint_url: &str, keyset_id: Id, keyset_info_json: String) {
+        self.keyset_infos
+            .borrow_mut()
+            .insert(keyset_id, keyset_info_json);
+        self.active_keysets
+            .borrow_mut()
+            .entry(mint_url.to_string())
+            .or_default()
+            .push(keyset_id);
+    }
+
+    fn receiver_pubkey_hex(&self) -> String {
+        self.receiver_secret.public_key().to_hex()
+    }
+}
+
+#[cfg(feature = "spilman")]
+impl SpilmanHost<()> for ServerSpilmanHost {
+    fn receiver_key_is_acceptable(&self, pk: &PublicKey) -> bool {
+        *pk == self.receiver_secret.public_key()
+    }
+
+    fn mint_and_keyset_is_acceptable(&self, _mint: &str, _id: &Id) -> bool {
+        true
+    }
+
+    fn get_funding(&self, cid: &str) -> Option<ChannelFunding> {
+        self.channels.borrow().get(cid).cloned()
+    }
+
+    fn save_funding(&self, cid: &str, funding: ChannelFunding, payment: PaymentProof) {
+        self.channels.borrow_mut().insert(cid.to_string(), funding);
+        self.payments.borrow_mut().insert(cid.to_string(), payment);
+        self.states
+            .borrow_mut()
+            .insert(cid.to_string(), ChannelState::Open);
+    }
+
+    fn get_amount_due(&self, _cid: &str, _ctx: Option<&()>) -> u64 {
+        self.amount_due.get()
+    }
+
+    fn record_payment(&self, cid: &str, payment: PaymentProof, _ctx: &()) {
+        self.payments
+            .borrow_mut()
+            .insert(cid.to_string(), payment.clone());
+        self.amount_due.set(payment.balance);
+    }
+
+    fn get_channel_state(&self, cid: &str) -> ChannelState {
+        self.states
+            .borrow()
+            .get(cid)
+            .copied()
+            .unwrap_or(ChannelState::Open)
+    }
+
+    fn mark_channel_closing(
+        &self,
+        cid: &str,
+        expiry_ts: u64,
+        payment: PaymentProof,
+    ) -> Result<(), String> {
+        self.states
+            .borrow_mut()
+            .insert(cid.to_string(), ChannelState::Closing);
+        self.closing_data.borrow_mut().insert(
+            cid.to_string(),
+            ClosingData {
+                expiry_timestamp: expiry_ts,
+                balance: payment.balance,
+                signature: payment.signature,
+            },
+        );
+        Ok(())
+    }
+
+    fn get_closing_data(&self, cid: &str) -> Option<ClosingData> {
+        self.closing_data.borrow().get(cid).cloned()
+    }
+
+    fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+        Some(ChannelPolicy {
+            min_capacity: 1,
+            min_expiry_in_seconds: 60,
+            max_amount_per_output: Some(64),
+        })
+    }
+
+    fn now_seconds(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
+    fn get_balance_and_signature_for_unilateral_exit(&self, cid: &str) -> Option<PaymentProof> {
+        self.payments.borrow().get(cid).cloned()
+    }
+
+    fn get_active_keyset_ids(&self, mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
+        self.active_keysets
+            .borrow()
+            .get(mint)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn get_keyset_info(&self, _mint: &str, kid: &Id) -> Option<String> {
+        self.keyset_infos.borrow().get(kid).cloned()
+    }
+
+    fn mark_channel_closed(
+        &self,
+        cid: &str,
+        _expiry_ts: u64,
+        _balance: u64,
+        _receiver_proofs: &str,
+        _sender_proofs: &str,
+        _receiver_sum: u64,
+        _sender_sum: u64,
+    ) -> Result<(), String> {
+        self.states
+            .borrow_mut()
+            .insert(cid.to_string(), ChannelState::Closed);
+        Ok(())
+    }
+
+    fn compute_channel_secret(
+        &self,
+        receiver_pk_hex: &str,
+        sender_pk_hex: &str,
+    ) -> Result<String, String> {
+        let expected = self.receiver_secret.public_key().to_hex();
+        if receiver_pk_hex != expected {
+            return Err(format!(
+                "receiver pubkey mismatch: expected {expected}, got {receiver_pk_hex}"
+            ));
+        }
+        compute_channel_secret_from_hex(&self.receiver_secret.to_secret_hex(), sender_pk_hex)
+    }
+
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pk_hex: &str,
+        message_hex: &str,
+        tweak_hex: &str,
+    ) -> Result<String, String> {
+        let expected = self.receiver_secret.public_key().to_hex();
+        if signer_pk_hex != expected {
+            return Err(format!(
+                "signer pubkey mismatch: expected {expected}, got {signer_pk_hex}"
+            ));
+        }
+        sign_with_tweaked_key_util(
+            &self.receiver_secret.to_secret_hex(),
+            message_hex,
+            tweak_hex,
+        )
+    }
+}
+
+#[cfg(feature = "spilman")]
+#[allow(dead_code)]
+struct SpilmanServerState {
+    bridge: SpilmanBridge<ServerSpilmanHost, ()>,
+    net: ServerNetworking,
+    mint_url: String,
+}
+
+#[cfg(feature = "spilman")]
+struct SpilmanAppState {
+    session: Mutex<PeerSession<crate::cdk_wallet::CdkWallet, MockAdapter>>,
+    adapter: Arc<MockAdapter>,
+    spilman: Mutex<SpilmanServerState>,
+}
+
+#[cfg(feature = "spilman")]
+#[allow(clippy::missing_panics_doc)]
+pub async fn run_spilman(
+    port: u16,
+    wallet: Arc<crate::cdk_wallet::CdkWallet>,
+    receiver_secret: SecretKey,
+    mint_url: &str,
+) {
+    let adapter = Arc::new(MockAdapter::new());
+    let config = provider_config();
+    let session = PeerSession::new(wallet, adapter.clone(), config);
+
+    let server_host = ServerSpilmanHost::new(receiver_secret);
+    let receiver_pubkey_hex = server_host.receiver_pubkey_hex();
+    let server_bridge = SpilmanBridge::new(server_host);
+
+    let spilman_state = SpilmanServerState {
+        bridge: server_bridge,
+        net: ServerNetworking::new(),
+        mint_url: mint_url.to_owned(),
+    };
+
+    let state = Arc::new(SpilmanAppState {
+        session: Mutex::new(session),
+        adapter,
+        spilman: Mutex::new(spilman_state),
+    });
+
+    let app = Router::new()
+        .route("/tollgate/message", post(handle_spilman_message))
+        .with_state(state);
+
+    tracing::info!("Spilman provider listening on port {port}");
+    tracing::info!(
+        "Receiver pubkey: {}...",
+        &receiver_pubkey_hex[..receiver_pubkey_hex.len().min(16)]
+    );
+
+    let addr = format!("0.0.0.0:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .expect("failed to bind listener");
+    axum::serve(listener, app)
+        .await
+        .expect("server exited with error");
+}
+
+#[cfg(feature = "spilman")]
+async fn handle_spilman_message(
+    State(state): State<Arc<SpilmanAppState>>,
+    body: axum::body::Bytes,
+) -> (StatusCode, Vec<u8>) {
+    let msg: Message = match minicbor::decode(&body) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("Failed to decode CBOR message: {e}");
+            return (StatusCode::BAD_REQUEST, vec![]);
+        }
+    };
+
+    if let Message::MeteringReport(ref report) = msg {
+        state.adapter.set_metrics(PeerMetrics {
+            elapsed_ms: report.elapsed_ms,
+            delivered: report.delivered,
+            received: report.received,
+        });
+    }
+
+    let is_announce = matches!(msg, Message::Announce(_));
+    let msg_name = message_name(&msg);
+
+    let mut session = state.session.lock().await;
+    let mut responses = session.handle_message(msg.clone()).await;
+
+    tracing::info!("Received {msg_name}, state: {:?}", session.state());
+
+    if is_announce && responses.is_empty() {
+        tracing::info!("Sending Announce + PriceSheet to peer");
+        responses.push(session.create_announce());
+        responses.push(session.create_price_sheet());
+    }
+
+    drop(session);
+
+    if let Message::BalanceUpdate(ref update) = msg {
+        let channel_id_hex = encode_hex(&update.channel_id.0);
+        let signature_hex = encode_hex(&update.balance_signature.0);
+
+        let spilman_state = state.spilman.lock().await;
+        match spilman_state.bridge.process_payment(
+            &channel_id_hex,
+            update.cumulative_balance,
+            &signature_hex,
+            None,
+            None,
+            &(),
+        ) {
+            Ok(result) => {
+                tracing::info!(
+                    "[spilman] Payment accepted: channel={} balance={}",
+                    &channel_id_hex[..channel_id_hex.len().min(16)],
+                    result.balance,
+                );
+                responses.push(Message::BalanceAck(BalanceAck {
+                    msg_type: MessageType::BalanceAck as u8,
+                    channel_id: update.channel_id.clone(),
+                    accepted_balance: result.balance,
+                }));
+            }
+            Err(e) => {
+                tracing::warn!("[spilman] Payment rejected: {e}");
+                responses.push(Message::BalanceAck(BalanceAck {
+                    msg_type: MessageType::BalanceAck as u8,
+                    channel_id: update.channel_id.clone(),
+                    accepted_balance: update.cumulative_balance,
+                }));
+            }
+        }
+    }
+
+    if let Message::ChannelClose(ref close) = msg {
+        let channel_id_hex = encode_hex(&close.channel_id.0);
+        tracing::info!(
+            "[spilman] ChannelClose: channel={} balance={}",
+            &channel_id_hex[..channel_id_hex.len().min(16)],
+            close.final_balance,
+        );
+        responses.push(Message::CloseAck(CloseAck {
+            msg_type: MessageType::CloseAck as u8,
+            channel_id: close.channel_id.clone(),
+            accepted_balance: close.final_balance,
+        }));
+    }
+
+    log_responses(&responses);
+
+    if responses.is_empty() {
+        (StatusCode::OK, vec![])
+    } else {
+        match minicbor::to_vec(&responses) {
+            Ok(bytes) => (StatusCode::OK, bytes),
+            Err(e) => {
+                tracing::error!("Failed to encode response: {e}");
+                (StatusCode::INTERNAL_SERVER_ERROR, vec![])
+            }
+        }
+    }
+}

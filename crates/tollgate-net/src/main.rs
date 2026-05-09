@@ -3,6 +3,12 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use tollgate_net::{cdk_wallet, client, mock, server};
 
+#[cfg(feature = "spilman")]
+use {
+    cashu::nuts::SecretKey,
+    tollgate_net::spilman_service::SpilmanService,
+};
+
 #[derive(Parser)]
 #[command(name = "tollgate-net", about = "TollGate v2 network node")]
 struct Cli {
@@ -14,6 +20,8 @@ struct Cli {
 enum WalletType {
     Mock,
     Cdk,
+    #[cfg(feature = "spilman")]
+    Spilman,
 }
 
 #[derive(Subcommand)]
@@ -75,6 +83,16 @@ async fn main() {
                 );
                 server::run(port, wallet).await;
             }
+            #[cfg(feature = "spilman")]
+            WalletType::Spilman => {
+                let wallet = Arc::new(
+                    cdk_wallet::CdkWallet::new(&mint_url, [1u8; 64])
+                        .await
+                        .expect("failed to create CDK wallet"),
+                );
+                let receiver_secret = SecretKey::generate();
+                server::run_spilman(port, wallet, receiver_secret, &mint_url).await;
+            }
         },
         Commands::Client {
             peer,
@@ -93,6 +111,31 @@ async fn main() {
                         .expect("failed to create CDK wallet"),
                 );
                 client::run_cdk(&peer, intervals, interval_secs, wallet, &mint_url).await;
+            }
+            #[cfg(feature = "spilman")]
+            WalletType::Spilman => {
+                let wallet = Arc::new(
+                    cdk_wallet::CdkWallet::new(&mint_url, [2u8; 64])
+                        .await
+                        .expect("failed to create CDK wallet"),
+                );
+                let sender_secret = SecretKey::generate();
+                #[allow(clippy::arc_with_non_send_sync)]
+                let spilman = Arc::new(SpilmanService::new(&mint_url, sender_secret));
+                // TODO: receiver pubkey should come from server via protocol negotiation
+                // For now, read from env var or accept via CLI arg
+                let receiver_pubkey = std::env::var("TOLLGATE_RECEIVER_PUBKEY")
+                    .unwrap_or_else(|_| "TODO_GET_FROM_SERVER".to_owned());
+                client::run_spilman(
+                    &peer,
+                    intervals,
+                    interval_secs,
+                    wallet,
+                    spilman,
+                    &receiver_pubkey,
+                    &mint_url,
+                )
+                .await;
             }
         },
     }
