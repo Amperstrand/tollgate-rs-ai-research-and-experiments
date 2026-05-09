@@ -15,18 +15,19 @@ mod common;
 
 #[cfg(feature = "spilman")]
 use {
-    cashu::nuts::{CurrencyUnit, Id, PublicKey, SecretKey},
+    cashu::mint_url::MintUrl,
+    cashu::nuts::Token as CashuToken,
+    cashu::nuts::{CurrencyUnit, Id, Proof as CashuProof, PublicKey, SecretKey},
     cdk_spilman::{
         compute_channel_secret_from_hex, sign_with_tweaked_key_util, ChannelFunding, ChannelPolicy,
         ChannelState, ClosingData, ConfigurableClientHost, MemoryClientStorage, PaymentProof,
-        SpilmanBridge, SpilmanClientAsyncNetworking, SpilmanClientBridge, SpilmanClientNetworking,
-        SpilmanHost,
+        SpilmanAsyncNetworking, SpilmanBridge, SpilmanClientAsyncNetworking, SpilmanClientBridge,
+        SpilmanClientNetworking, SpilmanHost,
     },
     std::cell::{Cell, RefCell},
     std::collections::HashMap,
+    std::str::FromStr,
     std::time::{SystemTime, UNIX_EPOCH},
-    tollgate_core::types::Amount,
-    tollgate_core::wallet::Wallet,
     tollgate_net::cdk_wallet::CdkWallet,
     tollgate_net::spilman_wallet::SpilmanChannelManager,
 };
@@ -94,6 +95,61 @@ struct DummySyncNetworking;
 impl SpilmanClientNetworking for DummySyncNetworking {
     fn call_mint_swap(&self, _mint_url: &str, _json: &str) -> Result<String, String> {
         panic!("sync networking not used — use async path instead")
+    }
+}
+
+/// Server-side async networking for cooperative close (swaps proofs at mint).
+#[cfg(feature = "spilman")]
+struct ServerAsyncNetworking {
+    client: reqwest::Client,
+}
+
+#[cfg(feature = "spilman")]
+impl ServerAsyncNetworking {
+    fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[cfg(feature = "spilman")]
+#[async_trait::async_trait]
+impl SpilmanAsyncNetworking for ServerAsyncNetworking {
+    async fn call_mint_swap(
+        &self,
+        mint_url: &str,
+        swap_request_json: &str,
+    ) -> Result<String, String> {
+        let url = format!("{mint_url}/v1/swap");
+        tracing::info!(
+            "[server-net] POST {url} ({} bytes)",
+            swap_request_json.len()
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .body(swap_request_json.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("server swap failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("server swap failed: {status} - {body}"));
+        }
+
+        resp.text()
+            .await
+            .map_err(|e| format!("failed to read server swap response: {e}"))
+    }
+
+    async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
+        tracing::info!("[server-net] keyset refresh skipped for spike (mint={mint})");
+        Ok(())
     }
 }
 
@@ -173,7 +229,10 @@ impl SpilmanHost<()> for SpikeServerHost {
     }
 
     fn record_payment(&self, cid: &str, payment: PaymentProof, _ctx: &()) {
-        self.payments.borrow_mut().insert(cid.to_string(), payment);
+        self.payments
+            .borrow_mut()
+            .insert(cid.to_string(), payment.clone());
+        self.amount_due.set(payment.balance);
     }
 
     fn get_channel_state(&self, cid: &str) -> ChannelState {
@@ -319,7 +378,7 @@ async fn cdk_spilman_bridge_spike() {
 
     // ─── Phase 1: Mint proofs from testnut via CdkWallet ───
     tracing::info!("Phase 1: Minting tokens from testnut via CdkWallet");
-    let wallet = CdkWallet::new(MINT_URL, [42u8; 64])
+    let wallet = CdkWallet::new(MINT_URL, rand::random())
         .await
         .expect("CdkWallet init");
     wallet
@@ -330,13 +389,40 @@ async fn cdk_spilman_bridge_spike() {
     tracing::info!("Wallet balance after mint: {bal} sat");
     assert!(bal >= 1000, "need >= 1000 sat for channel, got {bal}");
 
-    // Create a token for 1000 sat — plenty for a channel
-    let token_bytes = wallet
-        .create_token(Amount(1000), MINT_URL)
-        .await
-        .expect("create 1000 sat token");
-    let token_str = String::from_utf8(token_bytes).expect("token is valid UTF-8");
-    tracing::info!("Token created: {} bytes", token_str.len());
+    // Extract raw proofs from wallet (bypasses CDK's prepare_send+confirm
+    // which does a swap at the mint, causing double-spend when cdk-spilman
+    // tries to swap again). We construct the token directly using cashu
+    // v0.15.1 types (same version cdk-spilman uses for parsing).
+    let proofs_json = wallet.unspent_proofs_json().await.expect("get proofs");
+    let all_proofs: Vec<CashuProof> =
+        serde_json::from_str(&proofs_json).expect("parse cashu v0.15.1 proofs");
+    tracing::info!("Extracted {} unspent proofs from wallet", all_proofs.len());
+
+    let mut selected_proofs = Vec::new();
+    let mut selected_total = 0u64;
+    for proof in &all_proofs {
+        if selected_total >= 1000 {
+            break;
+        }
+        selected_proofs.push(proof.clone());
+        selected_total += u64::from(proof.amount);
+    }
+    tracing::info!(
+        "Selected {selected_total} sat from {} proofs",
+        selected_proofs.len()
+    );
+    assert!(
+        selected_total >= 1000,
+        "need >= 1000 sat, got {selected_total}"
+    );
+
+    let mint_url = MintUrl::from_str(MINT_URL).expect("parse mint URL");
+    let token = CashuToken::new(mint_url, selected_proofs, None, CurrencyUnit::Sat);
+    let token_str = token.to_string();
+    tracing::info!(
+        "Token created: {} bytes (V4 cashuB, raw proofs)",
+        token_str.len()
+    );
 
     // ─── Phase 2: Fetch keyset info from testnut ───
     tracing::info!("Phase 2: Fetching active keyset from testnut");
@@ -477,7 +563,6 @@ async fn cdk_spilman_bridge_spike() {
     // ─── Phase 8: Verify final state ───
     tracing::info!("Phase 8: Verifying final channel state");
 
-    // Client side
     let client_info = client_bridge
         .get_channel_info(&open_result.channel_id)
         .expect("client channel info");
@@ -490,13 +575,67 @@ async fn cdk_spilman_bridge_spike() {
         client_info.capacity,
     );
 
-    // Server side
     let server_payment = server_bridge
         .host()
         .get_last_payment(&open_result.channel_id)
         .expect("server has last payment");
     assert_eq!(server_payment.balance, 50);
     tracing::info!("Server state: balance={}", server_payment.balance);
+
+    // ─── Phase 9: Cooperative close ───
+    tracing::info!("Phase 9: Cooperative close at balance=50 sat");
+
+    let close_request = client_bridge
+        .create_cooperative_close_request(&open_result.channel_id, 50)
+        .expect("create cooperative close request");
+    tracing::info!(
+        "Close request: channel={} balance={}",
+        &close_request.channel_id[..close_request.channel_id.len().min(16)],
+        close_request.balance,
+    );
+
+    let server_net = ServerAsyncNetworking::new();
+    let close_json = serde_json::to_string(&close_request).expect("serialize close request");
+    let close_result = server_bridge
+        .execute_cooperative_close_async(&close_json, &server_net)
+        .await
+        .expect("execute cooperative close");
+
+    tracing::info!(
+        "Cooperative close succeeded: receiver_sum={} sender_sum={} total={}",
+        close_result.receiver_sum,
+        close_result.sender_sum,
+        close_result.total_value,
+    );
+    assert!(close_result.receiver_sum > 0, "receiver must get proofs");
+    assert!(
+        close_result.receiver_sum >= 50,
+        "receiver must get at least the balance (got {})",
+        close_result.receiver_sum,
+    );
+    assert!(
+        close_result.sender_sum > 0,
+        "sender must get refund proofs (capacity - balance - fees)"
+    );
+
+    // Client processes close response
+    let close_response_json = serde_json::json!({
+        "channel_id": close_result.channel_id,
+    })
+    .to_string();
+    client_bridge
+        .process_cooperative_close_response(&close_response_json)
+        .expect("client processes close response");
+
+    let final_info = client_bridge
+        .get_channel_info(&open_result.channel_id)
+        .expect("client channel info after close");
+    assert_eq!(
+        final_info.state,
+        cdk_spilman::ClientChannelState::Closed,
+        "channel must be closed after cooperative close"
+    );
+    tracing::info!("Client channel state after close: {:?}", final_info.state);
 
     // ─── Summary ───
     tracing::info!("");
@@ -505,8 +644,9 @@ async fn cdk_spilman_bridge_spike() {
     tracing::info!("Capacity: {} sat", open_result.capacity);
     tracing::info!("Payments: 3 (10, 25, 50 sat)");
     tracing::info!(
-        "Final state: 50 sat to seller, {} sat refund to buyer",
-        open_result.capacity.saturating_sub(50)
+        "Cooperative close: receiver={} sat, sender refund={} sat",
+        close_result.receiver_sum,
+        close_result.sender_sum,
     );
-    tracing::info!("SPIKE SUCCESS: cdk-spilman bridge works against testnut!");
+    tracing::info!("SPIKE SUCCESS: full channel lifecycle works against testnut!");
 }

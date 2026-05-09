@@ -156,6 +156,22 @@ impl CdkWallet {
             .map_err(|e| WalletError::Internal(format!("balance: {e}")))?;
         Ok(u64::from(bal))
     }
+
+    /// Get unspent proofs serialized as JSON.
+    ///
+    /// Returns proofs in standard Cashu JSON format, compatible with both
+    /// `cashu` v0.15.1 and v0.16.0 crate types. Use this when you need
+    /// raw proofs without the CDK wallet's send/swap machinery.
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn unspent_proofs_json(&self) -> Result<String, WalletError> {
+        let proofs = self
+            .wallet
+            .get_unspent_proofs()
+            .await
+            .map_err(|e| WalletError::Internal(format!("get_proofs: {e}")))?;
+        serde_json::to_string(&proofs)
+            .map_err(|e| WalletError::Internal(format!("serialize proofs: {e}")))
+    }
 }
 
 #[allow(clippy::manual_async_fn)]
