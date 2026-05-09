@@ -498,6 +498,7 @@ pub async fn run_spilman(
 
     let app = Router::new()
         .route("/tollgate/message", post(handle_spilman_message))
+        .route("/tollgate/force-close", post(handle_force_close))
         .with_state(state);
 
     tracing::info!("Spilman provider listening on port {port}");
@@ -632,6 +633,65 @@ async fn handle_spilman_message(
                 tracing::error!("Failed to encode response: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, vec![])
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Server-initiated unilateral close (requires --features spilman)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "spilman")]
+async fn handle_force_close(
+    State(state): State<Arc<SpilmanAppState>>,
+    body: axum::body::Bytes,
+) -> (StatusCode, String) {
+    let channel_id = match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(v) => v["channel_id"].as_str().unwrap_or_default().to_string(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("invalid JSON: {e}"));
+        }
+    };
+
+    if channel_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing channel_id".to_string());
+    }
+
+    tracing::info!(
+        "[spilman] Force-close requested: channel={}",
+        &channel_id[..channel_id.len().min(16)],
+    );
+
+    let spilman_state = state.spilman.lock().await;
+    match spilman_state
+        .bridge
+        .execute_unilateral_close_async(&channel_id, &spilman_state.net)
+        .await
+    {
+        Ok(result) => {
+            tracing::info!(
+                "[spilman] Unilateral close settled: channel={} receiver_sum={} sender_sum={}",
+                &channel_id[..channel_id.len().min(16)],
+                result.receiver_sum,
+                result.sender_sum,
+            );
+            (
+                StatusCode::OK,
+                serde_json::json!({
+                    "status": "closed",
+                    "channel_id": result.channel_id,
+                    "receiver_sum": result.receiver_sum,
+                    "sender_sum": result.sender_sum,
+                })
+                .to_string(),
+            )
+        }
+        Err(e) => {
+            tracing::warn!("[spilman] Unilateral close failed: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("close failed: {e}"),
+            )
         }
     }
 }
