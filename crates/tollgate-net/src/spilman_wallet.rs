@@ -19,9 +19,7 @@ use serde_json::Value;
 ///
 /// Returns an error if the mint is unreachable, returns malformed JSON,
 /// or has no active sat keyset.
-pub async fn fetch_active_keyset_info(
-    mint_url: &str,
-) -> Result<(String, KeysetInfo), String> {
+pub async fn fetch_active_keyset_info(mint_url: &str) -> Result<(String, KeysetInfo), String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -60,8 +58,7 @@ pub async fn fetch_active_keyset_info(
         .text()
         .await
         .map_err(|e| format!("read keys body: {e}"))?;
-    let keys_body: Value =
-        serde_json::from_str(&text).map_err(|e| format!("parse keys: {e}"))?;
+    let keys_body: Value = serde_json::from_str(&text).map_err(|e| format!("parse keys: {e}"))?;
 
     let keyset_data = keys_body["keysets"]
         .as_array()
