@@ -218,8 +218,8 @@ jobs:
           EXIT_CODE=0
           MINT_URL="http://127.0.0.1:3338"
 
-          # Start local test mint (no auth, FakeWallet auto-pays)
-          /tmp/spilman-channels/target/release/cdk-spilman-test-mintd --port 3338 > mint.log 2>&1 &
+          # Start local test mint (no auth, FakeWallet auto-pays, zero fees)
+          TEST_MINT_FEE_PPK_SAT=0 /tmp/spilman-channels/target/release/cdk-spilman-test-mintd --port 3338 > mint.log 2>&1 &
           MINT_PID=$!
           sleep 3
 
@@ -313,8 +313,8 @@ jobs:
           EXIT_CODE=1
           MINT_URL="http://127.0.0.1:3338"
 
-          # Start local test mint
-          /tmp/spilman-channels/target/release/cdk-spilman-test-mintd --port 3338 > mint.log 2>&1 &
+
+          TEST_MINT_FEE_PPK_SAT=0 /tmp/spilman-channels/target/release/cdk-spilman-test-mintd --port 3338 > mint.log 2>&1 &
           MINT_PID=$!
           sleep 3
 
