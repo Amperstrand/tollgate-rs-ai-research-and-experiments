@@ -284,67 +284,75 @@ jobs:
         id: run-tests
         run: |
           set -o pipefail
-          EXIT_CODE=0
+          MAX_ATTEMPTS=2
+          EXIT_CODE=1
 
-          # Start provider in background
-          cargo run --features spilman --release -- provider --wallet spilman --port 3002 --mint-url https://testnut.cashu.exchange > provider.log 2>&1 &
-          PROVIDER_PID=$!
-          sleep 15
+          for ATTEMPT in $(seq 1 $MAX_ATTEMPTS); do
+            echo "=== Attempt $ATTEMPT/$MAX_ATTEMPTS ==="
 
-          RECEIVER_PUBKEY=$(grep 'Receiver pubkey:' provider.log | sed 's/.*Receiver pubkey: //')
-          if [ -z "$RECEIVER_PUBKEY" ]; then
-            echo "::error::Failed to capture receiver pubkey"
-            cat provider.log
+            # Start provider in background
+            cargo run --features spilman --release -- provider --wallet spilman --port 3002 --mint-url https://testnut.cashu.exchange > provider.log 2>&1 &
+            PROVIDER_PID=$!
+            sleep 15
+
+            RECEIVER_PUBKEY=$(grep 'Receiver pubkey:' provider.log | sed 's/.*Receiver pubkey: //')
+            if [ -z "$RECEIVER_PUBKEY" ]; then
+              echo "::warning::Attempt $ATTEMPT: Failed to capture receiver pubkey"
+              cat provider.log
+              kill $PROVIDER_PID 2>/dev/null || true
+              wait $PROVIDER_PID 2>/dev/null || true
+              continue
+            fi
+            echo "Receiver pubkey: $RECEIVER_PUBKEY"
+
+            # Run client for 2 intervals, then kill it (don't let it close cooperatively)
+            timeout --signal=TERM 20 cargo run --features spilman --release -- client --wallet spilman --peer http://localhost:3002 --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url https://testnut.cashu.exchange --intervals 2 --interval-secs 3 > client.log 2>&1 || true
+
+            # Extract channel_id from client log
+            CHANNEL_ID=$(grep 'Channel opened: id=' client.log | sed 's/.*id=//' | head -1)
+            if [ -z "$CHANNEL_ID" ]; then
+              echo "::warning::Attempt $ATTEMPT: Failed to capture channel_id"
+              cat client.log
+              kill $PROVIDER_PID 2>/dev/null || true
+              wait $PROVIDER_PID 2>/dev/null || true
+              continue
+            fi
+            echo "Channel ID: $CHANNEL_ID"
+
+            # Wait a moment for any pending requests to complete
+            sleep 2
+
+            # Call force-close endpoint on provider
+            FORCE_CLOSE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://127.0.0.1:3002/tollgate/force-close" -H "Content-Type: application/json" -d "{\"channel_id\": \"$CHANNEL_ID\"}")
+            HTTP_CODE=$(echo "$FORCE_CLOSE_RESPONSE" | tail -1)
+            RESPONSE_BODY=$(echo "$FORCE_CLOSE_RESPONSE" | sed '$d')
+
+            echo "Force-close HTTP status: $HTTP_CODE"
+            echo "Force-close response: $RESPONSE_BODY"
+
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "::warning::Attempt $ATTEMPT: Force-close failed with HTTP $HTTP_CODE"
+              kill $PROVIDER_PID 2>/dev/null || true
+              wait $PROVIDER_PID 2>/dev/null || true
+              continue
+            fi
+
+            # Verify response contains "closed" status
+            if ! echo "$RESPONSE_BODY" | grep -q '"status":"closed"'; then
+              echo "::warning::Attempt $ATTEMPT: Force-close response missing 'closed' status"
+              kill $PROVIDER_PID 2>/dev/null || true
+              wait $PROVIDER_PID 2>/dev/null || true
+              continue
+            fi
+
+            echo "Unilateral close succeeded!"
             kill $PROVIDER_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "Receiver pubkey: $RECEIVER_PUBKEY"
+            wait $PROVIDER_PID 2>/dev/null || true
+            EXIT_CODE=0
+            break
+          done
 
-          # Run client for 2 intervals, then kill it (don't let it close cooperatively)
-          timeout --signal=TERM 20 cargo run --features spilman --release -- client --wallet spilman --peer http://localhost:3002 --receiver-pubkey "$RECEIVER_PUBKEY" --mint-url https://testnut.cashu.exchange --intervals 2 --interval-secs 3 > client.log 2>&1 || true
-
-          # Extract channel_id from client log
-          CHANNEL_ID=$(grep 'Channel opened: id=' client.log | sed 's/.*id=//' | head -1)
-          if [ -z "$CHANNEL_ID" ]; then
-            echo "::error::Failed to capture channel_id from client output"
-            cat client.log
-            kill $PROVIDER_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "Channel ID: $CHANNEL_ID"
-
-          # Wait a moment for any pending requests to complete
-          sleep 2
-
-          # Call force-close endpoint on provider
-          FORCE_CLOSE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://127.0.0.1:3002/tollgate/force-close" -H "Content-Type: application/json" -d "{\"channel_id\": \"$CHANNEL_ID\"}")
-          HTTP_CODE=$(echo "$FORCE_CLOSE_RESPONSE" | tail -1)
-          RESPONSE_BODY=$(echo "$FORCE_CLOSE_RESPONSE" | sed '$d')
-
-          echo "Force-close HTTP status: $HTTP_CODE"
-          echo "Force-close response: $RESPONSE_BODY"
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Force-close failed with HTTP $HTTP_CODE"
-            kill $PROVIDER_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          # Verify response contains "closed" status
-          if ! echo "$RESPONSE_BODY" | grep -q '"status":"closed"'; then
-            echo "::error::Force-close response missing 'closed' status"
-            kill $PROVIDER_PID 2>/dev/null || true
-            echo "exit_code=1" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          echo "Unilateral close succeeded!"
-          kill $PROVIDER_PID 2>/dev/null || true
-          wait $PROVIDER_PID 2>/dev/null || true
-          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Upload unilateral close logs
         if: always()

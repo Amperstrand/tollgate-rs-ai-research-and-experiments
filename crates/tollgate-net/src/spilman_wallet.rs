@@ -1,18 +1,88 @@
-//! Legacy Spilman channel management.
+//! Spilman channel keyset utilities.
 //!
-//! **Deprecated**: Channel operations now use [`crate::spilman_service::SpilmanService`]
-//! which wraps cdk-spilman's bridge API directly. This module is kept for the
-//! `fetch_active_keyset_info()` method used during channel setup and for
-//! backward compatibility with existing tests.
+//! Provides [`fetch_active_keyset_info`] for fetching the active sat keyset
+//! from a Cashu mint, used during channel setup.
+//!
+//! The legacy [`SpilmanChannelManager`] struct is deprecated — channel operations
+//! now use [`crate::spilman_service::SpilmanService`].
 
 use std::time::Duration;
 
 use cdk_spilman::{construct_proofs, parse_keyset_info_from_json, KeysetInfo};
 use serde_json::Value;
 
+/// Fetches the active sat keyset from the given mint URL.
+///
+/// Returns both the raw keyset JSON string and the parsed `KeysetInfo`.
+///
+/// # Errors
+///
+/// Returns an error if the mint is unreachable, returns malformed JSON,
+/// or has no active sat keyset.
+pub async fn fetch_active_keyset_info(
+    mint_url: &str,
+) -> Result<(String, KeysetInfo), String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("reqwest client: {e}"))?;
+
+    let resp = client
+        .get(format!("{mint_url}/v1/keysets"))
+        .send()
+        .await
+        .map_err(|e| format!("GET /v1/keysets: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("read keysets body: {e}"))?;
+    let body: Value = serde_json::from_str(&text).map_err(|e| format!("parse keysets: {e}"))?;
+
+    let keysets = body["keysets"].as_array().ok_or("missing keysets array")?;
+
+    let active_sat = keysets
+        .iter()
+        .find(|ks| ks["unit"].as_str() == Some("sat") && ks["active"].as_bool() == Some(true))
+        .ok_or("no active sat keyset")?;
+
+    let keyset_id = active_sat["id"].as_str().ok_or("missing keyset id")?;
+    let input_fee_ppk = active_sat["input_fee_ppk"]
+        .as_u64()
+        .or_else(|| active_sat["inputFeePpk"].as_u64())
+        .unwrap_or(0);
+
+    let resp = client
+        .get(format!("{mint_url}/v1/keys/{keyset_id}"))
+        .send()
+        .await
+        .map_err(|e| format!("GET /v1/keys: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("read keys body: {e}"))?;
+    let keys_body: Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse keys: {e}"))?;
+
+    let keyset_data = keys_body["keysets"]
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or("missing keyset in keys response")?;
+
+    let keyset_info_json = serde_json::json!({
+        "keysetId": keyset_id,
+        "unit": "sat",
+        "keys": keyset_data["keys"],
+        "inputFeePpk": input_fee_ppk
+    })
+    .to_string();
+
+    let keyset_info = parse_keyset_info_from_json(&keyset_info_json)?;
+    Ok((keyset_info_json, keyset_info))
+}
+
 #[deprecated(
     since = "0.2.0",
-    note = "Use SpilmanService for channel ops. Only fetch_active_keyset_info() is still needed."
+    note = "Use fetch_active_keyset_info() or SpilmanService for channel ops."
 )]
 pub struct SpilmanChannelManager {
     mint_url: String,
@@ -22,10 +92,6 @@ pub struct SpilmanChannelManager {
 #[allow(deprecated)]
 impl SpilmanChannelManager {
     /// Creates a new Spilman channel manager targeting the given mint URL.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the `reqwest::Client` cannot be constructed (TLS backend failure).
     #[allow(clippy::missing_panics_doc)]
     pub fn new(mint_url: &str) -> Self {
         Self {
@@ -41,67 +107,12 @@ impl SpilmanChannelManager {
         &self.mint_url
     }
 
-    /// Fetches the active sat keyset from the mint and returns both the raw JSON
-    /// and the parsed `KeysetInfo`.
+    #[allow(clippy::missing_errors_doc)]
+    /// Fetches the active sat keyset from the mint.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the mint is unreachable, returns malformed JSON,
-    /// or has no active sat keyset.
+    /// Delegates to [`fetch_active_keyset_info`].
     pub async fn fetch_active_keyset_info(&self) -> Result<(String, KeysetInfo), String> {
-        let resp = self
-            .client
-            .get(format!("{}/v1/keysets", self.mint_url))
-            .send()
-            .await
-            .map_err(|e| format!("GET /v1/keysets: {e}"))?;
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| format!("read keysets body: {e}"))?;
-        let body: Value = serde_json::from_str(&text).map_err(|e| format!("parse keysets: {e}"))?;
-
-        let keysets = body["keysets"].as_array().ok_or("missing keysets array")?;
-
-        let active_sat = keysets
-            .iter()
-            .find(|ks| ks["unit"].as_str() == Some("sat") && ks["active"].as_bool() == Some(true))
-            .ok_or("no active sat keyset")?;
-
-        let keyset_id = active_sat["id"].as_str().ok_or("missing keyset id")?;
-        let input_fee_ppk = active_sat["input_fee_ppk"]
-            .as_u64()
-            .or_else(|| active_sat["inputFeePpk"].as_u64())
-            .unwrap_or(0);
-
-        let resp = self
-            .client
-            .get(format!("{}/v1/keys/{keyset_id}", self.mint_url))
-            .send()
-            .await
-            .map_err(|e| format!("GET /v1/keys: {e}"))?;
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| format!("read keys body: {e}"))?;
-        let keys_body: Value =
-            serde_json::from_str(&text).map_err(|e| format!("parse keys: {e}"))?;
-
-        let keyset_data = keys_body["keysets"]
-            .as_array()
-            .and_then(|a| a.first())
-            .ok_or("missing keyset in keys response")?;
-
-        let keyset_info_json = serde_json::json!({
-            "keysetId": keyset_id,
-            "unit": "sat",
-            "keys": keyset_data["keys"],
-            "inputFeePpk": input_fee_ppk
-        })
-        .to_string();
-
-        let keyset_info = parse_keyset_info_from_json(&keyset_info_json)?;
-        Ok((keyset_info_json, keyset_info))
+        fetch_active_keyset_info(&self.mint_url).await
     }
 
     /// Mints funding proofs from the given deterministic blinded outputs.

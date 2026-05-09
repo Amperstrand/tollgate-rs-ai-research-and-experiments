@@ -23,8 +23,7 @@ use {
 };
 
 #[cfg(feature = "spilman")]
-#[allow(deprecated)]
-use crate::spilman_wallet::SpilmanChannelManager;
+use crate::spilman_wallet::fetch_active_keyset_info;
 
 #[cfg(feature = "spilman")]
 fn decode_hex<const N: usize>(hex: &str) -> Option<[u8; N]> {
@@ -356,9 +355,7 @@ async fn spilman_open_channel(
     let token = CashuToken::new(mint_url_obj, selected_proofs, None, CurrencyUnit::Sat);
     let token_str = token.to_string();
 
-    #[allow(deprecated)]
-    let mgr = SpilmanChannelManager::new(mint_url);
-    let (keyset_info_json, _) = mgr.fetch_active_keyset_info().await.expect("fetch keyset");
+    let (keyset_info_json, _) = fetch_active_keyset_info(mint_url).await.expect("fetch keyset");
 
     let net = ReqwestNetworking::new();
     let open_result = spilman

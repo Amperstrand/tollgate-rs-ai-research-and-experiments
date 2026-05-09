@@ -29,7 +29,7 @@ use {
     std::str::FromStr,
     std::time::{SystemTime, UNIX_EPOCH},
     tollgate_net::cdk_wallet::CdkWallet,
-    tollgate_net::spilman_wallet::SpilmanChannelManager,
+    tollgate_net::spilman_wallet::fetch_active_keyset_info,
 };
 
 #[cfg(feature = "spilman")]
@@ -426,9 +426,7 @@ async fn cdk_spilman_bridge_spike() {
 
     // ─── Phase 2: Fetch keyset info from testnut ───
     tracing::info!("Phase 2: Fetching active keyset from testnut");
-    let mgr = SpilmanChannelManager::new(MINT_URL);
-    let (keyset_info_json, keyset_info) = mgr
-        .fetch_active_keyset_info()
+    let (keyset_info_json, keyset_info) = fetch_active_keyset_info(MINT_URL)
         .await
         .expect("fetch keyset info");
     let keyset_id = keyset_info.keyset_id;

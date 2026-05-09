@@ -10,6 +10,7 @@
 mod common;
 
 #[cfg(feature = "spilman")]
+#[allow(deprecated)]
 use {
     cashu::nuts::{Proof, SecretKey},
     cdk_spilman::{
@@ -19,7 +20,7 @@ use {
     },
     common::TraceCollector,
     std::time::{SystemTime, UNIX_EPOCH},
-    tollgate_net::spilman_wallet::SpilmanChannelManager,
+    tollgate_net::spilman_wallet::{fetch_active_keyset_info, SpilmanChannelManager},
 };
 
 #[cfg(feature = "spilman")]
@@ -136,9 +137,7 @@ async fn spilman_channel_lifecycle() {
         "NUT-02",
         "GET /v1/keysets + GET /v1/keys/{id}"
     );
-    let mgr = SpilmanChannelManager::new(MINT_URL);
-    let (keyset_info_json, keyset_info) = mgr
-        .fetch_active_keyset_info()
+    let (keyset_info_json, keyset_info) = fetch_active_keyset_info(MINT_URL)
         .await
         .expect("fetch keyset info");
     trace_event!(
@@ -237,6 +236,8 @@ async fn spilman_channel_lifecycle() {
         "NUT-04",
         format!("requesting {funding_token_amount} sat for channel funding")
     );
+    #[allow(deprecated)]
+    let mgr = SpilmanChannelManager::new(MINT_URL);
     let proofs_json = mgr
         .mint_proofs_from_funding_outputs(&funding_outputs_json, &keyset_info_json)
         .await
