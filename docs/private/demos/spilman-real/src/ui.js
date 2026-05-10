@@ -3,6 +3,13 @@ const DENOM_COLORS = {
   8: "denom-8", 4: "denom-4", 2: "denom-2", 1: "denom-1",
 };
 
+const VAULT_CHIP_COLORS = {
+  64: "vault-chip-64", 32: "vault-chip-32", 16: "vault-chip-16",
+  8: "vault-chip-8", 4: "vault-chip-4", 2: "vault-chip-2", 1: "vault-chip-1",
+};
+
+const signatureHistoryData = [];
+
 function truncateHex(hex, chars = 8) {
   if (!hex || hex.length <= chars * 2 + 3) return hex || "";
   return hex.slice(0, chars) + "..." + hex.slice(-chars);
@@ -12,7 +19,23 @@ function denomClass(amount) {
   return DENOM_COLORS[amount] || "denom-1";
 }
 
-function renderProofTokens(containerId, proofs, owner) {
+function vaultChipClass(amount) {
+  return VAULT_CHIP_COLORS[amount] || "vault-chip-1";
+}
+
+function splitIntoDenoms(total) {
+  const result = [];
+  let remaining = total;
+  for (const d of [64, 32, 16, 8, 4, 2, 1]) {
+    while (remaining >= d) {
+      result.push(d);
+      remaining -= d;
+    }
+  }
+  return result;
+}
+
+function renderProofTokens(containerId, proofs) {
   const el = document.getElementById(containerId);
   if (!el) return;
   if (!proofs || proofs.length === 0) {
@@ -38,7 +61,16 @@ export function updateAlicePanel(aliceWallet) {
 
   const bal = aliceWallet.getBalance();
   if (channelIdEl) channelIdEl.textContent = aliceWallet.channel?.id?.slice(0, 16) + "..." || "...";
-  if (balanceEl) balanceEl.textContent = `${bal.remaining} sat (${bal.status})`;
+
+  let balanceText;
+  if (aliceWallet.channel?.status === "CLOSED" && aliceWallet.channel.aliceRefundProofs) {
+    const netTotal = aliceWallet.channel.aliceRefundProofs.reduce((s, p) => s + p.amount, 0);
+    balanceText = `${netTotal} sat (CLOSED)`;
+  } else {
+    balanceText = `${bal.remaining} sat (${bal.status})`;
+  }
+  if (balanceEl) balanceEl.textContent = balanceText;
+
   if (proofCountEl) proofCountEl.textContent = String(aliceWallet.proofs?.length || 0);
   if (proofTotalEl) proofTotalEl.textContent = `${(aliceWallet.proofs || []).reduce((s, p) => s + p.amount, 0)} sat`;
   if (logEl) {
@@ -46,7 +78,7 @@ export function updateAlicePanel(aliceWallet) {
     logEl.textContent = history.map(h => `[${new Date(h.timestamp).toLocaleTimeString()}] ${h.phase}${h.delta ? " +" + h.delta + " sat" : ""}`).join("\n") || "...";
   }
 
-  renderProofTokens("alice-proofs-detail", aliceWallet.proofs, "alice");
+  renderProofTokens("alice-proofs-detail", aliceWallet.proofs);
 }
 
 export function updateCharliePanel(charlieWallet) {
@@ -71,7 +103,7 @@ export function updateCharliePanel(charlieWallet) {
     logEl.textContent = history.map(h => `[${new Date(h.timestamp).toLocaleTimeString()}] ${h.phase}${h.delta ? " +" + h.delta + " sat" : ""}`).join("\n") || "...";
   }
 
-  renderProofTokens("charlie-proofs-detail", charlieWallet.proofs, "charlie");
+  renderProofTokens("charlie-proofs-detail", charlieWallet.proofs);
 }
 
 export function debugLog(message, data = null) {
@@ -115,20 +147,10 @@ export function resetUI() {
   if (proofsCharlie) proofsCharlie.innerHTML = "";
 
   const sigContent = document.getElementById("sig-content");
-  if (sigContent) sigContent.innerHTML = '<div class="sig-empty">No signature yet</div>';
+  if (sigContent) sigContent.innerHTML = '<div class="sig-empty">No signature yet. Fund the channel to begin.</div>';
 
   const mintTimeline = document.getElementById("mint-timeline");
   if (mintTimeline) mintTimeline.innerHTML = '<div class="mint-empty">No mint requests yet</div>';
-
-  const barAlice = document.getElementById("channel-bar-alice");
-  const barCharlie = document.getElementById("channel-bar-charlie");
-  if (barAlice) barAlice.style.width = "100%";
-  if (barCharlie) barCharlie.style.width = "0%";
-
-  const amtAlice = document.getElementById("bar-alice-amount");
-  const amtCharlie = document.getElementById("bar-charlie-amount");
-  if (amtAlice) amtAlice.textContent = "100";
-  if (amtCharlie) amtCharlie.textContent = "0";
 
   const badge = document.getElementById("channel-state-badge");
   if (badge) {
@@ -136,30 +158,77 @@ export function resetUI() {
     badge.className = "channel-state-badge";
   }
 
+  const vaultTokens = document.getElementById("vault-tokens");
+  if (vaultTokens) vaultTokens.innerHTML = '<div class="vault-empty-msg">Awaiting funding proofs...</div>';
+
+  const vaultSplitAlice = document.getElementById("vault-split-alice");
+  const vaultSplitCharlie = document.getElementById("vault-split-charlie");
+  if (vaultSplitAlice) vaultSplitAlice.style.width = "100%";
+  if (vaultSplitCharlie) vaultSplitCharlie.style.width = "0%";
+
+  const vaultLabelAlice = document.getElementById("vault-label-alice");
+  const vaultLabelCharlie = document.getElementById("vault-label-charlie");
+  if (vaultLabelAlice) vaultLabelAlice.textContent = "100 sat (Alice)";
+  if (vaultLabelCharlie) vaultLabelCharlie.textContent = "0 sat (Charlie)";
+
+  const vaultStatus = document.getElementById("vault-status-text");
+  if (vaultStatus) vaultStatus.textContent = "Not yet funded";
+
+  const capLabel = document.getElementById("channel-capacity-label");
+  if (capLabel) capLabel.textContent = "100 sat capacity";
+
+  const eduText = document.getElementById("edu-text");
+  if (eduText) eduText.textContent = "Tokens never move between parties. Only the signature that determines who can claim them changes. Click a step to begin.";
+
+  signatureHistoryData.length = 0;
+  const histList = document.getElementById("sig-history-list");
+  if (histList) histList.innerHTML = '<div class="sig-history-empty">No previous signatures</div>';
+
   const dots = document.querySelectorAll(".step-dot");
   dots.forEach(d => { d.classList.remove("completed", "active"); });
+
+  document.querySelectorAll(".flow-arrow-wrap, .flow-arrow-down-wrap").forEach(el => {
+    el.classList.remove("active", "active-alice");
+  });
+  document.querySelectorAll(".flow-node").forEach(el => {
+    el.classList.remove("active");
+  });
+
+  const customBtn = document.getElementById("send-custom-payment-btn");
+  if (customBtn) customBtn.disabled = true;
 }
 
 export function updateChannelBar(aliceWallet, charlieWallet) {
-  const ch = aliceWallet?.channel || charlieWallet?.channel;
+  const aliceCh = aliceWallet?.channel;
+  const charlieCh = charlieWallet?.channel;
+  const statusOrder = { CLOSED: 4, CLOSING: 3, FUNDED: 2, INIT: 1 };
+  const aOrd = statusOrder[aliceCh?.status] || 0;
+  const cOrd = statusOrder[charlieCh?.status] || 0;
+  const ch = cOrd > aOrd ? charlieCh : (aliceCh || charlieCh);
   if (!ch) return;
 
   const capacity = ch.capacity;
   const toCharlie = ch.balanceToReceiver;
-  const toAlice = capacity - toCharlie;
+
+  let toAlice;
+  if (ch.status === "CLOSED" && ch.aliceRefundProofs) {
+    toAlice = ch.aliceRefundProofs.reduce((s, p) => s + p.amount, 0);
+  } else {
+    toAlice = capacity - toCharlie;
+  }
 
   const pctAlice = capacity > 0 ? (toAlice / capacity) * 100 : 100;
   const pctCharlie = capacity > 0 ? (toCharlie / capacity) * 100 : 0;
 
-  const barAlice = document.getElementById("channel-bar-alice");
-  const barCharlie = document.getElementById("channel-bar-charlie");
-  if (barAlice) barAlice.style.width = `${pctAlice}%`;
-  if (barCharlie) barCharlie.style.width = `${pctCharlie}%`;
+  const splitAlice = document.getElementById("vault-split-alice");
+  const splitCharlie = document.getElementById("vault-split-charlie");
+  if (splitAlice) splitAlice.style.width = `${pctAlice}%`;
+  if (splitCharlie) splitCharlie.style.width = `${pctCharlie}%`;
 
-  const amtAlice = document.getElementById("bar-alice-amount");
-  const amtCharlie = document.getElementById("bar-charlie-amount");
-  if (amtAlice) amtAlice.textContent = String(toAlice);
-  if (amtCharlie) amtCharlie.textContent = String(toCharlie);
+  const labelAlice = document.getElementById("vault-label-alice");
+  const labelCharlie = document.getElementById("vault-label-charlie");
+  if (labelAlice) labelAlice.textContent = `${toAlice} sat (Alice)`;
+  if (labelCharlie) labelCharlie.textContent = `${toCharlie} sat (Charlie)`;
 
   const badge = document.getElementById("channel-state-badge");
   if (badge) {
@@ -175,39 +244,69 @@ export function updateChannelBar(aliceWallet, charlieWallet) {
 
   const capLabel = document.getElementById("channel-capacity-label");
   if (capLabel) capLabel.textContent = `${capacity} sat capacity`;
+
+  updateVaultTokens(ch);
+
+  const vaultStatus = document.getElementById("vault-status-text");
+  if (vaultStatus) {
+    if (ch.status === "INIT") {
+      vaultStatus.textContent = "Not yet funded";
+    } else if (ch.status === "FUNDED") {
+      vaultStatus.textContent = "Locked until cooperative close or channel expiry";
+    } else if (ch.status === "CLOSING") {
+      vaultStatus.textContent = "Settling with mint...";
+    } else if (ch.status === "CLOSED") {
+      vaultStatus.textContent = "Vault emptied. Channel settled.";
+    }
+  }
+}
+
+function updateVaultTokens(ch) {
+  const container = document.getElementById("vault-tokens");
+  if (!container) return;
+
+  if (!ch.fundingProofs || ch.fundingProofs.length === 0) {
+    if (ch.status === "CLOSED") {
+      container.innerHTML = '<div class="vault-empty-msg">Vault emptied</div>';
+    } else {
+      container.innerHTML = '<div class="vault-empty-msg">Awaiting funding proofs...</div>';
+    }
+    return;
+  }
+
+  if (ch.status === "CLOSED") {
+    container.innerHTML = '<div class="vault-empty-msg">Vault emptied. Tokens swapped for fresh proofs.</div>';
+    return;
+  }
+
+  const proofs = ch.fundingProofs;
+  const toCharlie = ch.balanceToReceiver;
+
+  let charlieRemaining = toCharlie;
+  const html = proofs.map(p => {
+    const claimClass = charlieRemaining >= p.amount
+      ? "vault-chip-claim-charlie"
+      : "vault-chip-claim-alice";
+    if (charlieRemaining >= p.amount) {
+      charlieRemaining -= p.amount;
+    } else {
+      charlieRemaining = 0;
+    }
+    return `<div class="vault-chip ${vaultChipClass(p.amount)} ${claimClass}" title="${p.amount} sat">${p.amount}</div>`;
+  }).join("");
+
+  container.innerHTML = html;
 }
 
 export function animateTokenFlow(amountSat) {
-  const layer = document.getElementById("token-flow-layer");
-  if (!layer) return;
+  const sigCard = document.getElementById("signature-active");
+  if (!sigCard) return;
 
-  const denoms = splitIntoDenoms(amountSat);
-  const barRect = layer.getBoundingClientRect();
-  const barWidth = barRect.width;
+  sigCard.classList.remove("sig-animate");
+  void sigCard.offsetWidth;
+  sigCard.classList.add("sig-animate");
 
-  denoms.forEach((denom, i) => {
-    const pellet = document.createElement("div");
-    pellet.className = `token-pellet ${denomClass(denom)}`;
-    pellet.textContent = denom;
-    pellet.style.top = `${3 + (i % 3) * 2}px`;
-    pellet.style.animationDelay = `${i * 120}ms`;
-    pellet.classList.add("flying");
-    layer.appendChild(pellet);
-
-    pellet.addEventListener("animationend", () => pellet.remove());
-  });
-}
-
-function splitIntoDenoms(total) {
-  const result = [];
-  let remaining = total;
-  for (const d of [64, 32, 16, 8, 4, 2, 1]) {
-    while (remaining >= d) {
-      result.push(d);
-      remaining -= d;
-    }
-  }
-  return result;
+  setTimeout(() => sigCard.classList.remove("sig-animate"), 500);
 }
 
 export function updateSignaturePanel(aliceWallet) {
@@ -218,25 +317,65 @@ export function updateSignaturePanel(aliceWallet) {
   const container = document.getElementById("sig-content");
   if (!container) return;
 
+  const prevBalance = ch.balanceToReceiver - (ch.history?.filter(h => h.phase === "PAYMENT").pop()?.delta || 0);
+
+  if (prevBalance > 0) {
+    signatureHistoryData.push({
+      charlieAmount: prevBalance,
+      aliceAmount: ch.capacity - prevBalance,
+    });
+    renderSignatureHistory();
+  }
+
+  const charlieAmt = ch.balanceToReceiver;
+  const aliceAmt = ch.capacity - charlieAmt;
+
   container.innerHTML = `
-    <div class="sig-field">
-      <div class="sig-field-label">Message</div>
-      <div class="sig-field-value">SHA256(channel_id | "|" | ${ch.balanceToReceiver})</div>
+    <div class="sig-split-row">
+      <div class="sig-split-box sig-split-charlie">
+        <div class="sig-split-name">Charlie</div>
+        <div class="sig-split-amount">${charlieAmt} <span class="sig-split-unit">sat</span></div>
+      </div>
+      <div class="sig-split-box sig-split-alice">
+        <div class="sig-split-name">Alice</div>
+        <div class="sig-split-amount">${aliceAmt} <span class="sig-split-unit">sat</span></div>
+      </div>
     </div>
-    <div class="sig-field">
-      <div class="sig-field-label">Message Hash</div>
-      <div class="sig-field-value">${sig.messageHex ? truncateHex(sig.messageHex, 10) : "..."}</div>
+    <div class="sig-detail-row">
+      <div class="sig-detail-label">Message</div>
+      <div class="sig-detail-value">SHA256(channel_id | "${charlieAmt}")</div>
     </div>
-    <div class="sig-field">
-      <div class="sig-field-label">Schnorr Signature</div>
-      <div class="sig-field-value">${sig.signatureHex ? truncateHex(sig.signatureHex, 10) : "..."}</div>
+    <div class="sig-detail-row">
+      <div class="sig-detail-label">Message Hash</div>
+      <div class="sig-detail-value">${sig.messageHex ? truncateHex(sig.messageHex, 10) : "..."}</div>
     </div>
-    <div class="sig-field">
-      <div class="sig-field-label">Tweaked Public Key</div>
-      <div class="sig-field-value">${sig.tweakedPubHex ? truncateHex(sig.tweakedPubHex, 10) : "..."}</div>
+    <div class="sig-detail-row">
+      <div class="sig-detail-label">Schnorr Signature</div>
+      <div class="sig-detail-value">${sig.signatureHex ? truncateHex(sig.signatureHex, 10) : "..."}</div>
+    </div>
+    <div class="sig-detail-row">
+      <div class="sig-detail-label">Tweaked Public Key</div>
+      <div class="sig-detail-value">${sig.tweakedPubHex ? truncateHex(sig.tweakedPubHex, 10) : "..."}</div>
     </div>
     <div class="sig-verified">Verified</div>
   `;
+}
+
+function renderSignatureHistory() {
+  const list = document.getElementById("sig-history-list");
+  if (!list) return;
+
+  const emptyEl = list.querySelector(".sig-history-empty");
+  if (emptyEl) emptyEl.remove();
+
+  list.innerHTML = signatureHistoryData.map((entry, i) => `
+    <div class="sig-history-card">
+      <span class="sig-history-label">Superseded</span>
+      <span class="sig-history-text">${entry.charlieAmount} sat to Charlie, ${entry.aliceAmount} sat to Alice</span>
+    </div>
+  `).join("");
+
+  list.scrollTop = list.scrollHeight;
 }
 
 export function addMintRequest(method, path, status) {
@@ -264,7 +403,7 @@ export function addMintRequest(method, path, status) {
 
 export function markStepDot(step) {
   const dots = document.querySelectorAll(".step-dot");
-  dots.forEach((d, i) => {
+  dots.forEach((d) => {
     const s = parseInt(d.dataset.step);
     if (s < step) d.classList.add("completed");
     else if (s === step) d.classList.add("active");
@@ -278,4 +417,57 @@ export function completeAllDots() {
     d.classList.remove("active");
     d.classList.add("completed");
   });
+}
+
+export function setEducationText(text) {
+  const el = document.getElementById("edu-text");
+  if (el) el.textContent = text;
+}
+
+export function highlightFlowArrow(arrowId) {
+  document.querySelectorAll(".flow-arrow-wrap, .flow-arrow-down-wrap").forEach(el => {
+    el.classList.remove("active", "active-alice");
+  });
+  document.querySelectorAll(".flow-node").forEach(el => {
+    el.classList.remove("active");
+  });
+
+  const arrow = document.getElementById(arrowId);
+  if (arrow) arrow.classList.add("active");
+}
+
+export function highlightFlowNodes(nodeIds) {
+  document.querySelectorAll(".flow-node").forEach(el => {
+    el.classList.remove("active");
+  });
+  for (const id of nodeIds) {
+    const node = document.getElementById(id);
+    if (node) node.classList.add("active");
+  }
+}
+
+export function updatePaymentPreview(currentBalance, capacity) {
+  const slider = document.getElementById("payment-slider");
+  const display = document.getElementById("payment-amount-display");
+  const previewCharlie = document.getElementById("preview-charlie");
+  const previewAlice = document.getElementById("preview-alice");
+
+  if (!slider) return;
+
+  const amount = parseInt(slider.value);
+  if (display) display.textContent = String(amount);
+  if (previewCharlie) previewCharlie.textContent = `+${amount} sat`;
+  if (previewAlice) previewAlice.textContent = `${capacity - currentBalance - amount} sat`;
+
+  const maxPay = capacity - currentBalance;
+  slider.max = String(Math.max(1, maxPay));
+  if (amount > maxPay) {
+    slider.value = String(maxPay);
+    if (display) display.textContent = String(maxPay);
+  }
+}
+
+export function setCustomPaymentEnabled(enabled) {
+  const btn = document.getElementById("send-custom-payment-btn");
+  if (btn) btn.disabled = !enabled;
 }

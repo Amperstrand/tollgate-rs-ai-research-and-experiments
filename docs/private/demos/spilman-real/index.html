@@ -3,21 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cashu Spilman Channel — Real Crypto Demo</title>
+    <title>Cashu Spilman Channel — Vault &amp; Signature Demo</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <header>
         <div class="header-left">
             <div class="header-lock"></div>
-            <h1>Cashu Spilman Channel</h1>
-            <span class="header-subtitle">Real Crypto Demo</span>
+            <h1>Spilman Channel</h1>
+            <span class="header-subtitle">Vault &amp; Signature Visualization</span>
         </div>
         <div class="header-right">
             <div id="mint-url-display" class="mint-badge">Mint: https://testnut.cashu.exchange</div>
             <button id="reset-btn">Reset</button>
         </div>
     </header>
+
+    <div class="flow-diagram" id="flow-diagram">
+        <div class="flow-row">
+            <div class="flow-node node-alice" id="flow-alice">
+                <div class="flow-avatar fa-alice">A</div>
+                <div class="flow-label">Alice</div>
+                <div class="flow-sub">Sender</div>
+            </div>
+            <div class="flow-arrow-wrap" id="arrow-alice-vault">
+                <div class="flow-arrow-line"></div>
+                <div class="flow-arrow-head"></div>
+                <div class="flow-arrow-text">signature</div>
+            </div>
+            <div class="flow-node node-vault" id="flow-vault">
+                <div class="flow-vault-icon"></div>
+                <div class="flow-label">Vault</div>
+            </div>
+            <div class="flow-arrow-wrap" id="arrow-vault-mint">
+                <div class="flow-arrow-line"></div>
+                <div class="flow-arrow-head"></div>
+                <div class="flow-arrow-text">swap</div>
+            </div>
+            <div class="flow-node node-mint" id="flow-mint">
+                <div class="flow-mint-icon"></div>
+                <div class="flow-label">Mint</div>
+            </div>
+        </div>
+        <div class="flow-row-bottom">
+            <div class="flow-spacer"></div>
+            <div class="flow-arrow-down-wrap" id="arrow-vault-charlie">
+                <div class="flow-arrow-down-line"></div>
+                <div class="flow-arrow-down-head"></div>
+            </div>
+            <div class="flow-spacer"></div>
+        </div>
+        <div class="flow-row-bottom">
+            <div class="flow-spacer"></div>
+            <div class="flow-node node-charlie" id="flow-charlie">
+                <div class="flow-avatar fa-charlie">C</div>
+                <div class="flow-label">Charlie</div>
+                <div class="flow-sub">Receiver</div>
+            </div>
+            <div class="flow-spacer"></div>
+        </div>
+    </div>
 
     <main>
         <div class="three-column">
@@ -70,30 +115,12 @@
             </section>
 
             <section id="channel-center" class="channel-center">
-                <div class="channel-status-row">
+                <div class="center-status-row">
                     <div class="channel-state-badge" id="channel-state-badge">INIT</div>
                     <div class="channel-capacity-label" id="channel-capacity-label">100 sat capacity</div>
                 </div>
 
-                <div class="channel-bar-wrapper">
-                    <div class="channel-bar-label channel-bar-label-alice">
-                        <span class="bar-label-name">Alice</span>
-                        <span class="bar-label-amount" id="bar-alice-amount">100</span>
-                        <span class="bar-label-unit">sat</span>
-                    </div>
-                    <div class="channel-bar" id="channel-bar">
-                        <div class="channel-bar-alice" id="channel-bar-alice" style="width: 100%"></div>
-                        <div class="channel-bar-charlie" id="channel-bar-charlie" style="width: 0%"></div>
-                        <div class="token-flow-layer" id="token-flow-layer"></div>
-                    </div>
-                    <div class="channel-bar-label channel-bar-label-charlie">
-                        <span class="bar-label-name">Charlie</span>
-                        <span class="bar-label-amount" id="bar-charlie-amount">0</span>
-                        <span class="bar-label-unit">sat</span>
-                    </div>
-                </div>
-
-                <div class="channel-step-dots" id="step-dots">
+                <div class="step-dots" id="step-dots">
                     <div class="step-dot" data-step="1"><span>Open</span></div>
                     <div class="step-dot" data-step="2"><span>Fund</span></div>
                     <div class="step-dot" data-step="3"><span>Pay 1</span></div>
@@ -101,21 +128,62 @@
                     <div class="step-dot" data-step="5"><span>Close</span></div>
                 </div>
 
-                <div class="center-panels">
-                    <div class="panel-card" id="signature-panel">
-                        <h3>Signature Details</h3>
-                        <div class="sig-content" id="sig-content">
-                            <div class="sig-empty">No signature yet</div>
+                <div class="vault-container" id="vault-container">
+                    <div class="vault-header-row">
+                        <div class="vault-lock-icon"></div>
+                        <span class="vault-title-text">CHANNEL VAULT</span>
+                        <div class="vault-lock-icon"></div>
+                    </div>
+                    <div class="vault-body">
+                        <div class="vault-tokens" id="vault-tokens">
+                            <div class="vault-empty-msg">Awaiting funding proofs...</div>
+                        </div>
+                        <div class="vault-split-bar">
+                            <div class="vault-split-alice" id="vault-split-alice" style="width: 100%"></div>
+                            <div class="vault-split-charlie" id="vault-split-charlie" style="width: 0%"></div>
+                        </div>
+                        <div class="vault-split-labels">
+                            <span class="vault-label-alice" id="vault-label-alice">100 sat (Alice)</span>
+                            <span class="vault-label-charlie" id="vault-label-charlie">0 sat (Charlie)</span>
                         </div>
                     </div>
-
-                    <div class="panel-card" id="mint-timeline-panel">
-                        <h3>Mint Requests</h3>
-                        <div class="mint-timeline" id="mint-timeline">
-                            <div class="mint-empty">No mint requests yet</div>
-                        </div>
+                    <div class="vault-footer" id="vault-status-text">
+                        Not yet funded
                     </div>
                 </div>
+
+                <div class="signature-card active-sig" id="signature-active">
+                    <div class="sig-card-header">
+                        <div class="sig-pen-icon"></div>
+                        <span class="sig-card-title">Active Signature</span>
+                        <span class="sig-only-valid">ONLY VALID</span>
+                    </div>
+                    <div class="sig-card-body" id="sig-content">
+                        <div class="sig-empty">No signature yet. Fund the channel to begin.</div>
+                    </div>
+                </div>
+
+                <div class="signature-history" id="signature-history">
+                    <div class="sig-history-title">Previous Signatures</div>
+                    <div class="sig-history-list" id="sig-history-list">
+                        <div class="sig-history-empty">No previous signatures</div>
+                    </div>
+                </div>
+
+                <div class="education-box" id="education-box">
+                    <div class="edu-icon"></div>
+                    <div class="edu-content">
+                        <div class="edu-title">How Spilman Channels Work</div>
+                        <p id="edu-text">Tokens never move between parties. Only the signature that determines who can claim them changes. Click a step to begin.</p>
+                    </div>
+                </div>
+
+                <details class="mint-details">
+                    <summary class="mint-details-summary">Mint Requests</summary>
+                    <div class="mint-timeline" id="mint-timeline">
+                        <div class="mint-empty">No mint requests yet</div>
+                    </div>
+                </details>
             </section>
 
             <section id="charlie" class="wallet-panel wallet-charlie">
@@ -166,6 +234,33 @@
                 </div>
             </section>
         </div>
+
+        <section id="payment-controls">
+            <h2>Custom Payment</h2>
+            <div class="payment-controls-inner">
+                <div class="payment-slider-group">
+                    <label for="payment-slider">Amount: <strong id="payment-amount-display">10</strong> sat</label>
+                    <input type="range" id="payment-slider" min="1" max="70" value="10" step="1">
+                    <div class="payment-slider-ticks">
+                        <span>1</span>
+                        <span>25</span>
+                        <span>50</span>
+                        <span>70</span>
+                    </div>
+                </div>
+                <div class="payment-preview" id="payment-preview">
+                    <div class="preview-row">
+                        <span class="preview-label preview-charlie">Charlie receives</span>
+                        <span class="preview-value" id="preview-charlie">+10 sat</span>
+                    </div>
+                    <div class="preview-row">
+                        <span class="preview-label preview-alice">Alice retains</span>
+                        <span class="preview-value" id="preview-alice">90 sat</span>
+                    </div>
+                </div>
+                <button id="send-custom-payment-btn" disabled>Send Payment</button>
+            </div>
+        </section>
 
         <section id="lifecycle-controls">
             <h2>Channel Lifecycle</h2>
