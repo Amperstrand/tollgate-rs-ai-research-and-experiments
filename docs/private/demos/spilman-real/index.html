@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cashu Spilman Channel — Real Crypto Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <span class="header-icon">🔐</span>
+            <h1>Cashu Spilman Channel — Real Crypto Demo</h1>
+        </div>
+        <div class="header-right">
+            <div id="mint-url-display">Mint: https://testnut.cashu.exchange</div>
+            <button id="reset-btn">Reset</button>
+        </div>
+    </header>
+
+    <main>
+        <section id="alice">
+            <h2>Alice's Wallet</h2>
+            <div class="wallet-section">
+                <h3>Identity</h3>
+                <div class="value-group">
+                    <label>Public Key:</label>
+                    <div class="mono" id="alice-pubkey">...</div>
+                </div>
+            </div>
+            <div class="wallet-section">
+                <h3>Channel State</h3>
+                <div class="value-group">
+                    <label>Channel ID:</label>
+                    <div class="mono" id="alice-channel-id">...</div>
+                </div>
+                <div class="value-group">
+                    <label>Balance:</label>
+                    <div class="mono" id="alice-balance">...</div>
+                </div>
+            </div>
+            <div class="wallet-section">
+                <h3>Proofs</h3>
+                <div class="value-group">
+                    <label>Count:</label>
+                    <div class="mono" id="alice-proof-count">0</div>
+                </div>
+                <div class="value-group">
+                    <label>Total:</label>
+                    <div class="mono" id="alice-proof-total">0</div>
+                </div>
+            </div>
+            <div class="wallet-section">
+                <h3>Activity Log</h3>
+                <div class="mono" id="alice-activity-log">...</div>
+            </div>
+        </section>
+
+        <section id="charlie">
+            <h2>Charlie's Wallet</h2>
+            <div class="wallet-section">
+                <h3>Identity</h3>
+                <div class="value-group">
+                    <label>Public Key:</label>
+                    <div class="mono" id="charlie-pubkey">...</div>
+                </div>
+            </div>
+            <div class="wallet-section">
+                <h3>Channel State</h3>
+                <div class="value-group">
+                    <label>Channel ID:</label>
+                    <div class="mono" id="charlie-channel-id">...</div>
+                </div>
+                <div class="value-group">
+                    <label>Balance:</label>
+                    <div class="mono" id="charlie-balance">...</div>
+                </div>
+            </div>
+            <div class="wallet-section">
+                <h3>Proofs</h3>
+                <div class="value-group">
+                    <label>Count:</label>
+                    <div class="mono" id="charlie-proof-count">0</div>
+                </div>
+                <div class="value-group">
+                    <label>Total:</label>
+                    <div class="mono" id="charlie-proof-total">0</div>
+                </div>
+            </div>
+            <div class="wallet-section">
+                <h3>Activity Log</h3>
+                <div class="mono" id="charlie-activity-log">...</div>
+            </div>
+        </section>
+
+        <section id="lifecycle-controls">
+            <h2>Channel Lifecycle</h2>
+            <div class="controls-grid">
+                <button id="run-lifecycle-btn">Run Full Lifecycle</button>
+                <button id="step1-btn">Step 1: Open Channel</button>
+                <button id="step2-btn">Step 2: Deposit</button>
+                <button id="step3-btn">Step 3: Pay</button>
+                <button id="step4-btn">Step 4: Meter</button>
+                <button id="step5-btn">Step 5: Close</button>
+            </div>
+        </section>
+
+        <section id="debug-panel">
+            <h2>Debug Panel</h2>
+            <div class="mono" id="debug-dump">Ready...</div>
+        </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>
