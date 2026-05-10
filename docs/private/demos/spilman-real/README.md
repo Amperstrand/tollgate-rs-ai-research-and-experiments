@@ -126,6 +126,36 @@ Loaded via [esm.sh](https://esm.sh) CDN. No build step, no bundler, no `node_mod
 | `@noble/curves` | 2.2.0 | secp256k1 ECDH, point arithmetic, BIP-340 Schnorr |
 | `@noble/hashes` | 1.7.1 | SHA-256, `bytesToHex`, `hexToBytes` |
 
+## Compare and Contrast
+
+### What we built on
+
+Every crypto function in `crypto.js` is a 1:1 translation from the [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) Rust crate (`cdk-spilman/src/params.rs`). The JS produces identical output to the Rust — we captured test vectors from the Rust spike test (`cdk_spilman_bridge_spike.rs`) to verify.
+
+The channel state machine (`channel.js`) mirrors the lifecycle in the Rust `SpilmanChannelManager`. The mint HTTP wrappers (`mint.js`) follow the [Cashu NUT specs](https://github.com/cashubtc/nuts).
+
+### What exists and how we differ
+
+**SatsAndSports/cashu_spilman_channels** ([GitHub](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples)) has four reference implementations — Rust (Axum server), TypeScript (Express), Python (Flask), and Go. Each runs a "pay-per-character ASCII art" server where a client opens a Spilman channel and pays per request. These are CLI/HTTP demos that require cloning, building, and running separate server and client processes. Our demo takes the same crypto and puts it in a single browser page with no installation.
+
+**cashu-ts** ([GitHub](https://github.com/cashubtc/cashu-ts)) is the official TypeScript Cashu wallet library. As of v4.2.1 it does not support Spilman channels. We reimplemented the channel crypto from scratch using `@noble/curves` and `@noble/hashes` with the goal of eventually upstreaming Spilman support into cashu-ts. Our demo proves the crypto works in a browser.
+
+**Option A simulator** (in this repo at `docs/private/demos/spilman-simulator.html`) is a 20-step educational walkthrough of the Spilman channel lifecycle. It uses simulated SHA-256 instead of real elliptic curve cryptography and does not interact with a real mint. Our demo (Option B) uses real crypto and a real mint, but with a simpler UI. The goal is to combine the educational depth of Option A with the real-crypto fidelity of Option B.
+
+| | This demo | SatsAndSports examples | cashu-ts | Option A simulator |
+|---|---|---|---|---|
+| Real crypto | Yes | Yes | Yes (no channels) | No (simulated) |
+| Real mint | Yes (testnut) | Yes (local) | N/A | No |
+| Setup | Open URL | Clone + build + 2 terminals | npm install | Open URL |
+| Educational UI | Split-screen, step-by-step | Terminal logs | Library API | 20-step walkthrough |
+
+### What we copied vs what is ours
+
+- **Crypto algorithms**: Copied from `cdk-spilman/src/params.rs` (Rust). Same hash constructions, same scalar derivations, same point arithmetic. Translated line-by-line.
+- **Channel lifecycle flow**: Matches `cdk_spilman_bridge_spike.rs` (our Rust test). Same phases, same order.
+- **Mint HTTP calls**: Standard Cashu protocol. Same endpoints every Cashu wallet uses.
+- **UI design**: Ours. Split-screen layout, dark theme, token visualization, signature details.
+
 ## License
 
 MIT (same as parent repo).

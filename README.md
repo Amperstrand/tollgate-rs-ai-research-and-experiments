@@ -24,8 +24,8 @@ project and consumes the same `tollgate-core`.
 
 ## Implementation Status
 
-Milestones M1–M2 are complete. M3 (Spilman payment channels) has a working
-demonstration against a public Cashu mint.
+Milestones M1–M3 are in progress. M3 (Spilman payment channels) has a working
+in-browser demo with real cryptographic operations against a public Cashu mint.
 
 | Milestone | Description | Status |
 |-----------|-------------|--------|
@@ -45,6 +45,47 @@ demonstration against a public Cashu mint.
   (receive, verify, send, balance) and Spilman channel demo
 - **Protocol trace visualization** — Interactive Mermaid diagrams of protocol flows,
   deployed to GitHub Pages with clickable per-step channel state popups
+- **In-browser Spilman channel demo** — Real ECDH, Schnorr signatures, and blinded mint
+  interactions against testnut.cashu.exchange, all running in the browser with no build step
+
+### Live Demos
+
+Both demos run entirely in the browser with no build step:
+
+| Demo | URL | What It Shows |
+|------|-----|---------------|
+| **Protocol Traces** | [GitHub Pages](https://amperstrand.github.io/tollgate-rs-ai-research-and-experiments/) | Auto-generated Mermaid sequence diagrams from Rust integration tests. Interactive state popups, balance timelines, educational walkthroughs with quizzes. |
+| **Spilman Channel (real crypto)** | [GitHub Pages](https://amperstrand.github.io/tollgate-rs-ai-research-and-experiments/spilman-real/) | Alice (buyer) and Charlie (seller) execute a full Spilman channel lifecycle in your browser — real ECDH, real Schnorr signatures, real Cashu blinded mint interactions against testnut.cashu.exchange. No build step, no npm, no server. Just open and click. |
+
+The spilman-real demo is also at `docs/private/demos/spilman-real/` — serve with any HTTP server (`python3 -m http.server`).
+
+### Compare and Contrast: Spilman Channel Demos
+
+Our goal: get a working Cashu Spilman channel running in a browser, in a simple educational way, so anyone can see how channel payments work without installing anything.
+
+**What we built on**: The crypto functions in `crypto.js` are 1:1 translations from [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) (`cdk-spilman` Rust crate). The channel state machine mirrors the lifecycle in our Rust `cdk_spilman_bridge_spike.rs`. The mint HTTP wrappers follow the [Cashu NUT specs](https://github.com/cashubtc/nuts).
+
+**What exists and how we differ**:
+
+| | **Our demo** | **SatsAndSports examples** [[1]](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples) | **cashu-ts** [[2]](https://github.com/cashubtc/cashu-ts) | **Option A simulator** |
+|---|---|---|---|---|
+| **Where it runs** | Browser (any OS, no install) | Terminal (Rust, Node.js, Python, or Go) | Browser or Node.js | Browser |
+| **Real crypto** | Yes — secp256k1 ECDH, Schnorr, blinded signatures via @noble/curves | Yes — cdk-spilman (Rust native) | Yes — @noble/curves | No — simulated SHA-256 only |
+| **Real mint** | Yes — testnut.cashu.exchange (public, auto-paying) | Yes — local test mint (cdk-spilman-test-mintd) | No channel support yet | No — no mint interaction |
+| **What you see** | Alice and Charlie wallets, token flow, signature details, mint requests | ASCII art (pay-per-character), terminal logs | Library API calls | Step-by-step walkthrough with data boxes |
+| **Educational** | Shows each phase, what tokens are used, what the signature commits to | Shows protocol flow via terminal output | Not a demo — it's a library | Highly educational — 20-step walkthrough with explanations |
+| **Setup** | Open URL, click button | Clone, build, start server + client, two terminals | npm install, write code | Open URL, click through steps |
+| **Channel close paths** | Cooperative close only | Cooperative + unilateral + timeout | No channel support | Cooperative + unilateral + timeout (simulated) |
+
+Sources:
+- [1] [SatsAndSports/cashu_spilman_channels/examples](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples) — Reference implementations in Rust (Axum), TypeScript (Express), Python (Flask), and Go. Each runs a "pay-per-character ASCII art" server where a client opens a Spilman channel and pays per request. These are the closest existing demos to ours.
+- [2] [cashubtc/cashu-ts](https://github.com/cashubtc/cashu-ts) — Official TypeScript Cashu wallet library. Does not yet support Spilman channels (as of v4.2.1). Our demo reimplements the channel crypto from scratch using `@noble/curves` and `@noble/hashes`, with the goal of eventually upstreaming Spilman support into cashu-ts.
+
+**What we copied, what we changed**:
+- **Crypto functions**: Translated from Rust (`cdk-spilman/src/params.rs`) to JavaScript. Same algorithms, same test vectors. Key difference: we use `@noble/curves` for secp256k1 instead of the `secp256k1` Rust crate.
+- **Channel lifecycle**: Matches the flow in our Rust spike test (`crates/tollgate-net/tests/cdk_spilman_bridge_spike.rs`). Same phases: open → fund → pay → close.
+- **Mint interaction**: Standard Cashu NUT-01/02/03/05 HTTP endpoints. Same as every Cashu wallet.
+- **UI**: Ours. The split-screen layout, token visualization, and signature detail panels are our design, inspired by the Option A simulator in this repo.
 
 ### Dependencies and Attribution
 
