@@ -72,7 +72,7 @@
             <section id="channel-center" class="channel-center">
                 <div class="center-status-row">
                     <div class="channel-state-badge" id="channel-state-badge">INIT</div>
-                    <div class="channel-capacity-label" id="channel-capacity-label">100 sat capacity</div>
+                    <div class="channel-capacity-label" id="channel-capacity-label">Not yet opened</div>
                 </div>
 
                 <div class="flow-inline" id="flow-diagram">
@@ -118,19 +118,19 @@
                     </div>
                     <div class="lock-body">
                         <div class="lock-tokens" id="vault-tokens">
-                            <div class="lock-empty-msg">Awaiting funding proofs...</div>
+                            <div class="lock-empty-msg">No channel yet</div>
                         </div>
                         <div class="lock-split-bar">
                             <div class="lock-split-alice" id="vault-split-alice" style="width: 100%"></div>
                             <div class="lock-split-charlie" id="vault-split-charlie" style="width: 0%"></div>
                         </div>
                         <div class="lock-split-labels">
-                            <span class="lock-label-alice" id="vault-label-alice">100 sat (Alice)</span>
-                            <span class="lock-label-charlie" id="vault-label-charlie">0 sat (Charlie)</span>
+                            <span class="lock-label-alice" id="vault-label-alice">—</span>
+                            <span class="lock-label-charlie" id="vault-label-charlie">—</span>
                         </div>
                     </div>
                     <div class="lock-footer" id="vault-status-text">
-                        No funding token yet
+                        No channel yet. Click Step 1 to open.
                     </div>
                 </div>
 

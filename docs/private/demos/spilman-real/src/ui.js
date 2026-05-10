@@ -159,7 +159,7 @@ export function resetUI() {
   }
 
   const vaultTokens = document.getElementById("vault-tokens");
-  if (vaultTokens) vaultTokens.innerHTML = '<div class="lock-empty-msg">Awaiting funding proofs...</div>';
+  if (vaultTokens) vaultTokens.innerHTML = '<div class="lock-empty-msg">No channel yet</div>';
 
   const vaultSplitAlice = document.getElementById("vault-split-alice");
   const vaultSplitCharlie = document.getElementById("vault-split-charlie");
@@ -168,14 +168,14 @@ export function resetUI() {
 
   const vaultLabelAlice = document.getElementById("vault-label-alice");
   const vaultLabelCharlie = document.getElementById("vault-label-charlie");
-  if (vaultLabelAlice) vaultLabelAlice.textContent = "100 sat (Alice)";
-  if (vaultLabelCharlie) vaultLabelCharlie.textContent = "0 sat (Charlie)";
+  if (vaultLabelAlice) vaultLabelAlice.textContent = "—";
+  if (vaultLabelCharlie) vaultLabelCharlie.textContent = "—";
 
   const vaultStatus = document.getElementById("vault-status-text");
-  if (vaultStatus) vaultStatus.textContent = "No funding token yet";
+  if (vaultStatus) vaultStatus.textContent = "No channel yet. Click Step 1 to open.";
 
   const capLabel = document.getElementById("channel-capacity-label");
-  if (capLabel) capLabel.textContent = "100 sat capacity";
+  if (capLabel) capLabel.textContent = "Not yet opened";
 
   const eduText = document.getElementById("edu-text");
   if (eduText) eduText.textContent = "Alice will lock ecash in a 2-of-2 multisig with Charlie. The spending condition is: (Alice AND Charlie) OR (Alice after timeout). Each payment is a commitment swap — a full split of the funding token, signed with SIG_ALL so the outputs are fixed. Click a step to begin.";
@@ -207,6 +207,7 @@ export function updateChannelBar(aliceWallet, charlieWallet) {
   const ch = cOrd > aOrd ? charlieCh : (aliceCh || charlieCh);
   if (!ch) return;
 
+  const hasProofs = ch.fundingProofs && ch.fundingProofs.length > 0;
   const capacity = ch.capacity;
   const toCharlie = ch.balanceToReceiver;
 
@@ -217,18 +218,24 @@ export function updateChannelBar(aliceWallet, charlieWallet) {
     toAlice = capacity - toCharlie;
   }
 
-  const pctAlice = capacity > 0 ? (toAlice / capacity) * 100 : 100;
-  const pctCharlie = capacity > 0 ? (toCharlie / capacity) * 100 : 0;
-
   const splitAlice = document.getElementById("vault-split-alice");
   const splitCharlie = document.getElementById("vault-split-charlie");
-  if (splitAlice) splitAlice.style.width = `${pctAlice}%`;
-  if (splitCharlie) splitCharlie.style.width = `${pctCharlie}%`;
-
   const labelAlice = document.getElementById("vault-label-alice");
   const labelCharlie = document.getElementById("vault-label-charlie");
-  if (labelAlice) labelAlice.textContent = `${toAlice} sat (Alice)`;
-  if (labelCharlie) labelCharlie.textContent = `${toCharlie} sat (Charlie)`;
+
+  if (hasProofs || ch.status === "CLOSED") {
+    const pctAlice = capacity > 0 ? (toAlice / capacity) * 100 : 100;
+    const pctCharlie = capacity > 0 ? (toCharlie / capacity) * 100 : 0;
+    if (splitAlice) splitAlice.style.width = `${pctAlice}%`;
+    if (splitCharlie) splitCharlie.style.width = `${pctCharlie}%`;
+    if (labelAlice) labelAlice.textContent = `${toAlice} sat (Alice)`;
+    if (labelCharlie) labelCharlie.textContent = `${toCharlie} sat (Charlie)`;
+  } else {
+    if (splitAlice) splitAlice.style.width = "0%";
+    if (splitCharlie) splitCharlie.style.width = "0%";
+    if (labelAlice) labelAlice.textContent = "—";
+    if (labelCharlie) labelCharlie.textContent = "—";
+  }
 
   const badge = document.getElementById("channel-state-badge");
   if (badge) {
@@ -243,14 +250,22 @@ export function updateChannelBar(aliceWallet, charlieWallet) {
   }
 
   const capLabel = document.getElementById("channel-capacity-label");
-  if (capLabel) capLabel.textContent = `${capacity} sat capacity`;
+  if (capLabel) {
+    capLabel.textContent = hasProofs || ch.status !== "INIT"
+      ? `${capacity} sat capacity`
+      : "Not yet opened";
+  }
 
   updateLockTokens(ch);
 
   const vaultStatus = document.getElementById("vault-status-text");
   if (vaultStatus) {
     if (ch.status === "INIT") {
-      vaultStatus.textContent = "No funding token yet";
+      if (ch.id) {
+        vaultStatus.textContent = "Channel opened. Awaiting funding token from Alice.";
+      } else {
+        vaultStatus.textContent = "No channel yet. Click Step 1 to open.";
+      }
     } else if (ch.status === "FUNDED") {
       vaultStatus.textContent = "Locked by 2-of-2: (Alice + Charlie) OR (Alice after expiry)";
     } else if (ch.status === "CLOSING") {
@@ -268,8 +283,10 @@ function updateLockTokens(ch) {
   if (!ch.fundingProofs || ch.fundingProofs.length === 0) {
     if (ch.status === "CLOSED") {
       container.innerHTML = '<div class="lock-empty-msg">Funding token spent</div>';
+    } else if (ch.id) {
+      container.innerHTML = '<div class="lock-empty-msg">Channel opened — awaiting funding proofs from Alice...</div>';
     } else {
-      container.innerHTML = '<div class="lock-empty-msg">Awaiting funding proofs...</div>';
+      container.innerHTML = '<div class="lock-empty-msg">No channel yet</div>';
     }
     return;
   }
