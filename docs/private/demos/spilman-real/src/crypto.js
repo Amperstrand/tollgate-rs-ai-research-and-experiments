@@ -1,8 +1,8 @@
 // crypto.js — JS implementations of cdk-spilman crypto primitives
 // Mirrors: https://github.com/SatsAndSports/cashu_spilman_channels/blob/main/crates/cdk-spilman/src/params.rs
 import { secp256k1, schnorr } from "https://esm.sh/@noble/curves@2.2.0/secp256k1";
-import { sha256 } from "https://esm.sh/@noble/hashes@2.2.0/sha256";
-import { bytesToHex, hexToBytes } from "https://esm.sh/@noble/hashes@2.2.0/utils";
+import { sha256 } from "https://esm.sh/@noble/hashes@1.7.1/sha256";
+import { bytesToHex, hexToBytes } from "https://esm.sh/@noble/hashes@1.7.1/utils";
 
 // Re-export hex utilities
 export { bytesToHex, hexToBytes };
@@ -12,7 +12,7 @@ export { schnorr };
 
 /** Generate a random secp256k1 private key (Uint8Array, 32 bytes) */
 export function generatePrivateKey() {
-  return secp256k1.utils.randomPrivateKey();
+  return secp256k1.utils.randomSecretKey();
 }
 
 /** Get compressed public key from private key bytes (Uint8Array, 33 bytes) */
@@ -109,8 +109,8 @@ export function getChannelId(params, channelSecretHex) {
 
 // ─── EC Point Arithmetic (internal) ──────────────────────────────
 
-const Point = secp256k1.ProjectivePoint;
-const GROUP_ORDER = secp256k1.CURVE.n;
+const Point = secp256k1.Point;
+const GROUP_ORDER = secp256k1.Point.Fn.ORDER;
 
 /** Convert Uint8Array to BigInt (big-endian). */
 function bytesToBigInt(bytes) {
