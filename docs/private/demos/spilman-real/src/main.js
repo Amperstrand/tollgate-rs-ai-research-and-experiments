@@ -18,12 +18,12 @@ function propagateCloseToAlice(closeResult) {
 }
 
 const EDU = {
-  initial: "Alice will lock ecash in a 2-of-2 multisig with Charlie. The spending condition is: (Alice AND Charlie) OR (Alice after timeout). Each payment is a commitment swap — a full split of the funding token, signed with SIG_ALL so the outputs are fixed. Click a step to begin.",
+  initial: "Alice will lock ecash in a 2-of-2 multisig with Charlie. The spending condition is: (Alice AND Charlie) OR (Alice after timeout). Each payment is a commitment swap — Alice signs a full split of the funding token with SIG_ALL so the outputs are fixed. No proofs are created during payments — only signatures. The proofs only get split at settlement. Click a step to begin.",
   open: "Step 1 — ECDH Key Exchange. Alice and Charlie each generate a private key, share public keys, and compute a shared secret via ECDH on secp256k1. This secret is hashed into a channel secret that seeds all deterministic derivations. Both parties will independently derive the same blinded outputs for any balance split — no round trips needed.",
-  fund: "Step 2 — Funding. Alice mints 100 sat from the mint using deterministic blinded outputs (P2BK). The resulting proofs are locked under a 2-of-2 condition: spending requires both Alice and Charlie's cooperation, or Alice alone can reclaim after the channel expires. These proofs are the channel's funding token. They cannot be spent by either party alone.",
-  pay1: "Step 3 — First Commitment Swap. Alice constructs a swap that spends the funding token: 10 sat to Charlie, 90 sat back to Alice. She signs with SIG_ALL, which commits to the exact inputs AND outputs. Charlie cannot modify the split — he can only submit this exact swap to the mint. The signature is Schnorr, tweaked with the channel secret. This is the atomic guarantee that prevents over-claiming.",
-  pay2: "Step 4 — Second Commitment Swap. Alice constructs a new swap: 30 sat to Charlie, 70 sat to Alice. The SIG_ALL signature again commits to exact outputs. The previous 10-sat swap is now SUPERSEDED — only the latest signed swap is valid. Charlie stores this and discards the old one. This is how Spilman channels achieve streaming: each signature replaces the previous one, moving value incrementally.",
-  close: "Step 5 — Cooperative Close. Charlie submits the latest commitment swap to the mint. The mint verifies the proofs and swaps them for fresh P2PK proofs: Charlie receives 30 sat in proofs he can spend freely. Alice receives 69 sat (100 − 30 − 1 sat mint fee). The funding token is spent atomically — both sides get their proofs in a single mint transaction. Channel settled.",
+  fund: "Step 2 — Funding. Alice mints 100 sat from the mint using deterministic blinded outputs (P2BK). The resulting proofs [64, 32, 4] are the channel's funding token — locked under a 2-of-2 condition. Why these three? Cashu uses binary denominations: 100 = 64 + 32 + 4. The mint holds keys for all powers of 2, so any amount can be represented at settlement. During the channel, no proofs are split — payments are just signatures.",
+  pay1: "Step 3 — First Commitment Swap. Alice constructs a swap that spends the funding token: 10 sat to Charlie, 90 sat back to Alice. She signs with SIG_ALL, which commits to the exact inputs AND outputs. No mint interaction needed — this is just a Schnorr signature on the full swap specification. Charlie can verify the signature by reconstructing the same swap from the channel secret. This is the atomic guarantee that prevents over-claiming.",
+  pay2: "Step 4 — Second Commitment Swap. Alice constructs a new swap: 30 sat to Charlie, 70 sat to Alice. The SIG_ALL signature again commits to exact outputs. The previous 10-sat swap is now SUPERSEDED — only the latest signed swap is valid. Charlie stores this and discards the old one. This is how Spilman channels achieve streaming: each signature replaces the previous one, moving value incrementally — no mint contact needed.",
+  close: "Step 5 — Cooperative Close. Charlie submits the latest commitment swap to the mint. NOW the proofs get split: the mint takes the funding token [64, 32, 4] as inputs and creates fresh proofs in whatever denominations are needed — Charlie gets 30 sat, Alice gets 69 sat (100 − 30 − 1 sat mint fee). The funding token is spent atomically — both sides get their proofs in a single mint transaction. Channel settled.",
 };
 
 function interceptMintRequests() {
@@ -258,6 +258,12 @@ document.getElementById("send-custom-payment-btn")?.addEventListener("click", ()
     const slider = document.getElementById("payment-slider");
     const amount = slider ? parseInt(slider.value) : 10;
     if (!alice?.channel || alice.channel.status !== "FUNDED") return;
+
+    const remaining = alice.channel.capacity - alice.channel.balanceToReceiver;
+    if (amount <= 0 || amount > remaining) {
+      setEducationText(`Channel depleted. All ${alice.channel.capacity} sat have been committed to Charlie. No further payments possible — Charlie must close the channel to settle.`);
+      return;
+    }
 
     const payment = alice.createPayment(amount);
     charlie.acceptPayment(amount, payment);

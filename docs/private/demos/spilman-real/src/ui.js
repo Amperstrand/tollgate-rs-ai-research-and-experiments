@@ -499,17 +499,24 @@ export function updatePaymentPreview(currentBalance, capacity) {
 
   if (!slider) return;
 
-  const amount = parseInt(slider.value);
+  const maxPay = capacity - currentBalance;
+
+  if (maxPay <= 0) {
+    slider.value = "0";
+    slider.max = "0";
+    if (display) display.textContent = "0";
+    if (previewCharlie) previewCharlie.textContent = "Channel depleted";
+    if (previewAlice) previewAlice.textContent = "0 sat";
+    return;
+  }
+
+  slider.max = String(maxPay);
+
+  const amount = Math.min(parseInt(slider.value) || 1, maxPay);
+  slider.value = String(amount);
   if (display) display.textContent = String(amount);
   if (previewCharlie) previewCharlie.textContent = `+${amount} sat`;
   if (previewAlice) previewAlice.textContent = `${capacity - currentBalance - amount} sat`;
-
-  const maxPay = capacity - currentBalance;
-  slider.max = String(Math.max(1, maxPay));
-  if (amount > maxPay) {
-    slider.value = String(maxPay);
-    if (display) display.textContent = String(maxPay);
-  }
 }
 
 export function setCustomPaymentEnabled(enabled) {
