@@ -8,6 +8,11 @@ const LOCK_CHIP_COLORS = {
   8: "lock-chip-8", 4: "lock-chip-4", 2: "lock-chip-2", 1: "lock-chip-1",
 };
 
+const DENOM_CHIP_COLORS = {
+  64: "denom-chip-64", 32: "denom-chip-32", 16: "denom-chip-16",
+  8: "denom-chip-8", 4: "denom-chip-4", 2: "denom-chip-2", 1: "denom-chip-1",
+};
+
 const signatureHistoryData = [];
 
 function truncateHex(hex, chars = 8) {
@@ -33,6 +38,18 @@ function splitIntoDenoms(total) {
     }
   }
   return result;
+}
+
+function renderDenomChips(containerId, denoms) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (denoms.length === 0) {
+    el.innerHTML = '<span class="denom-empty">0</span>';
+    return;
+  }
+  el.innerHTML = denoms.map(d =>
+    `<div class="denom-chip ${DENOM_CHIP_COLORS[d] || "denom-chip-1"}" title="${d} sat">${d}</div>`
+  ).join("");
 }
 
 function renderProofTokens(containerId, proofs) {
@@ -189,6 +206,9 @@ export function resetUI() {
 
   const customBtn = document.getElementById("send-custom-payment-btn");
   if (customBtn) customBtn.disabled = true;
+
+  const denomPreview = document.getElementById("denomination-preview");
+  if (denomPreview) denomPreview.style.display = "none";
 
   document.querySelectorAll(".flow-inline-arrow").forEach(el => {
     el.classList.remove("active", "active-alice");
@@ -496,6 +516,7 @@ export function updatePaymentPreview(currentBalance, capacity) {
   const display = document.getElementById("payment-amount-display");
   const previewCharlie = document.getElementById("preview-charlie");
   const previewAlice = document.getElementById("preview-alice");
+  const denomPreview = document.getElementById("denomination-preview");
 
   if (!slider) return;
 
@@ -507,6 +528,7 @@ export function updatePaymentPreview(currentBalance, capacity) {
     if (display) display.textContent = "0";
     if (previewCharlie) previewCharlie.textContent = "Channel depleted";
     if (previewAlice) previewAlice.textContent = "0 sat";
+    if (denomPreview) denomPreview.style.display = "none";
     return;
   }
 
@@ -517,6 +539,21 @@ export function updatePaymentPreview(currentBalance, capacity) {
   if (display) display.textContent = String(amount);
   if (previewCharlie) previewCharlie.textContent = `+${amount} sat`;
   if (previewAlice) previewAlice.textContent = `${capacity - currentBalance - amount} sat`;
+
+  if (denomPreview) {
+    const charlieTotal = currentBalance + amount;
+    const aliceTotal = capacity - charlieTotal;
+
+    const charlieAmountEl = document.getElementById("denom-charlie-amount");
+    const aliceAmountEl = document.getElementById("denom-alice-amount");
+    if (charlieAmountEl) charlieAmountEl.textContent = `${charlieTotal} sat`;
+    if (aliceAmountEl) aliceAmountEl.textContent = `${aliceTotal} sat`;
+
+    renderDenomChips("denom-charlie-chips", splitIntoDenoms(charlieTotal));
+    renderDenomChips("denom-alice-chips", aliceTotal > 0 ? splitIntoDenoms(aliceTotal) : []);
+
+    denomPreview.style.display = "";
+  }
 }
 
 export function setCustomPaymentEnabled(enabled) {
