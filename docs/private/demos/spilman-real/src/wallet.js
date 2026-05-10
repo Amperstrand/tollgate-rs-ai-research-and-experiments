@@ -90,7 +90,7 @@ export function createAliceWallet() {
       const capacitySat = this.channel.capacity;
 
       // 1. Create mint quote (testnut auto-pays Lightning)
-      const quote = await mint.postMintQuoteBolt11(capacitySat + 1000);
+      const quote = await mint.postMintQuoteBolt11(capacitySat);
       await mint.pollMintQuote(quote.quote);
 
       // 2. Create deterministic blinded messages for funding
@@ -222,7 +222,9 @@ export function createCharlieWallet() {
       transitionToClosing(this.channel);
 
       const balanceToCharlie = this.channel.balanceToReceiver;
-      const balanceToAlice = this.channel.capacity - balanceToCharlie;
+      const inputTotal = this.channel.fundingProofs.reduce((s, p) => s + p.amount, 0);
+      const fee = Math.ceil(inputTotal * (this.channel.params.inputFeePpk || 0) / 1000);
+      const balanceToAlice = this.channel.capacity - balanceToCharlie - fee;
       const maxPerOutput = this.channel.params.maximumAmount;
       const channelId = this.channel.id;
       const channelSecret = this._channelSecret;

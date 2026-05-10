@@ -21,11 +21,12 @@ async function mintFetch(mintUrl, path, options = {}) {
   }
 
   const url = `${mintUrl}${path}`;
+  const { method: _m, headers: _h, body: _b, ...rest } = options;
   const response = await fetch(url, {
     method,
     headers,
     body,
-    ...options,
+    ...rest,
   });
 
   const text = await response.text();
@@ -105,7 +106,7 @@ export async function pollMintQuote(
   while (true) {
     const state = await getMintQuoteState(quoteId, mintUrl);
 
-    if (state.paid) {
+    if (state.paid || state.state === "PAID") {
       return state;
     }
 

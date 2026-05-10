@@ -409,6 +409,10 @@ jobs:
     needs: [cdk-integration, spilman-integration, spilman-e2e]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v5
         with:
           name: bootstrap-trace-artifact
@@ -2047,6 +2051,10 @@ jobs:
           if [ -f "traces/spilman/spilman_channel_states.json" ]; then
             cp "traces/spilman/spilman_channel_states.json" pages/spilman-channel-states.json
           fi
+
+      - name: Copy spilman-real browser demo
+        run: |
+          cp -r docs/private/demos/spilman-real pages/spilman-real
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

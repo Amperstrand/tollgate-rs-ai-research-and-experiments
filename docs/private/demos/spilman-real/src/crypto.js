@@ -222,35 +222,41 @@ export function createDeterministicBlindingFactor(
 
 /**
  * Cashu hash-to-curve: maps arbitrary bytes to a secp256k1 point.
- * NUT-00 spec: SHA256("Secp256k1_HashToCurve_Cashu_" || secret || counter)
- * then try-and-increment to find a valid x-coordinate.
+ * CDK implementation (crates/cashu/src/dhke.rs):
+ *   1. msg_hash = SHA256("Secp256k1_HashToCurve_Cashu_" || message)
+ *   2. For counter 0..65536:
+ *      hash = SHA256(msg_hash || counter_u32_LE)
+ *      Try XOnlyPublicKey(hash) with even y-parity
+ *      If valid, return the point
  *
- * @param {Uint8Array} secretBytes - the secret to hash
- * @returns {Point} secp256k1 point (ProjectivePoint)
+ * @param {Uint8Array} message - the secret bytes to hash
+ * @returns {Point} secp256k1 point (always even y-parity)
  */
-function hashToCurve(secretBytes) {
+function hashToCurve(message) {
   const prefix = new TextEncoder().encode("Secp256k1_HashToCurve_Cashu_");
-  for (let counter = 0; counter < 256; counter++) {
-    const input = new Uint8Array(prefix.length + secretBytes.length + 1);
-    input.set(prefix, 0);
-    input.set(secretBytes, prefix.length);
-    input[prefix.length + secretBytes.length] = counter;
-    const hash = sha256(input);
+  // Step 1: intermediate hash
+  const prefixInput = new Uint8Array(prefix.length + message.length);
+  prefixInput.set(prefix, 0);
+  prefixInput.set(message, prefix.length);
+  const msgHash = sha256(prefixInput);
+
+  // Step 2: try-and-increment with 4-byte LE counter
+  for (let counter = 0; counter < 65536; counter++) {
+    const counterBytes = new Uint8Array(4);
+    new DataView(counterBytes.buffer).setUint32(0, counter, true); // little-endian u32
+    const hashInput = new Uint8Array(32 + 4);
+    hashInput.set(msgHash, 0);
+    hashInput.set(counterBytes, 32);
+    const hash = sha256(hashInput);
     const xHex = bytesToHex(hash);
-    // Try even y (02 prefix)
+    // Only even y-parity (02 prefix), matching CDK's Parity::Even
     try {
       return Point.fromHex("02" + xHex);
     } catch {
-      // x not on curve with even y, try odd y
-    }
-    // Try odd y (03 prefix)
-    try {
-      return Point.fromHex("03" + xHex);
-    } catch {
-      // x not on curve at all, increment counter
+      // x not on curve, increment counter
     }
   }
-  throw new Error("hashToCurve: failed to find valid point after 256 attempts");
+  throw new Error("hashToCurve: failed to find valid point after 65536 attempts");
 }
 
 /**
@@ -268,9 +274,9 @@ function hashToCurve(secretBytes) {
  */
 export function blindMessage(secretBytes, blindingScalar, _mintPubkeyForAmount) {
   const Y = hashToCurve(secretBytes);
-  const rPoint = Point.BASE.multiply(blindingScalar);
+  const rPoint = Point.BASE.multiply(bytesToBigInt(blindingScalar));
   const B_ = Y.add(rPoint);
-  return bytesToHex(B_.toRawBytes(true));
+  return bytesToHex(B_.toBytes(true));
 }
 
 /**
@@ -345,7 +351,7 @@ export function createDeterministicOutput(
     amount,
     index,
   );
-  const secretBytes = new TextEncoder().encode(secret);
+  const secretBytes = hexToBytes(secret);
   const B_ = blindMessage(secretBytes, blindingFactor, "");
   return {
     secret,
@@ -376,10 +382,10 @@ export function unblindSignature(
   const C_ = Point.fromHex(blindSignatureHex);
   const K_a = Point.fromHex(mintPubkeyHex);
   // r * K_a
-  const rK_a = K_a.multiply(blindingScalar);
+  const rK_a = K_a.multiply(bytesToBigInt(blindingScalar));
   // C = C_ - r * K_a = C_ + (-r * K_a)
   const C = C_.add(rK_a.negate());
-  return bytesToHex(C.toRawBytes(true));
+  return bytesToHex(C.toBytes(true));
 }
 
 /**
