@@ -1,0 +1,93 @@
+{
+  "active_plan": "/Users/macbook/src/tollgate-rs/.sisyphus/plans/spilman-browser-demo.md",
+  "started_at": "2026-05-10T10:06:15.005Z",
+  "session_ids": [
+    "ses_203663985ffe1ta5X0PzhNa2JD"
+  ],
+  "session_origins": {
+    "ses_203663985ffe1ta5X0PzhNa2JD": "direct"
+  },
+  "plan_name": "spilman-browser-demo",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Project scaffolding + index.html + CSS dark theme",
+      "session_id": "ses_1eea382d7ffeCzJV9liVThCeRM",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-10T10:10:52.183Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "Capture Rust test vectors",
+      "session_id": "ses_1ee9fee2fffejUMQHJ5b8u7cEG",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-10T10:25:50.644Z"
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "cashu-ts ESM load probe + API surface validation",
+      "session_id": "ses_1ee92cd71ffeMqQjroTwe35VNT",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-10T10:50:43.654Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Mint HTTP wrappers (mint.js — pure fetch)",
+      "session_id": "ses_1ee7be629ffeUtPWQx722Q64Mx",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-10T10:52:56.575Z"
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "ECDH + channel ID (crypto.js part 1)",
+      "session_id": "ses_1ee75a625ffe2EZVdWrO0yRl5l",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-10T11:00:33.984Z"
+    },
+    "todo:14": {
+      "task_key": "todo:14",
+      "task_label": "14",
+      "task_title": "README.md + architecture documentation",
+      "session_id": "ses_1ee547e35ffeDCnqJ8DIXF7nKS",
+      "agent": "Sisyphus-Junior",
+      "category": "writing",
+      "updated_at": "2026-05-10T11:37:03.816Z"
+    },
+    "todo:15": {
+      "task_key": "todo:15",
+      "task_label": "15",
+      "task_title": "GitHub Pages CI deploy sub-path",
+      "session_id": "ses_1ee4ee285ffejJ8cAAN0V6HLcj",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-10T11:47:13.001Z"
+    },
+    "todo:16": {
+      "task_key": "todo:16",
+      "task_label": "16",
+      "task_title": "End-to-end Playwright lifecycle test",
+      "session_id": "ses_1ee47d3ddffeeB4ifMxbwPu4YY",
+      "agent": "Sisyphus-Junior",
+      "updated_at": "2026-05-10T12:49:06.054Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "**Plan Compliance Audit** — `oracle`",
+      "session_id": "ses_1edd5cbd9ffeFA4m1Ys5sRw1nn",
+      "agent": "oracle",
+      "updated_at": "2026-05-10T13:53:52.905Z"
+    }
+  }
+}
