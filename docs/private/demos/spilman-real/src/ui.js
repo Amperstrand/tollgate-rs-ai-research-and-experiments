@@ -187,15 +187,15 @@ export function resetUI() {
   const dots = document.querySelectorAll(".step-dot");
   dots.forEach(d => { d.classList.remove("completed", "active"); });
 
-  document.querySelectorAll(".flow-arrow-wrap, .flow-arrow-down-wrap").forEach(el => {
-    el.classList.remove("active", "active-alice");
-  });
-  document.querySelectorAll(".flow-node").forEach(el => {
-    el.classList.remove("active");
-  });
-
   const customBtn = document.getElementById("send-custom-payment-btn");
   if (customBtn) customBtn.disabled = true;
+
+  document.querySelectorAll(".flow-inline-arrow").forEach(el => {
+    el.classList.remove("active", "active-alice");
+  });
+  document.querySelectorAll(".flow-inline-node").forEach(el => {
+    el.classList.remove("active");
+  });
 }
 
 export function updateChannelBar(aliceWallet, charlieWallet) {
@@ -453,10 +453,10 @@ export function setEducationText(text) {
 }
 
 export function highlightFlowArrow(arrowId) {
-  document.querySelectorAll(".flow-arrow-wrap, .flow-arrow-down-wrap").forEach(el => {
+  document.querySelectorAll(".flow-inline-arrow").forEach(el => {
     el.classList.remove("active", "active-alice");
   });
-  document.querySelectorAll(".flow-node").forEach(el => {
+  document.querySelectorAll(".flow-inline-node").forEach(el => {
     el.classList.remove("active");
   });
 
@@ -465,7 +465,7 @@ export function highlightFlowArrow(arrowId) {
 }
 
 export function highlightFlowNodes(nodeIds) {
-  document.querySelectorAll(".flow-node").forEach(el => {
+  document.querySelectorAll(".flow-inline-node").forEach(el => {
     el.classList.remove("active");
   });
   for (const id of nodeIds) {

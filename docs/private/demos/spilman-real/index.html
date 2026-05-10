@@ -7,62 +7,17 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header>
-        <div class="header-left">
-            <div class="header-lock"></div>
-            <h1>Spilman Channel</h1>
-            <span class="header-subtitle">Commitment Swap Visualization</span>
+    <header class="header-slim">
+        <div class="header-slim-left">
+            <span class="header-slim-title">Spilman Channel</span>
+            <span class="header-slim-sep">·</span>
+            <span class="header-slim-sub">Commitment Swap Demo</span>
         </div>
-        <div class="header-right">
-            <div id="mint-url-display" class="mint-badge">Mint: https://testnut.cashu.exchange</div>
+        <div class="header-slim-right">
+            <span class="header-slim-mint">testnut.cashu.exchange</span>
             <button id="reset-btn">Reset</button>
         </div>
     </header>
-
-    <div class="flow-diagram" id="flow-diagram">
-        <div class="flow-row">
-            <div class="flow-node node-alice" id="flow-alice">
-                <div class="flow-avatar fa-alice">A</div>
-                <div class="flow-label">Alice</div>
-                <div class="flow-sub">Sender</div>
-            </div>
-            <div class="flow-arrow-wrap" id="arrow-alice-vault">
-                <div class="flow-arrow-line"></div>
-                <div class="flow-arrow-head"></div>
-                <div class="flow-arrow-text">SIG_ALL</div>
-            </div>
-            <div class="flow-node node-lock" id="flow-vault">
-                <div class="flow-lock-icon"></div>
-                <div class="flow-label">Funding Lock</div>
-            </div>
-            <div class="flow-arrow-wrap" id="arrow-vault-mint">
-                <div class="flow-arrow-line"></div>
-                <div class="flow-arrow-head"></div>
-                <div class="flow-arrow-text">settle</div>
-            </div>
-            <div class="flow-node node-mint" id="flow-mint">
-                <div class="flow-mint-icon"></div>
-                <div class="flow-label">Mint</div>
-            </div>
-        </div>
-        <div class="flow-row-bottom">
-            <div class="flow-spacer"></div>
-            <div class="flow-arrow-down-wrap" id="arrow-vault-charlie">
-                <div class="flow-arrow-down-line"></div>
-                <div class="flow-arrow-down-head"></div>
-            </div>
-            <div class="flow-spacer"></div>
-        </div>
-        <div class="flow-row-bottom">
-            <div class="flow-spacer"></div>
-            <div class="flow-node node-charlie" id="flow-charlie">
-                <div class="flow-avatar fa-charlie">C</div>
-                <div class="flow-label">Charlie</div>
-                <div class="flow-sub">Receiver</div>
-            </div>
-            <div class="flow-spacer"></div>
-        </div>
-    </div>
 
     <main>
         <div class="three-column">
@@ -118,6 +73,24 @@
                 <div class="center-status-row">
                     <div class="channel-state-badge" id="channel-state-badge">INIT</div>
                     <div class="channel-capacity-label" id="channel-capacity-label">100 sat capacity</div>
+                </div>
+
+                <div class="flow-inline" id="flow-diagram">
+                    <div class="flow-inline-node fi-alice" id="flow-alice">A</div>
+                    <div class="flow-inline-arrow" id="arrow-alice-vault">
+                        <span class="flow-inline-text">SIG_ALL</span>
+                    </div>
+                    <div class="flow-inline-node fi-lock" id="flow-vault">
+                        <span class="fi-lock-text">2/2</span>
+                    </div>
+                    <div class="flow-inline-arrow" id="arrow-vault-mint">
+                        <span class="flow-inline-text">settle</span>
+                    </div>
+                    <div class="flow-inline-node fi-mint" id="flow-mint">Ⓜ</div>
+                    <div class="flow-inline-arrow" id="arrow-vault-charlie">
+                        <span class="flow-inline-text">▼</span>
+                    </div>
+                    <div class="flow-inline-node fi-charlie" id="flow-charlie">C</div>
                 </div>
 
                 <div class="step-dots" id="step-dots">
