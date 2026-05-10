@@ -840,23 +840,59 @@ section h2 {
     transition: border-color 0.5s ease, box-shadow 0.5s ease;
 }
 
-.lock-chip-claim-charlie {
-    border-color: var(--charlie-light);
-    box-shadow: 0 0 8px rgba(63, 185, 80, 0.3);
-}
-
-.lock-chip-claim-alice {
-    border-color: var(--alice-light);
-    box-shadow: 0 0 8px rgba(88, 166, 255, 0.2);
-}
-
 .lock-chip-64 { background: var(--denom-64); color: #fff; }
 .lock-chip-32 { background: var(--denom-32); color: #fff; }
 .lock-chip-16 { background: var(--denom-16); color: #fff; }
 .lock-chip-8  { background: var(--denom-8); color: #fff; }
 .lock-chip-4  { background: var(--denom-4); color: #000; }
 .lock-chip-2  { background: var(--denom-2); color: #fff; }
-.lock-chip-1  { background: var(--denom-1); color: #fff; }
+.lock-chip-1 { background: var(--denom-1); color: #fff; }
+
+.lock-chip-group {
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.lock-chip-group:last-child {
+    margin-bottom: 0;
+}
+
+.lock-group-charlie {
+    background: rgba(26, 127, 55, 0.08);
+    border-color: rgba(63, 185, 80, 0.25);
+}
+
+.lock-group-alice {
+    background: rgba(9, 105, 218, 0.08);
+    border-color: rgba(88, 166, 255, 0.25);
+}
+
+.lock-group-label {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.lock-group-charlie .lock-group-label { color: var(--charlie-light); }
+.lock-group-alice .lock-group-label { color: var(--alice-light); }
+
+.lock-group-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.lock-chip-claimed-charlie {
+    box-shadow: 0 0 10px rgba(63, 185, 80, 0.4);
+}
+
+.lock-chip-claimed-alice {
+    box-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
+}
 
 .lock-split-bar {
     height: 24px;
@@ -1035,6 +1071,13 @@ section h2 {
 .sig-split-unit {
     font-size: 11px;
     font-weight: 400;
+}
+
+.sig-fee-note {
+    font-size: 9px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    margin-top: 2px;
 }
 
 .sig-detail-row {

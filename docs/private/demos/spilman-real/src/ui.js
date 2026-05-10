@@ -178,7 +178,7 @@ export function resetUI() {
   if (capLabel) capLabel.textContent = "100 sat capacity";
 
   const eduText = document.getElementById("edu-text");
-  if (eduText) eduText.textContent = "Alice locks ecash in a 2-of-2 multisig: both parties must agree to spend, or Alice can reclaim after a timeout. Each payment is a commitment swap signed with SIG_ALL. Click a step to begin.";
+  if (eduText) eduText.textContent = "Alice will lock ecash in a 2-of-2 multisig with Charlie. The spending condition is: (Alice AND Charlie) OR (Alice after timeout). Each payment is a commitment swap — a full split of the funding token, signed with SIG_ALL so the outputs are fixed. Click a step to begin.";
 
   signatureHistoryData.length = 0;
   const histList = document.getElementById("sig-history-list");
@@ -283,17 +283,37 @@ function updateLockTokens(ch) {
   const toCharlie = ch.balanceToReceiver;
 
   let charlieRemaining = toCharlie;
-  const html = proofs.map(p => {
-    const claimClass = charlieRemaining >= p.amount
-      ? "lock-chip-claim-charlie"
-      : "lock-chip-claim-alice";
+  const charlieProofs = [];
+  const aliceProofs = [];
+  for (const p of proofs) {
     if (charlieRemaining >= p.amount) {
+      charlieProofs.push(p);
       charlieRemaining -= p.amount;
     } else {
+      aliceProofs.push(p);
       charlieRemaining = 0;
     }
-    return `<div class="lock-chip ${lockChipClass(p.amount)} ${claimClass}" title="${p.amount} sat">${p.amount}</div>`;
-  }).join("");
+  }
+
+  let html = "";
+
+  if (charlieProofs.length > 0) {
+    html += `<div class="lock-chip-group lock-group-charlie">
+      <div class="lock-group-label">Charlie's claim</div>
+      <div class="lock-group-chips">${charlieProofs.map(p =>
+        `<div class="lock-chip ${lockChipClass(p.amount)} lock-chip-claimed-charlie" title="${p.amount} sat">${p.amount}</div>`
+      ).join("")}</div>
+    </div>`;
+  }
+
+  if (aliceProofs.length > 0) {
+    html += `<div class="lock-chip-group lock-group-alice">
+      <div class="lock-group-label">Alice's claim</div>
+      <div class="lock-group-chips">${aliceProofs.map(p =>
+        `<div class="lock-chip ${lockChipClass(p.amount)} lock-chip-claimed-alice" title="${p.amount} sat">${p.amount}</div>`
+      ).join("")}</div>
+    </div>`;
+  }
 
   container.innerHTML = html;
 }
@@ -328,7 +348,10 @@ export function updateSignaturePanel(aliceWallet) {
   }
 
   const charlieAmt = ch.balanceToReceiver;
+  const feePpk = ch.params?.inputFeePpk || 0;
+  const fee = Math.ceil(ch.capacity * feePpk / 1000);
   const aliceAmt = ch.capacity - charlieAmt;
+  const aliceNet = aliceAmt - fee;
 
   container.innerHTML = `
     <div class="sig-split-row">
@@ -338,12 +361,13 @@ export function updateSignaturePanel(aliceWallet) {
       </div>
       <div class="sig-split-box sig-split-alice">
         <div class="sig-split-name">Alice retains</div>
-        <div class="sig-split-amount">${aliceAmt} <span class="sig-split-unit">sat</span></div>
+        <div class="sig-split-amount">${aliceNet} <span class="sig-split-unit">sat</span></div>
+        ${fee > 0 ? `<div class="sig-fee-note">gross ${aliceAmt} sat − ${fee} sat fee</div>` : ""}
       </div>
     </div>
     <div class="sig-detail-row">
       <div class="sig-detail-label">Commitment swap</div>
-      <div class="sig-detail-value">Inputs: funding (${ch.capacity} sat) \u2192 Outputs: Charlie (${charlieAmt}) + Alice (${aliceAmt})</div>
+      <div class="sig-detail-value">Inputs: funding (${ch.capacity} sat) \u2192 Outputs: Charlie (${charlieAmt}) + Alice (${aliceNet}${fee > 0 ? `, fee ${fee}` : ""})</div>
     </div>
     <div class="sig-detail-row">
       <div class="sig-detail-label">Message</div>

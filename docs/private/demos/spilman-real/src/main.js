@@ -17,12 +17,12 @@ function propagateCloseToAlice(closeResult) {
 }
 
 const EDU = {
-  initial: "Alice locks ecash in a 2-of-2 multisig: both parties must agree to spend, or Alice can reclaim after a timeout. Each payment is a commitment swap signed with SIG_ALL.",
-  open: "Alice and Charlie perform ECDH to derive a shared channel secret. This secret seeds all deterministic derivations — both parties will compute identical outputs for any balance split.",
-  fund: "Alice locks 100 sat in a funding token with spending condition: (Alice AND Charlie) OR (Alice after expiry). The proofs are now locked — neither party can spend them alone.",
-  pay1: "Alice signs a commitment swap: spend the funding token, create 10 sat for Charlie and 90 sat for Alice. Her SIG_ALL signature commits to the exact inputs AND outputs. Charlie can only submit this exact swap to the mint — nothing more.",
-  pay2: "Another commitment swap: 30 sat for Charlie, 70 sat for Alice. The previous swap is now SUPERSEDED. Only the latest signed swap is valid. Charlie stores this and discards the old one.",
-  close: "Charlie submits the latest commitment swap to the mint. The funding token is spent atomically: Charlie gets 30 sat in fresh proofs, Alice gets 69 sat (1 sat mint fee). Channel settled.",
+  initial: "Alice will lock ecash in a 2-of-2 multisig with Charlie. The spending condition is: (Alice AND Charlie) OR (Alice after timeout). Each payment is a commitment swap — a full split of the funding token, signed with SIG_ALL so the outputs are fixed. Click a step to begin.",
+  open: "Step 1 — ECDH Key Exchange. Alice and Charlie each generate a private key, share public keys, and compute a shared secret via ECDH on secp256k1. This secret is hashed into a channel secret that seeds all deterministic derivations. Both parties will independently derive the same blinded outputs for any balance split — no round trips needed.",
+  fund: "Step 2 — Funding. Alice mints 100 sat from the mint using deterministic blinded outputs (P2BK). The resulting proofs are locked under a 2-of-2 condition: spending requires both Alice and Charlie's cooperation, or Alice alone can reclaim after the channel expires. These proofs are the channel's funding token. They cannot be spent by either party alone.",
+  pay1: "Step 3 — First Commitment Swap. Alice constructs a swap that spends the funding token: 10 sat to Charlie, 90 sat back to Alice. She signs with SIG_ALL, which commits to the exact inputs AND outputs. Charlie cannot modify the split — he can only submit this exact swap to the mint. The signature is Schnorr, tweaked with the channel secret. This is the atomic guarantee that prevents over-claiming.",
+  pay2: "Step 4 — Second Commitment Swap. Alice constructs a new swap: 30 sat to Charlie, 70 sat to Alice. The SIG_ALL signature again commits to exact outputs. The previous 10-sat swap is now SUPERSEDED — only the latest signed swap is valid. Charlie stores this and discards the old one. This is how Spilman channels achieve streaming: each signature replaces the previous one, moving value incrementally.",
+  close: "Step 5 — Cooperative Close. Charlie submits the latest commitment swap to the mint. The mint verifies the proofs and swaps them for fresh P2PK proofs: Charlie receives 30 sat in proofs he can spend freely. Alice receives 69 sat (100 − 30 − 1 sat mint fee). The funding token is spent atomically — both sides get their proofs in a single mint transaction. Channel settled.",
 };
 
 function interceptMintRequests() {
@@ -265,7 +265,7 @@ document.getElementById("send-custom-payment-btn")?.addEventListener("click", ()
     updateSignaturePanel(alice);
     debugLog(`Custom payment: ${amount} sat sent`);
 
-    const eduText = `Alice signed a new commitment swap: spend the funding token, create ${alice.channel.balanceToReceiver} sat for Charlie and ${alice.channel.capacity - alice.channel.balanceToReceiver} sat for Alice. The previous swap is now SUPERSEDED. Only the latest SIG_ALL commitment counts.`;
+    const eduText = `Alice constructed a new commitment swap: spend the funding token, create ${alice.channel.balanceToReceiver} sat for Charlie and ${alice.channel.capacity - alice.channel.balanceToReceiver} sat for Alice. The SIG_ALL signature commits to exact outputs, so Charlie cannot claim more. The previous swap is SUPERSEDED — only this one counts.`;
     setEducationText(eduText);
   } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
 });

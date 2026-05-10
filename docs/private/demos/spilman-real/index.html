@@ -183,11 +183,11 @@
                     <div class="edu-icon"></div>
                     <div class="edu-content">
                         <div class="edu-title">How Spilman Channels Work</div>
-                        <p id="edu-text">Alice locks ecash in a 2-of-2 multisig: both parties must agree to spend, or Alice can reclaim after a timeout. Each payment is a commitment swap signed with SIG_ALL. Click a step to begin.</p>
+                        <p id="edu-text">Alice will lock ecash in a 2-of-2 multisig with Charlie. The spending condition is: (Alice AND Charlie) OR (Alice after timeout). Each payment is a commitment swap — a full split of the funding token, signed with SIG_ALL so the outputs are fixed. Click a step to begin.</p>
                     </div>
                 </div>
 
-                <details class="mint-details">
+                <details class="mint-details" open>
                     <summary class="mint-details-summary">Mint Requests</summary>
                     <div class="mint-timeline" id="mint-timeline">
                         <div class="mint-empty">No mint requests yet</div>
