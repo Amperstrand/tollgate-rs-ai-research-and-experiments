@@ -18,8 +18,8 @@ use {
     cdk::secp256k1::{self, ecdh::SharedSecret, Parity, Scalar, Secp256k1},
     cdk_spilman::{
         channel_parameters_get_channel_id, complete_funding_swap, compute_channel_from_token,
-        compute_channel_secret_from_hex, create_funding_swap,
-        create_signed_balance_update, create_unsigned_balance_update,
+        compute_channel_secret_from_hex, create_funding_swap, create_signed_balance_update,
+        create_unsigned_balance_update,
     },
     std::path::PathBuf,
     std::str::FromStr,
@@ -32,12 +32,10 @@ use {
 const MINT_URL: &str = "https://testnut.cashu.exchange";
 
 #[cfg(feature = "spilman")]
-const ALICE_SEED_HEX: &str =
-    "1111111111111111111111111111111111111111111111111111111111111111";
+const ALICE_SEED_HEX: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 #[cfg(feature = "spilman")]
-const CHARLIE_SEED_HEX: &str =
-    "2222222222222222222222222222222222222222222222222222222222222222";
+const CHARLIE_SEED_HEX: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
 #[cfg(feature = "spilman")]
 fn now_secs() -> u64 {
@@ -58,10 +56,7 @@ async fn http_post(url: &str, body: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("POST {url}: {e}"))?;
     let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("read body: {e}"))?;
+    let text = resp.text().await.map_err(|e| format!("read body: {e}"))?;
     if !status.is_success() {
         return Err(format!("POST {url} → {status}: {text}"));
     }
@@ -71,10 +66,7 @@ async fn http_post(url: &str, body: &str) -> Result<String, String> {
 /// Compute the raw ECDH shared secret (before domain separation) as hex.
 /// The channel_secret in cdk-spilman is SHA256("Cashu_Spilman_channel_secret_v1" || raw_ecdh).
 #[cfg(feature = "spilman")]
-fn compute_raw_ecdh_hex(
-    my_secret: &SecretKey,
-    their_pubkey: &PublicKey,
-) -> Result<String, String> {
+fn compute_raw_ecdh_hex(my_secret: &SecretKey, their_pubkey: &PublicKey) -> Result<String, String> {
     let raw = SharedSecret::new(their_pubkey, my_secret);
     Ok(hex_encode(&raw.secret_bytes()))
 }
@@ -113,9 +105,8 @@ async fn capture_spilman_test_vectors() {
     tracing::info!("=== Test Vector Capture Start ===");
 
     // ─── Step 1: Deterministic keys ───
-    let alice_secret =
-        SecretKey::from_slice(&hex_decode(ALICE_SEED_HEX).expect("alice seed hex"))
-            .expect("alice secret from slice");
+    let alice_secret = SecretKey::from_slice(&hex_decode(ALICE_SEED_HEX).expect("alice seed hex"))
+        .expect("alice secret from slice");
     let charlie_secret =
         SecretKey::from_slice(&hex_decode(CHARLIE_SEED_HEX).expect("charlie seed hex"))
             .expect("charlie secret from slice");
@@ -134,11 +125,9 @@ async fn capture_spilman_test_vectors() {
         compute_raw_ecdh_hex(&alice_secret, &charlie_pubkey).expect("raw ECDH");
 
     // Domain-separated channel secret (what cdk-spilman uses internally)
-    let channel_secret_hex = compute_channel_secret_from_hex(
-        &alice_secret.to_secret_hex(),
-        &charlie_pubkey_hex,
-    )
-    .expect("channel_secret from alice→charlie");
+    let channel_secret_hex =
+        compute_channel_secret_from_hex(&alice_secret.to_secret_hex(), &charlie_pubkey_hex)
+            .expect("channel_secret from alice→charlie");
 
     tracing::info!("Raw ECDH:     {ecdh_shared_secret_hex}");
     tracing::info!("Channel secret: {channel_secret_hex}");
@@ -148,18 +137,14 @@ async fn capture_spilman_test_vectors() {
     let wallet = CdkWallet::new(MINT_URL, rand::random())
         .await
         .expect("CdkWallet init");
-    wallet
-        .mint_test_tokens(2000)
-        .await
-        .expect("mint 2000 sat");
+    wallet.mint_test_tokens(2000).await.expect("mint 2000 sat");
     let bal = wallet.total_balance().await.expect("balance check");
     tracing::info!("Wallet balance: {bal} sat");
     assert!(bal >= 1000, "need >= 1000 sat, got {bal}");
 
     // Extract proofs and build a CashuToken
     let proofs_json = wallet.unspent_proofs_json().await.expect("get proofs");
-    let all_proofs: Vec<CashuProof> =
-        serde_json::from_str(&proofs_json).expect("parse proofs");
+    let all_proofs: Vec<CashuProof> = serde_json::from_str(&proofs_json).expect("parse proofs");
     tracing::info!("Got {} unspent proofs", all_proofs.len());
 
     let mut selected_proofs = Vec::new();
@@ -171,8 +156,14 @@ async fn capture_spilman_test_vectors() {
         selected_proofs.push(proof.clone());
         selected_total += u64::from(proof.amount);
     }
-    tracing::info!("Selected {selected_total} sat from {} proofs", selected_proofs.len());
-    assert!(selected_total >= 1000, "need >= 1000 sat, got {selected_total}");
+    tracing::info!(
+        "Selected {selected_total} sat from {} proofs",
+        selected_proofs.len()
+    );
+    assert!(
+        selected_total >= 1000,
+        "need >= 1000 sat, got {selected_total}"
+    );
 
     let mint_url = MintUrl::from_str(MINT_URL).expect("parse mint URL");
     let token = CashuToken::new(mint_url, selected_proofs, None, CurrencyUnit::Sat);
@@ -190,8 +181,8 @@ async fn capture_spilman_test_vectors() {
 
     // Extract keyset keys as {"amount": "pubkey_hex", ...}
     let keyset_keys_value: serde_json::Value = {
-        let raw: serde_json::Value = serde_json::from_str(&keyset_info_json)
-            .expect("parse keyset_info_json");
+        let raw: serde_json::Value =
+            serde_json::from_str(&keyset_info_json).expect("parse keyset_info_json");
         raw["keys"].clone()
     };
 
@@ -202,8 +193,8 @@ async fn capture_spilman_test_vectors() {
 
     let channel_result_json = compute_channel_from_token(
         &token_str,
-        &charlie_pubkey_hex,  // receiver
-        &alice_pubkey_hex,    // sender
+        &charlie_pubkey_hex, // receiver
+        &alice_pubkey_hex,   // sender
         &channel_secret_hex,
         expiry,
         &keyset_info_json,
@@ -223,12 +214,9 @@ async fn capture_spilman_test_vectors() {
         .expect("funding_token_amount");
 
     // Derive channel_id
-    let channel_id_hex = channel_parameters_get_channel_id(
-        &params_json,
-        &channel_secret_hex,
-        &keyset_info_json,
-    )
-    .expect("get channel_id");
+    let channel_id_hex =
+        channel_parameters_get_channel_id(&params_json, &channel_secret_hex, &keyset_info_json)
+            .expect("get channel_id");
 
     tracing::info!(
         "Channel: id={channel_id_hex} capacity={capacity_sat} funding={funding_amount_sat}"
@@ -263,9 +251,7 @@ async fn capture_spilman_test_vectors() {
     // Extract blinded messages from the swap request
     let swap_request: serde_json::Value =
         serde_json::from_str(&swap_request_json).expect("parse swap request");
-    let blinded_messages_array = swap_request["outputs"]
-        .as_array()
-        .expect("outputs array");
+    let blinded_messages_array = swap_request["outputs"].as_array().expect("outputs array");
 
     let funding_blinded_messages: Vec<serde_json::Value> = blinded_messages_array
         .iter()
@@ -414,10 +400,7 @@ async fn capture_spilman_test_vectors() {
     .expect("create_signed_balance_update");
     let signed: serde_json::Value =
         serde_json::from_str(&signed_json).expect("parse signed balance update");
-    let signature_hex = signed["signature"]
-        .as_str()
-        .expect("signature")
-        .to_owned();
+    let signature_hex = signed["signature"].as_str().expect("signature").to_owned();
 
     tracing::info!("Balance update signed: amount={amount_to_charlie}");
 
@@ -449,8 +432,7 @@ async fn capture_spilman_test_vectors() {
         }
     });
 
-    let json_str = serde_json::to_string_pretty(&test_vectors)
-        .expect("serialize test vectors");
+    let json_str = serde_json::to_string_pretty(&test_vectors).expect("serialize test vectors");
 
     let path = output_path();
     if let Some(parent) = path.parent() {
