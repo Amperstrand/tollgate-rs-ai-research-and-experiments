@@ -3,9 +3,9 @@ const DENOM_COLORS = {
   8: "denom-8", 4: "denom-4", 2: "denom-2", 1: "denom-1",
 };
 
-const VAULT_CHIP_COLORS = {
-  64: "vault-chip-64", 32: "vault-chip-32", 16: "vault-chip-16",
-  8: "vault-chip-8", 4: "vault-chip-4", 2: "vault-chip-2", 1: "vault-chip-1",
+const LOCK_CHIP_COLORS = {
+  64: "lock-chip-64", 32: "lock-chip-32", 16: "lock-chip-16",
+  8: "lock-chip-8", 4: "lock-chip-4", 2: "lock-chip-2", 1: "lock-chip-1",
 };
 
 const signatureHistoryData = [];
@@ -19,8 +19,8 @@ function denomClass(amount) {
   return DENOM_COLORS[amount] || "denom-1";
 }
 
-function vaultChipClass(amount) {
-  return VAULT_CHIP_COLORS[amount] || "vault-chip-1";
+function lockChipClass(amount) {
+  return LOCK_CHIP_COLORS[amount] || "lock-chip-1";
 }
 
 function splitIntoDenoms(total) {
@@ -147,7 +147,7 @@ export function resetUI() {
   if (proofsCharlie) proofsCharlie.innerHTML = "";
 
   const sigContent = document.getElementById("sig-content");
-  if (sigContent) sigContent.innerHTML = '<div class="sig-empty">No signature yet. Fund the channel to begin.</div>';
+  if (sigContent) sigContent.innerHTML = '<div class="sig-empty">No commitment yet. Fund the channel to begin.</div>';
 
   const mintTimeline = document.getElementById("mint-timeline");
   if (mintTimeline) mintTimeline.innerHTML = '<div class="mint-empty">No mint requests yet</div>';
@@ -159,7 +159,7 @@ export function resetUI() {
   }
 
   const vaultTokens = document.getElementById("vault-tokens");
-  if (vaultTokens) vaultTokens.innerHTML = '<div class="vault-empty-msg">Awaiting funding proofs...</div>';
+  if (vaultTokens) vaultTokens.innerHTML = '<div class="lock-empty-msg">Awaiting funding proofs...</div>';
 
   const vaultSplitAlice = document.getElementById("vault-split-alice");
   const vaultSplitCharlie = document.getElementById("vault-split-charlie");
@@ -172,17 +172,17 @@ export function resetUI() {
   if (vaultLabelCharlie) vaultLabelCharlie.textContent = "0 sat (Charlie)";
 
   const vaultStatus = document.getElementById("vault-status-text");
-  if (vaultStatus) vaultStatus.textContent = "Not yet funded";
+  if (vaultStatus) vaultStatus.textContent = "No funding token yet";
 
   const capLabel = document.getElementById("channel-capacity-label");
   if (capLabel) capLabel.textContent = "100 sat capacity";
 
   const eduText = document.getElementById("edu-text");
-  if (eduText) eduText.textContent = "Tokens never move between parties. Only the signature that determines who can claim them changes. Click a step to begin.";
+  if (eduText) eduText.textContent = "Alice locks ecash in a 2-of-2 multisig: both parties must agree to spend, or Alice can reclaim after a timeout. Each payment is a commitment swap signed with SIG_ALL. Click a step to begin.";
 
   signatureHistoryData.length = 0;
   const histList = document.getElementById("sig-history-list");
-  if (histList) histList.innerHTML = '<div class="sig-history-empty">No previous signatures</div>';
+  if (histList) histList.innerHTML = '<div class="sig-history-empty">No previous commitments</div>';
 
   const dots = document.querySelectorAll(".step-dot");
   dots.forEach(d => { d.classList.remove("completed", "active"); });
@@ -245,37 +245,37 @@ export function updateChannelBar(aliceWallet, charlieWallet) {
   const capLabel = document.getElementById("channel-capacity-label");
   if (capLabel) capLabel.textContent = `${capacity} sat capacity`;
 
-  updateVaultTokens(ch);
+  updateLockTokens(ch);
 
   const vaultStatus = document.getElementById("vault-status-text");
   if (vaultStatus) {
     if (ch.status === "INIT") {
-      vaultStatus.textContent = "Not yet funded";
+      vaultStatus.textContent = "No funding token yet";
     } else if (ch.status === "FUNDED") {
-      vaultStatus.textContent = "Locked until cooperative close or channel expiry";
+      vaultStatus.textContent = "Locked by 2-of-2: (Alice + Charlie) OR (Alice after expiry)";
     } else if (ch.status === "CLOSING") {
-      vaultStatus.textContent = "Settling with mint...";
+      vaultStatus.textContent = "Submitting commitment swap to mint...";
     } else if (ch.status === "CLOSED") {
-      vaultStatus.textContent = "Vault emptied. Channel settled.";
+      vaultStatus.textContent = "Funding token spent. Channel settled.";
     }
   }
 }
 
-function updateVaultTokens(ch) {
+function updateLockTokens(ch) {
   const container = document.getElementById("vault-tokens");
   if (!container) return;
 
   if (!ch.fundingProofs || ch.fundingProofs.length === 0) {
     if (ch.status === "CLOSED") {
-      container.innerHTML = '<div class="vault-empty-msg">Vault emptied</div>';
+      container.innerHTML = '<div class="lock-empty-msg">Funding token spent</div>';
     } else {
-      container.innerHTML = '<div class="vault-empty-msg">Awaiting funding proofs...</div>';
+      container.innerHTML = '<div class="lock-empty-msg">Awaiting funding proofs...</div>';
     }
     return;
   }
 
   if (ch.status === "CLOSED") {
-    container.innerHTML = '<div class="vault-empty-msg">Vault emptied. Tokens swapped for fresh proofs.</div>';
+    container.innerHTML = '<div class="lock-empty-msg">Funding token spent. Proofs swapped via commitment.</div>';
     return;
   }
 
@@ -285,14 +285,14 @@ function updateVaultTokens(ch) {
   let charlieRemaining = toCharlie;
   const html = proofs.map(p => {
     const claimClass = charlieRemaining >= p.amount
-      ? "vault-chip-claim-charlie"
-      : "vault-chip-claim-alice";
+      ? "lock-chip-claim-charlie"
+      : "lock-chip-claim-alice";
     if (charlieRemaining >= p.amount) {
       charlieRemaining -= p.amount;
     } else {
       charlieRemaining = 0;
     }
-    return `<div class="vault-chip ${vaultChipClass(p.amount)} ${claimClass}" title="${p.amount} sat">${p.amount}</div>`;
+    return `<div class="lock-chip ${lockChipClass(p.amount)} ${claimClass}" title="${p.amount} sat">${p.amount}</div>`;
   }).join("");
 
   container.innerHTML = html;
@@ -333,13 +333,17 @@ export function updateSignaturePanel(aliceWallet) {
   container.innerHTML = `
     <div class="sig-split-row">
       <div class="sig-split-box sig-split-charlie">
-        <div class="sig-split-name">Charlie</div>
+        <div class="sig-split-name">Charlie receives</div>
         <div class="sig-split-amount">${charlieAmt} <span class="sig-split-unit">sat</span></div>
       </div>
       <div class="sig-split-box sig-split-alice">
-        <div class="sig-split-name">Alice</div>
+        <div class="sig-split-name">Alice retains</div>
         <div class="sig-split-amount">${aliceAmt} <span class="sig-split-unit">sat</span></div>
       </div>
+    </div>
+    <div class="sig-detail-row">
+      <div class="sig-detail-label">Commitment swap</div>
+      <div class="sig-detail-value">Inputs: funding (${ch.capacity} sat) \u2192 Outputs: Charlie (${charlieAmt}) + Alice (${aliceAmt})</div>
     </div>
     <div class="sig-detail-row">
       <div class="sig-detail-label">Message</div>
@@ -350,14 +354,14 @@ export function updateSignaturePanel(aliceWallet) {
       <div class="sig-detail-value">${sig.messageHex ? truncateHex(sig.messageHex, 10) : "..."}</div>
     </div>
     <div class="sig-detail-row">
-      <div class="sig-detail-label">Schnorr Signature</div>
+      <div class="sig-detail-label">SIG_ALL Signature</div>
       <div class="sig-detail-value">${sig.signatureHex ? truncateHex(sig.signatureHex, 10) : "..."}</div>
     </div>
     <div class="sig-detail-row">
       <div class="sig-detail-label">Tweaked Public Key</div>
       <div class="sig-detail-value">${sig.tweakedPubHex ? truncateHex(sig.tweakedPubHex, 10) : "..."}</div>
     </div>
-    <div class="sig-verified">Verified</div>
+    <div class="sig-verified">SIG_ALL verified \u2014 atomic input/output commitment</div>
   `;
 }
 

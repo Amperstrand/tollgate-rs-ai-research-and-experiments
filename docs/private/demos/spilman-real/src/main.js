@@ -17,12 +17,12 @@ function propagateCloseToAlice(closeResult) {
 }
 
 const EDU = {
-  initial: "Tokens never move between parties. Only the signature that determines who can claim them changes. Click a step to begin.",
-  open: "Alice and Charlie shake hands. They agree on channel terms and both compute the same channel secret using ECDH (Elliptic Curve Diffie-Hellman). This shared secret seeds all deterministic derivations in the channel.",
-  fund: "Alice locks 100 sat of Cashu proofs into the channel vault. These proofs cannot be spent by anyone until the channel closes. They become the immutable contents of the vault.",
-  pay1: "Alice does not send tokens. She creates a new Schnorr signature that says 'Charlie can now claim 10 sat from the vault.' This signature replaces any previous one. The old one becomes invalid.",
-  pay2: "Alice creates another signature: 'Charlie can now claim 30 sat total.' The previous 10-sat signature is now INVALID. Only the latest signature counts. This is the core mechanism of Spilman channels.",
-  close: "Charlie takes his 30 sat and Alice gets 69 sat back (1 sat mint fee). The vault is emptied via a mint swap. Both receive fresh proofs they can spend freely outside the channel.",
+  initial: "Alice locks ecash in a 2-of-2 multisig: both parties must agree to spend, or Alice can reclaim after a timeout. Each payment is a commitment swap signed with SIG_ALL.",
+  open: "Alice and Charlie perform ECDH to derive a shared channel secret. This secret seeds all deterministic derivations — both parties will compute identical outputs for any balance split.",
+  fund: "Alice locks 100 sat in a funding token with spending condition: (Alice AND Charlie) OR (Alice after expiry). The proofs are now locked — neither party can spend them alone.",
+  pay1: "Alice signs a commitment swap: spend the funding token, create 10 sat for Charlie and 90 sat for Alice. Her SIG_ALL signature commits to the exact inputs AND outputs. Charlie can only submit this exact swap to the mint — nothing more.",
+  pay2: "Another commitment swap: 30 sat for Charlie, 70 sat for Alice. The previous swap is now SUPERSEDED. Only the latest signed swap is valid. Charlie stores this and discards the old one.",
+  close: "Charlie submits the latest commitment swap to the mint. The funding token is spent atomically: Charlie gets 30 sat in fresh proofs, Alice gets 69 sat (1 sat mint fee). Channel settled.",
 };
 
 function interceptMintRequests() {
@@ -265,7 +265,7 @@ document.getElementById("send-custom-payment-btn")?.addEventListener("click", ()
     updateSignaturePanel(alice);
     debugLog(`Custom payment: ${amount} sat sent`);
 
-    const eduText = `Alice created a new signature: 'Charlie can now claim ${alice.channel.balanceToReceiver} sat total.' The previous signature is now INVALID. Only the latest one counts.`;
+    const eduText = `Alice signed a new commitment swap: spend the funding token, create ${alice.channel.balanceToReceiver} sat for Charlie and ${alice.channel.capacity - alice.channel.balanceToReceiver} sat for Alice. The previous swap is now SUPERSEDED. Only the latest SIG_ALL commitment counts.`;
     setEducationText(eduText);
   } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
 });

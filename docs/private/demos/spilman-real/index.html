@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cashu Spilman Channel — Vault &amp; Signature Demo</title>
+    <title>Cashu Spilman Channel — Commitment Swap Demo</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
         <div class="header-left">
             <div class="header-lock"></div>
             <h1>Spilman Channel</h1>
-            <span class="header-subtitle">Vault &amp; Signature Visualization</span>
+            <span class="header-subtitle">Commitment Swap Visualization</span>
         </div>
         <div class="header-right">
             <div id="mint-url-display" class="mint-badge">Mint: https://testnut.cashu.exchange</div>
@@ -29,16 +29,16 @@
             <div class="flow-arrow-wrap" id="arrow-alice-vault">
                 <div class="flow-arrow-line"></div>
                 <div class="flow-arrow-head"></div>
-                <div class="flow-arrow-text">signature</div>
+                <div class="flow-arrow-text">SIG_ALL</div>
             </div>
-            <div class="flow-node node-vault" id="flow-vault">
-                <div class="flow-vault-icon"></div>
-                <div class="flow-label">Vault</div>
+            <div class="flow-node node-lock" id="flow-vault">
+                <div class="flow-lock-icon"></div>
+                <div class="flow-label">Funding Lock</div>
             </div>
             <div class="flow-arrow-wrap" id="arrow-vault-mint">
                 <div class="flow-arrow-line"></div>
                 <div class="flow-arrow-head"></div>
-                <div class="flow-arrow-text">swap</div>
+                <div class="flow-arrow-text">settle</div>
             </div>
             <div class="flow-node node-mint" id="flow-mint">
                 <div class="flow-mint-icon"></div>
@@ -128,45 +128,54 @@
                     <div class="step-dot" data-step="5"><span>Close</span></div>
                 </div>
 
-                <div class="vault-container" id="vault-container">
-                    <div class="vault-header-row">
-                        <div class="vault-lock-icon"></div>
-                        <span class="vault-title-text">CHANNEL VAULT</span>
-                        <div class="vault-lock-icon"></div>
-                    </div>
-                    <div class="vault-body">
-                        <div class="vault-tokens" id="vault-tokens">
-                            <div class="vault-empty-msg">Awaiting funding proofs...</div>
+                <div class="lock-container" id="vault-container">
+                    <div class="lock-header-row">
+                        <div class="lock-icon-pair">
+                            <div class="lock-icon-lock"></div>
+                            <div class="lock-icon-clock"></div>
                         </div>
-                        <div class="vault-split-bar">
-                            <div class="vault-split-alice" id="vault-split-alice" style="width: 100%"></div>
-                            <div class="vault-split-charlie" id="vault-split-charlie" style="width: 0%"></div>
-                        </div>
-                        <div class="vault-split-labels">
-                            <span class="vault-label-alice" id="vault-label-alice">100 sat (Alice)</span>
-                            <span class="vault-label-charlie" id="vault-label-charlie">0 sat (Charlie)</span>
+                        <span class="lock-title-text">FUNDING LOCK</span>
+                        <div class="lock-icon-pair">
+                            <div class="lock-icon-lock"></div>
+                            <div class="lock-icon-clock"></div>
                         </div>
                     </div>
-                    <div class="vault-footer" id="vault-status-text">
-                        Not yet funded
+                    <div class="lock-spending-condition" id="lock-spending-condition">
+                        (Alice + Charlie) OR (Alice after expiry)
+                    </div>
+                    <div class="lock-body">
+                        <div class="lock-tokens" id="vault-tokens">
+                            <div class="lock-empty-msg">Awaiting funding proofs...</div>
+                        </div>
+                        <div class="lock-split-bar">
+                            <div class="lock-split-alice" id="vault-split-alice" style="width: 100%"></div>
+                            <div class="lock-split-charlie" id="vault-split-charlie" style="width: 0%"></div>
+                        </div>
+                        <div class="lock-split-labels">
+                            <span class="lock-label-alice" id="vault-label-alice">100 sat (Alice)</span>
+                            <span class="lock-label-charlie" id="vault-label-charlie">0 sat (Charlie)</span>
+                        </div>
+                    </div>
+                    <div class="lock-footer" id="vault-status-text">
+                        No funding token yet
                     </div>
                 </div>
 
                 <div class="signature-card active-sig" id="signature-active">
                     <div class="sig-card-header">
                         <div class="sig-pen-icon"></div>
-                        <span class="sig-card-title">Active Signature</span>
-                        <span class="sig-only-valid">ONLY VALID</span>
+                        <span class="sig-card-title">Commitment Transaction</span>
+                        <span class="sig-only-valid">SIG_ALL</span>
                     </div>
                     <div class="sig-card-body" id="sig-content">
-                        <div class="sig-empty">No signature yet. Fund the channel to begin.</div>
+                        <div class="sig-empty">No commitment yet. Fund the channel to begin.</div>
                     </div>
                 </div>
 
                 <div class="signature-history" id="signature-history">
-                    <div class="sig-history-title">Previous Signatures</div>
+                    <div class="sig-history-title">Superseded Commitments</div>
                     <div class="sig-history-list" id="sig-history-list">
-                        <div class="sig-history-empty">No previous signatures</div>
+                        <div class="sig-history-empty">No previous commitments</div>
                     </div>
                 </div>
 
@@ -174,7 +183,7 @@
                     <div class="edu-icon"></div>
                     <div class="edu-content">
                         <div class="edu-title">How Spilman Channels Work</div>
-                        <p id="edu-text">Tokens never move between parties. Only the signature that determines who can claim them changes. Click a step to begin.</p>
+                        <p id="edu-text">Alice locks ecash in a 2-of-2 multisig: both parties must agree to spend, or Alice can reclaim after a timeout. Each payment is a commitment swap signed with SIG_ALL. Click a step to begin.</p>
                     </div>
                 </div>
 
