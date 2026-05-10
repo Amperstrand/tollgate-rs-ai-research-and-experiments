@@ -14,6 +14,7 @@ function propagateCloseToAlice(closeResult) {
   if (!alice.channel) return;
   alice.channel.status = "CLOSED";
   alice.channel.aliceRefundProofs = closeResult.aliceRefundProofs;
+  alice.proofs = closeResult.aliceRefundProofs;
 }
 
 const EDU = {

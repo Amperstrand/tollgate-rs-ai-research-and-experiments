@@ -205,9 +205,9 @@ test.describe("Spilman Real Crypto Demo — Full Lifecycle E2E", () => {
     expect(displayed.debug).toContain("Phase 2: Funding channel");
     expect(displayed.debug).toContain("Channel funded");
 
-    // Alice has funding proofs
+    // Alice has refund proofs after cooperative close (100 - 30 - 1 fee = 69)
     expect(state.alice.proofsCount).toBeGreaterThan(0);
-    expect(state.alice.proofsTotal).toBe(100);
+    expect(state.alice.proofsTotal).toBe(69);
 
     // Each proof has required fields
     for (const proof of state.alice.proofs) {
