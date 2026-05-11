@@ -6,6 +6,8 @@ import {
   setEducationText, highlightFlowArrow, highlightFlowNodes,
   updatePaymentPreview, setCustomPaymentEnabled,
 } from "./ui.js";
+import { runTestVectors } from "./test-vectors.js";
+import { runCdkVectors } from "./test-vectors-cdk.js";
 
 let alice;
 let charlie;
@@ -146,7 +148,15 @@ async function runFullLifecycle() {
 }
 
 window.runVectors = async function () {
-  return { pass: true, mismatches: [], note: "Test vector validation not yet implemented" };
+  const result = await runTestVectors();
+  console.log("Test vector validation:", result);
+  if (result.failures.length > 0) {
+    console.error("Failures:");
+    for (const f of result.failures) {
+      console.error(`  ${f.check}: expected ${f.expected?.slice(0, 32)}... got ${f.actual?.slice(0, 32)}...`);
+    }
+  }
+  return result;
 };
 
 document.getElementById("run-lifecycle-btn")?.addEventListener("click", runFullLifecycle);
@@ -276,6 +286,18 @@ document.getElementById("send-custom-payment-btn")?.addEventListener("click", ()
     setEducationText(eduText);
   } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
 });
+
+window.runCdkVectors = async function () {
+  const result = await runCdkVectors();
+  console.log("cdk-wasm test vector validation:", result);
+  if (result.failures.length > 0) {
+    console.error("Failures:");
+    for (const f of result.failures) {
+      console.error(`  ${f.check}: expected ${f.expected}... got ${f.actual}...`);
+    }
+  }
+  return result;
+};
 
 interceptMintRequests();
 init();

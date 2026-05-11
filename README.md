@@ -79,7 +79,7 @@ Our goal: get a working Cashu Spilman channel running in a browser, in a simple 
 
 Sources:
 - [1] [SatsAndSports/cashu_spilman_channels/examples](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples) — Reference implementations in Rust (Axum), TypeScript (Express), Python (Flask), and Go. Each runs a "pay-per-character ASCII art" server where a client opens a Spilman channel and pays per request. These are the closest existing demos to ours.
-- [2] [cashubtc/cashu-ts](https://github.com/cashubtc/cashu-ts) — Official TypeScript Cashu wallet library. Does not yet support Spilman channels (as of v4.2.1). Our demo reimplements the channel crypto from scratch using `@noble/curves` and `@noble/hashes`, with the goal of eventually upstreaming Spilman support into cashu-ts.
+- [2] [cashubtc/cashu-ts](https://github.com/cashubtc/cashu-ts) — Official TypeScript Cashu wallet library. Does not yet support Spilman channels (as of v4.2.1). Our demo reimplements the channel crypto from scratch using `@noble/curves` and `@noble/hashes`, with the goal of eventually upstreaming Spilman support into cashu-ts. Strategy documented in [ADR-0005](docs/private/adr/0005-native-cashu-ts-spilman-strategy.md): three phases from hand-rolled crypto -> cdk-wasm bridge -> native cashu-ts module.
 
 **What we copied, what we changed**:
 - **Crypto functions**: Translated from Rust (`cdk-spilman/src/params.rs`) to JavaScript. Same algorithms, same test vectors. Key difference: we use `@noble/curves` for secp256k1 instead of the `secp256k1` Rust crate.

@@ -283,10 +283,17 @@ async fn capture_spilman_test_vectors() {
     let funding_blind_signatures: Vec<serde_json::Value> = blind_signatures_array
         .iter()
         .map(|sig| {
-            serde_json::json!({
+            // Include all fields needed by WASM construct_proofs:
+            // amount, C_, id, and dleq (required for Spilman channels)
+            let mut obj = serde_json::json!({
                 "amount": sig["amount"],
-                "C_": sig["C_"]
-            })
+                "C_": sig["C_"],
+                "id": sig["id"],
+            });
+            if let Some(dleq) = sig.get("dleq") {
+                obj["dleq"] = dleq.clone();
+            }
+            obj
         })
         .collect();
 
@@ -412,6 +419,9 @@ async fn capture_spilman_test_vectors() {
         "charlie_pubkey_hex": charlie_pubkey_hex,
         "ecdh_shared_secret_hex": ecdh_shared_secret_hex,
         "channel_secret_hex": channel_secret_hex,
+        "params_json": params_json,
+        "keyset_info_json": keyset_info_json,
+        "funding_proofs_json": funding_proofs_json,
         "channel_id_hex": channel_id_hex,
         "keyset_id": keyset_id,
         "keyset_input_fee_ppk": keyset_input_fee_ppk,
