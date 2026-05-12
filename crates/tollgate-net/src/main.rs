@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use tollgate_net::{cdk_wallet, client, mock, server};
+use tollgate_net::{cdk_wallet, client, mock, server, v1};
 
 #[cfg(feature = "spilman")]
 use {cashu::nuts::SecretKey, tollgate_net::spilman_service::SpilmanService};
@@ -59,9 +59,40 @@ enum Commands {
         #[arg(long, default_value = "false")]
         no_close: bool,
     },
+    /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
+    V1Client {
+        /// Gateway IP of the upstream TollGate
+        #[arg(long)]
+        gateway: String,
+        /// MAC address of our interface (device-identifier)
+        #[arg(long, default_value = "00:00:00:00:00:00")]
+        mac: String,
+        /// Mint URL (must match an accepted mint on the upstream TollGate)
+        #[arg(long, default_value = "https://testnut.cashu.exchange")]
+        mint_url: String,
+        /// Currency unit
+        #[arg(long, default_value = "sat")]
+        unit: String,
+        /// Preferred allotment (milliseconds for time, bytes for data)
+        #[arg(long, default_value = "60000")]
+        preferred_allotment: u64,
+        /// Usage polling interval in seconds
+        #[arg(long, default_value = "1")]
+        poll_interval: u64,
+        /// Renewal threshold (0.0–1.0, renew when usage reaches this fraction)
+        #[arg(long, default_value = "0.8")]
+        renewal_threshold: f64,
+        /// Max price per millisecond (0 = no limit)
+        #[arg(long, default_value = "0.01")]
+        max_price_per_ms: f64,
+        /// Max price per byte (0 = no limit)
+        #[arg(long, default_value = "0.0001")]
+        max_price_per_byte: f64,
+    },
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter("tollgate_net=info,tollgate_core=info")
@@ -149,5 +180,40 @@ async fn main() {
                 .await;
             }
         },
+        Commands::V1Client {
+            gateway,
+            mac,
+            mint_url,
+            unit,
+            preferred_allotment,
+            poll_interval,
+            renewal_threshold,
+            max_price_per_ms,
+            max_price_per_byte,
+        } => {
+            let wallet = Arc::new(
+                cdk_wallet::CdkWallet::new(&mint_url, [3u8; 64])
+                    .await
+                    .expect("failed to create CDK wallet"),
+            );
+
+            let config = v1::V1ClientConfig {
+                gateway_ip: gateway,
+                mac_address: mac,
+                our_mint_urls: vec![mint_url],
+                unit,
+                max_price_per_ms,
+                max_price_per_byte,
+                preferred_allotment,
+                poll_interval_secs: poll_interval,
+                renewal_threshold,
+            };
+
+            let mut client = v1::V1Client::<cdk_wallet::CdkWallet>::new(config);
+            if let Err(e) = client.run(wallet).await {
+                tracing::error!("v1 client failed: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 }
