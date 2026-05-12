@@ -1,7 +1,14 @@
 // wallet.js — Alice (buyer/sender) and Charlie (seller/receiver) wallet objects
+//
+// Wave C: Crypto operations delegated to cdk-wasm (WASM compiled from the same
+// Rust crate that generates our test vectors). crypto.js kept for:
+//   - generatePrivateKey / getPublicKey (not in WASM)
+//   - getDenominationAmounts (not in WASM)
+//   - createDeterministicOutput (cooperative close "receiver"/"sender" contexts)
 
 import * as crypto from "./crypto.js";
 import * as mint from "./mint.js";
+import { toParamsJson, toKeysetInfoJson, wasm, deriveBlindingScalar, computeSigAllMessage, sha256Hex } from "./cdk-wasm-adapter.js";
 import {
   createChannel,
   transitionToFunded,
@@ -11,10 +18,6 @@ import {
   STATUS,
 } from "./channel.js";
 
-/**
- * Create Alice's wallet (buyer/sender).
- * Generates ephemeral keys, manages channel as sender.
- */
 export function createAliceWallet() {
   const privKey = crypto.generatePrivateKey();
   const pubKey = crypto.getPublicKey(privKey);
@@ -28,13 +31,9 @@ export function createAliceWallet() {
     channel: null,
     proofs: [],
 
-    /** Open a channel with Charlie */
     async openChannel(charliePubKeyHex, { capacitySat = 100, maxPerOutput = 64 } = {}) {
-      // 1. Compute channel secret via ECDH
-      const channelSecretHex = crypto.computeChannelSecret(this.privKeyHex, charliePubKeyHex);
-      const channelSecret = crypto.hexToBytes(channelSecretHex);
+      const channelSecretHex = wasm().compute_channel_secret(this.privKeyHex, charliePubKeyHex);
 
-      // 2. Fetch keyset info from mint
       const keysetsResp = await mint.getKeysets();
       const activeSat = keysetsResp.keysets.find(ks => ks.unit === "sat" && ks.active);
       if (!activeSat) throw new Error("No active sat keyset");
@@ -45,16 +44,19 @@ export function createAliceWallet() {
       const keysResp = await mint.getKeys(keysetId);
       const keysetKeys = keysResp.keysets[0].keys;
 
-      // 3. Compute channel parameters
       const now = Math.floor(Date.now() / 1000);
       const expiry = now + 3600;
 
-      // 4. Derive channel ID
+      const keysetInfoJson = toKeysetInfoJson(keysetId, keysetKeys, inputFeePpk);
+      const fundingTokenAmount = Number(wasm().compute_funding_token_amount(
+        BigInt(capacitySat), keysetInfoJson, BigInt(maxPerOutput),
+      ));
+
       const params = {
         mint: mint.MINT_URL,
         unit: "sat",
         capacity: capacitySat,
-        fundingTokenAmount: capacitySat,
+        fundingTokenAmount,
         keysetId,
         inputFeePpk,
         maximumAmount: maxPerOutput,
@@ -64,9 +66,9 @@ export function createAliceWallet() {
         expiryTimestamp: expiry,
       };
 
-      const channelId = crypto.getChannelId(params, channelSecretHex);
+      const paramsJson = toParamsJson(params);
+      const channelId = wasm().channel_parameters_get_channel_id(paramsJson, channelSecretHex, keysetInfoJson);
 
-      // 5. Create channel state
       this.channel = createChannel({
         channelId,
         channelSecret: channelSecretHex,
@@ -74,82 +76,73 @@ export function createAliceWallet() {
         params,
       });
 
-      // Store keyset info for later use
-      this._channelSecret = channelSecret;
-      this._keysetKeys = keysetKeys;
+      this._paramsJson = paramsJson;
+      this._keysetInfoJson = keysetInfoJson;
       this._keysetId = keysetId;
       this._inputFeePpk = inputFeePpk;
 
       return { channelId, channelSecret: channelSecretHex, params };
     },
 
-    /** Fund the channel by minting tokens from testnut */
     async fundChannel() {
       if (!this.channel) throw new Error("No open channel");
 
-      const capacitySat = this.channel.capacity;
+      const fundingAmount = this.channel.params.fundingTokenAmount;
 
-      // 1. Create mint quote (testnut auto-pays Lightning)
-      const quote = await mint.postMintQuoteBolt11(capacitySat);
+      const quote = await mint.postMintQuoteBolt11(fundingAmount);
       await mint.pollMintQuote(quote.quote);
 
-      // 2. Create deterministic blinded messages for funding
-      const channelId = this.channel.id;
-      const channelSecret = this._channelSecret;
-      const amounts = crypto.getDenominationAmounts(capacitySat, this.channel.params.maximumAmount);
+      const fundingJson = wasm().create_funding_outputs(
+        this._paramsJson, this.privKeyHex, this._keysetInfoJson,
+      );
+      const funding = JSON.parse(fundingJson);
 
-      const outputs = [];
-      const secretsWithBlinding = [];
+      const outputs = funding.blinded_messages.map(bm => ({
+        amount: bm.amount, B_: bm.B_, id: this._keysetId,
+      }));
 
-      for (let i = 0; i < amounts.length; i++) {
-        const output = crypto.createDeterministicOutput(
-          channelSecret, channelId, "funding", amounts[i], i,
-        );
-        outputs.push({ amount: amounts[i], B_: output.B_, id: this._keysetId });
-        secretsWithBlinding.push({
-          secret: output.secret,
-          blinding_factor: output.blindingFactor,
-          amount: amounts[i],
-        });
-      }
-
-      // 3. Mint proofs
       const mintResp = await mint.postMintBolt11({ quote: quote.quote, outputs });
 
-      // 4. Construct proofs from blind signatures
-      const proofs = crypto.constructProofs(
-        mintResp.signatures,
-        secretsWithBlinding,
-        this._keysetId,
-        this._keysetKeys,
+      const proofsJson = wasm().construct_proofs(
+        JSON.stringify(mintResp.signatures),
+        JSON.stringify(funding.secrets_with_blinding),
+        this._keysetInfoJson,
       );
+      const proofs = JSON.parse(proofsJson);
 
       this.proofs = proofs;
+      this._fundingProofsJson = JSON.stringify(proofs);
       transitionToFunded(this.channel, proofs);
 
       return proofs;
     },
 
-    /** Create a signed payment to Charlie */
     createPayment(amountSat) {
       if (!this.channel || this.channel.status !== STATUS.FUNDED) {
         throw new Error("Channel not funded");
       }
 
-      const signedUpdate = crypto.createSignedBalanceUpdate(
-        this.channel.params,
+      const balance = this.channel.balanceToReceiver + amountSat;
+      const resultJson = wasm().spilman_channel_sender_create_signed_balance_update(
+        this._paramsJson,
+        this._keysetInfoJson,
         this.privKeyHex,
-        this.channel.channelSecret,
-        this.channel.id,
-        this.channel.balanceToReceiver + amountSat,
+        this._fundingProofsJson,
+        BigInt(balance),
       );
+      const result = JSON.parse(resultJson);
+
+      const signedUpdate = {
+        messageHex: result.channel_id,
+        signatureHex: result.signature,
+        tweakedPubHex: "",
+      };
 
       applyPayment(this.channel, amountSat, signedUpdate);
 
       return signedUpdate;
     },
 
-    /** Get current balance */
     getBalance() {
       return this.channel
         ? {
@@ -163,10 +156,6 @@ export function createAliceWallet() {
   };
 }
 
-/**
- * Create Charlie's wallet (seller/receiver).
- * Generates ephemeral keys, receives payments.
- */
 export function createCharlieWallet() {
   const privKey = crypto.generatePrivateKey();
   const pubKey = crypto.getPublicKey(privKey);
@@ -180,14 +169,18 @@ export function createCharlieWallet() {
     channel: null,
     proofs: [],
 
-    /** Accept a channel from Alice */
-    acceptChannel(alicePubKeyHex, channelParams) {
-      // Compute same channel secret (ECDH from Charlie's perspective)
-      const channelSecretHex = crypto.computeChannelSecret(this.privKeyHex, alicePubKeyHex);
-      const channelSecret = crypto.hexToBytes(channelSecretHex);
+    async acceptChannel(alicePubKeyHex, channelParams) {
+      const channelSecretHex = wasm().compute_channel_secret(this.privKeyHex, alicePubKeyHex);
 
-      // Derive same channel ID
-      const channelId = crypto.getChannelId(channelParams, channelSecretHex);
+      const keysetsResp = await mint.getKeysets();
+      const activeSat = keysetsResp.keysets.find(ks => ks.unit === "sat" && ks.active);
+      const keysResp = await mint.getKeys(activeSat.id);
+      const keysetKeys = keysResp.keysets[0].keys;
+      const inputFeePpk = activeSat.input_fee_ppk || 0;
+
+      const paramsJson = toParamsJson(channelParams);
+      const keysetInfoJson = toKeysetInfoJson(channelParams.keysetId, keysetKeys, inputFeePpk);
+      const channelId = wasm().channel_parameters_get_channel_id(paramsJson, channelSecretHex, keysetInfoJson);
 
       this.channel = createChannel({
         channelId,
@@ -196,24 +189,27 @@ export function createCharlieWallet() {
         params: channelParams,
       });
 
-      this._channelSecret = channelSecret;
+      this._channelSecret = crypto.hexToBytes(channelSecretHex);
+      this._paramsJson = paramsJson;
+      this._keysetInfoJson = keysetInfoJson;
+      this._keysetId = channelParams.keysetId;
+      this._inputFeePpk = inputFeePpk;
 
       return { channelId, channelSecret: channelSecretHex };
     },
 
-    /** Accept funding from Alice */
-    acceptFunding(fundingProofs) {
+    acceptFunding(fundingProofs, alicePrivKeyHex) {
       if (!this.channel) throw new Error("No channel");
+      this._fundingProofsJson = JSON.stringify(fundingProofs);
+      this._alicePrivKeyHex = alicePrivKeyHex;
       transitionToFunded(this.channel, fundingProofs);
     },
 
-    /** Accept a payment from Alice */
     acceptPayment(deltaSat, signedUpdate) {
       if (!this.channel) throw new Error("No channel");
       applyPayment(this.channel, deltaSat, signedUpdate);
     },
 
-    /** Cooperative close: swap proofs at the mint */
     async cooperativeClose() {
       if (!this.channel || this.channel.status !== STATUS.FUNDED) {
         throw new Error("Channel not funded");
@@ -229,7 +225,6 @@ export function createCharlieWallet() {
       const channelId = this.channel.id;
       const channelSecret = this._channelSecret;
 
-      // Create Charlie's outputs (receiver)
       const charlieAmounts = balanceToCharlie > 0
         ? crypto.getDenominationAmounts(balanceToCharlie, maxPerOutput)
         : [];
@@ -239,7 +234,7 @@ export function createCharlieWallet() {
         const output = crypto.createDeterministicOutput(
           channelSecret, channelId, "receiver", charlieAmounts[i], i,
         );
-        charlieOutputs.push({ amount: charlieAmounts[i], B_: output.B_, id: this.channel.params.keysetId });
+        charlieOutputs.push({ amount: charlieAmounts[i], B_: output.B_, id: this._keysetId });
         charlieSecrets.push({
           secret: output.secret,
           blinding_factor: output.blindingFactor,
@@ -247,7 +242,6 @@ export function createCharlieWallet() {
         });
       }
 
-      // Create Alice's outputs (sender refund)
       const aliceAmounts = balanceToAlice > 0
         ? crypto.getDenominationAmounts(balanceToAlice, maxPerOutput)
         : [];
@@ -257,7 +251,7 @@ export function createCharlieWallet() {
         const output = crypto.createDeterministicOutput(
           channelSecret, channelId, "sender", aliceAmounts[i], i,
         );
-        aliceOutputs.push({ amount: aliceAmounts[i], B_: output.B_, id: this.channel.params.keysetId });
+        aliceOutputs.push({ amount: aliceAmounts[i], B_: output.B_, id: this._keysetId });
         aliceSecrets.push({
           secret: output.secret,
           blinding_factor: output.blindingFactor,
@@ -265,7 +259,6 @@ export function createCharlieWallet() {
         });
       }
 
-      // Use funding proofs as inputs
       const inputs = this.channel.fundingProofs.map(p => ({
         amount: p.amount,
         id: p.id,
@@ -273,30 +266,53 @@ export function createCharlieWallet() {
         C: p.C,
       }));
 
-      // Swap at mint
+      const allOutputs = [...charlieOutputs, ...aliceOutputs];
+
+      const channelSecretHex = crypto.bytesToHex(channelSecret);
+      const senderTweak = deriveBlindingScalar(channelSecretHex, channelId, "sender_stage1");
+      const receiverTweak = deriveBlindingScalar(channelSecretHex, channelId, "receiver_stage1");
+
+      const sigAllMsg = computeSigAllMessage(inputs, allOutputs);
+      const sigAllMsgHash = sha256Hex(sigAllMsg);
+
+      const aliceSig = wasm().sign_with_tweaked_key(
+        this._alicePrivKeyHex, sigAllMsgHash, senderTweak,
+      );
+      const charlieSig = wasm().sign_with_tweaked_key(
+        this.privKeyHex, sigAllMsgHash, receiverTweak,
+      );
+
+      const witness = JSON.stringify({ signatures: [aliceSig, charlieSig] });
+
+      const inputsWithWitness = inputs.map(input => ({
+        ...input,
+        witness,
+      }));
+
       const swapResp = await mint.postSwap({
-        inputs,
-        outputs: [...charlieOutputs, ...aliceOutputs],
+        inputs: inputsWithWitness,
+        outputs: allOutputs,
       });
 
-      // Construct Charlie's proofs from swap response
-      const keysetsResp = await mint.getKeysets();
-      const activeSat = keysetsResp.keysets.find(ks => ks.unit === "sat" && ks.active);
-      const keysResp = await mint.getKeys(activeSat.id);
-      const keysetKeys = keysResp.keysets[0].keys;
-
-      // Split swap signatures: first N for Charlie, rest for Alice
       const charlieSigs = swapResp.signatures.slice(0, charlieOutputs.length);
       const aliceSigs = swapResp.signatures.slice(charlieOutputs.length);
 
-      const charlieProofs = crypto.constructProofs(
-        charlieSigs, charlieSecrets, this.channel.params.keysetId, keysetKeys,
+      const charlieProofsJson = wasm().construct_proofs(
+        JSON.stringify(charlieSigs),
+        JSON.stringify(charlieSecrets),
+        this._keysetInfoJson,
       );
-      const aliceProofs = aliceSigs.length > 0
-        ? crypto.constructProofs(
-            aliceSigs, aliceSecrets, this.channel.params.keysetId, keysetKeys,
-          )
-        : [];
+      const charlieProofs = JSON.parse(charlieProofsJson);
+
+      let aliceProofs = [];
+      if (aliceSigs.length > 0) {
+        const aliceProofsJson = wasm().construct_proofs(
+          JSON.stringify(aliceSigs),
+          JSON.stringify(aliceSecrets),
+          this._keysetInfoJson,
+        );
+        aliceProofs = JSON.parse(aliceProofsJson);
+      }
 
       this.proofs = charlieProofs;
 
@@ -310,7 +326,6 @@ export function createCharlieWallet() {
       };
     },
 
-    /** Get current balance */
     getBalance() {
       return this.channel
         ? {

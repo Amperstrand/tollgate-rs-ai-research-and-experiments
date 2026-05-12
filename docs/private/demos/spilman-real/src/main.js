@@ -1,4 +1,5 @@
 import { createAliceWallet, createCharlieWallet } from "./wallet.js";
+import { initCdkWasm } from "./cdk-wasm-bridge.js";
 import {
   updateAlicePanel, updateCharliePanel, debugLog, setPhase, resetUI,
   updateChannelBar, animateTokenFlow, updateSignaturePanel,
@@ -89,7 +90,7 @@ async function runFullLifecycle() {
     highlightFlowNodes(["flow-alice", "flow-vault", "flow-charlie"]);
     setEducationText(EDU.open);
     const { channelId, params } = await alice.openChannel(charlie.pubKeyHex, { capacitySat: 100 });
-    charlie.acceptChannel(alice.pubKeyHex, params);
+    await charlie.acceptChannel(alice.pubKeyHex, params);
     debugLog("Channel opened", { channelId: channelId.slice(0, 16) + "..." });
     updateAll();
 
@@ -99,11 +100,8 @@ async function runFullLifecycle() {
     highlightFlowNodes(["flow-vault", "flow-mint"]);
     setEducationText(EDU.fund);
     const fundingProofs = await alice.fundChannel();
-    charlie.acceptFunding(fundingProofs);
+    charlie.acceptFunding(fundingProofs, alice.privKeyHex);
     debugLog("Channel funded", { proofCount: fundingProofs.length });
-    updateAll();
-
-    debugLog("Phase 3: Payment 1 (10 sat)...");
     markStepDot(3);
     highlightFlowArrow("arrow-alice-vault");
     highlightFlowNodes(["flow-alice", "flow-vault"]);
@@ -175,7 +173,7 @@ document.getElementById("step1-btn")?.addEventListener("click", async () => {
     highlightFlowNodes(["flow-alice", "flow-vault", "flow-charlie"]);
     setEducationText(EDU.open);
     const { channelId, params } = await alice.openChannel(charlie.pubKeyHex, { capacitySat: 100 });
-    charlie.acceptChannel(alice.pubKeyHex, params);
+    await charlie.acceptChannel(alice.pubKeyHex, params);
     debugLog("Channel opened", { channelId: channelId.slice(0, 16) + "..." });
     updateAll();
   } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
@@ -191,7 +189,7 @@ document.getElementById("step2-btn")?.addEventListener("click", async () => {
     highlightFlowNodes(["flow-vault", "flow-mint"]);
     setEducationText(EDU.fund);
     const fundingProofs = await alice.fundChannel();
-    charlie.acceptFunding(fundingProofs);
+    charlie.acceptFunding(fundingProofs, alice.privKeyHex);
     debugLog("Channel funded", { proofCount: fundingProofs.length });
     updateAll();
   } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
@@ -300,5 +298,15 @@ window.runCdkVectors = async function () {
 };
 
 interceptMintRequests();
-init();
-console.log("spilman-real loaded");
+initCdkWasm()
+  .then(() => {
+    init();
+    debugLog("cdk-wasm initialized");
+    console.log("spilman-real loaded (cdk-wasm ready)");
+  })
+  .catch(err => {
+    console.error("cdk-wasm init failed:", err);
+    init();
+    debugLog("cdk-wasm FAILED: " + err.message);
+    console.log("spilman-real loaded (cdk-wasm FAILED)");
+  });

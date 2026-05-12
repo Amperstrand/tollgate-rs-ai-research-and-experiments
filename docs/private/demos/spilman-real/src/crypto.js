@@ -5,7 +5,7 @@ import { sha256 } from "https://esm.sh/@noble/hashes@1.7.1/sha256";
 import { bytesToHex, hexToBytes } from "https://esm.sh/@noble/hashes@1.7.1/utils";
 
 // Re-export hex utilities
-export { bytesToHex, hexToBytes };
+export { bytesToHex, hexToBytes, sha256 };
 export { schnorr };
 
 // ─── Key Generation ───────────────────────────────────────────────
