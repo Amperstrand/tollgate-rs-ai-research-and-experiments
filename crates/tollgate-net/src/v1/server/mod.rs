@@ -18,7 +18,10 @@ use tokio::sync::Mutex;
 use tollgate_core::wallet::Wallet;
 
 pub use mac_resolver::{DhcpLeasesResolver, MacResolveError, MacResolver, StubMacResolver};
-pub use merchant::{AllotmentError, build_advertisement, build_notice_event, build_session_event, calculate_allotment};
+pub use merchant::{
+    build_advertisement, build_notice_event, build_session_event, calculate_allotment,
+    AllotmentError,
+};
 pub use valve::{StubValve, Valve, ValveError};
 
 pub struct AcceptedMint {

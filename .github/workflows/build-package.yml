@@ -31,10 +31,10 @@ jobs:
           cat > matrix.json << 'EOF'
           {
             "include": [
-              { "compile_key": "arm64",            "target": "aarch64-unknown-linux-musl" },
-              { "compile_key": "armv7",            "target": "armv7-unknown-linux-musleabihf" },
-              { "compile_key": "mipsle-softfloat", "target": "mipsel-unknown-linux-gnu" },
-              { "compile_key": "mips-softfloat",   "target": "mips-unknown-linux-gnu" }
+              { "compile_key": "arm64",            "target": "aarch64-unknown-linux-musl",    "toolchain": "stable" },
+              { "compile_key": "armv7",            "target": "armv7-unknown-linux-musleabihf", "toolchain": "stable" },
+              { "compile_key": "mipsle-softfloat", "target": "mipsel-unknown-linux-gnu",       "toolchain": "nightly" },
+              { "compile_key": "mips-softfloat",   "target": "mips-unknown-linux-gnu",         "toolchain": "nightly" }
             ]
           }
           EOF
@@ -143,7 +143,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross

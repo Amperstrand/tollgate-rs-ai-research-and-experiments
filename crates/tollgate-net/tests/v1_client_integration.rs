@@ -38,10 +38,7 @@ async fn get_advertisement(State(state): State<Arc<Mutex<ServerState>>>) -> impl
             TagKind::Custom("metric".into()),
             ["milliseconds".to_owned()],
         ),
-        Tag::custom(
-            TagKind::Custom("step_size".into()),
-            ["60000".to_owned()],
-        ),
+        Tag::custom(TagKind::Custom("step_size".into()), ["60000".to_owned()]),
         Tag::custom(
             TagKind::Custom("price_per_step".into()),
             [
@@ -123,9 +120,7 @@ async fn start_mock_server(
     let base_url = format!("http://{addr}");
     let app = mock_app(state);
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("mock server error");
+        axum::serve(listener, app).await.expect("mock server error");
     });
     (base_url, handle)
 }
@@ -144,10 +139,7 @@ fn incompatible_mint_app(state: Arc<Mutex<ServerState>>) -> Router {
                         TagKind::Custom("metric".into()),
                         ["milliseconds".to_owned()],
                     ),
-                    Tag::custom(
-                        TagKind::Custom("step_size".into()),
-                        ["60000".to_owned()],
-                    ),
+                    Tag::custom(TagKind::Custom("step_size".into()), ["60000".to_owned()]),
                     Tag::custom(
                         TagKind::Custom("price_per_step".into()),
                         [
@@ -180,9 +172,7 @@ async fn start_incompatible_server(
     let base_url = format!("http://{addr}");
     let app = incompatible_mint_app(state);
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("mock server error");
+        axum::serve(listener, app).await.expect("mock server error");
     });
     (base_url, handle)
 }
@@ -200,7 +190,10 @@ async fn v1_client_connect_establishes_session() {
     assert!(result.is_ok(), "connect should succeed: {result:?}");
 
     let session = client.session();
-    assert!(session.is_some(), "session should be populated after connect");
+    assert!(
+        session.is_some(),
+        "session should be populated after connect"
+    );
     let s = session.unwrap();
     assert_eq!(s.metric, "milliseconds");
     assert_eq!(s.step_size, 60_000);
@@ -224,7 +217,10 @@ async fn v1_client_poll_usage_tracks_metrics() {
     let wallet = Arc::new(MockWallet::new(1000));
     let mut client = V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
 
-    client.connect(&wallet).await.expect("connect should succeed");
+    client
+        .connect(&wallet)
+        .await
+        .expect("connect should succeed");
 
     let (usage, allotment, needs_renewal) = client.poll_usage().await;
     // connect() calls fetch_usage() once (checking for existing session), then
@@ -249,7 +245,10 @@ async fn v1_client_renew_extends_session() {
     let wallet = Arc::new(MockWallet::new(1000));
     let mut client = V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
 
-    client.connect(&wallet).await.expect("connect should succeed");
+    client
+        .connect(&wallet)
+        .await
+        .expect("connect should succeed");
 
     let initial_allotment = client.session().unwrap().total_allotment;
     assert_eq!(initial_allotment, 60_000);

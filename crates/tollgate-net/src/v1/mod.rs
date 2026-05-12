@@ -8,7 +8,12 @@
 //! 5. Track usage via GET /usage polling
 //! 6. Auto-renew before exhaustion
 
-#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc, clippy::cast_precision_loss, clippy::cast_sign_loss)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
 
 pub mod http;
 pub mod nostr_events;
@@ -108,10 +113,7 @@ impl<W: Wallet> V1Client<W> {
     }
 
     /// Connect to the upstream TollGate: fetch ad, select pricing, pay.
-    pub async fn connect(
-        &mut self,
-        wallet: &Arc<W>,
-    ) -> Result<(), V1ClientError> {
+    pub async fn connect(&mut self, wallet: &Arc<W>) -> Result<(), V1ClientError> {
         // Step 1: Check for existing session via /usage
         let (usage, allotment) = self.http.fetch_usage().await?;
         if allotment > 0 {
@@ -198,7 +200,10 @@ impl<W: Wallet> V1Client<W> {
 
         // Step 6: Create token and send
         let token_bytes = wallet
-            .create_token(tollgate_core::types::Amount(payment_amount), &pricing.mint_url)
+            .create_token(
+                tollgate_core::types::Amount(payment_amount),
+                &pricing.mint_url,
+            )
             .await?;
         let token_str = String::from_utf8_lossy(&token_bytes).to_string();
 
@@ -246,10 +251,7 @@ impl<W: Wallet> V1Client<W> {
 
     /// Renew the session by making another payment.
     pub async fn renew(&mut self, wallet: &Arc<W>) -> Result<(), V1ClientError> {
-        let session = self
-            .session
-            .as_ref()
-            .ok_or(V1ClientError::NoSession)?;
+        let session = self.session.as_ref().ok_or(V1ClientError::NoSession)?;
 
         let step_size = session.step_size;
         let pricing = &session.selected_pricing;
@@ -275,7 +277,10 @@ impl<W: Wallet> V1Client<W> {
         tracing::info!(steps, payment_amount, "Renewing session");
 
         let token_bytes = wallet
-            .create_token(tollgate_core::types::Amount(payment_amount), &pricing.mint_url)
+            .create_token(
+                tollgate_core::types::Amount(payment_amount),
+                &pricing.mint_url,
+            )
             .await?;
         let token_str = String::from_utf8_lossy(&token_bytes).to_string();
 
@@ -292,10 +297,7 @@ impl<W: Wallet> V1Client<W> {
     }
 
     /// Run the client loop: connect, poll usage, auto-renew.
-    pub async fn run(
-        &mut self,
-        wallet: Arc<W>,
-    ) -> Result<(), V1ClientError> {
+    pub async fn run(&mut self, wallet: Arc<W>) -> Result<(), V1ClientError> {
         self.connect(&wallet).await?;
 
         let poll_interval = tokio::time::Duration::from_secs(self.config.poll_interval_secs);

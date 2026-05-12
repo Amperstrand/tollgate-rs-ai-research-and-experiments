@@ -15,10 +15,7 @@ pub fn build_advertisement(
     config: &V1ServerConfig,
 ) -> Result<String, nostr::event::builder::Error> {
     let mut tags: Vec<Tag> = vec![
-        Tag::custom(
-            TagKind::Custom("metric".into()),
-            [config.metric.clone()],
-        ),
+        Tag::custom(TagKind::Custom("metric".into()), [config.metric.clone()]),
         Tag::custom(
             TagKind::Custom("step_size".into()),
             [config.step_size.to_string()],
@@ -80,10 +77,7 @@ pub fn build_session_event(
             TagKind::Custom("allotment".into()),
             [session.allotment.to_string()],
         ),
-        Tag::custom(
-            TagKind::Custom("metric".into()),
-            [session.metric.clone()],
-        ),
+        Tag::custom(TagKind::Custom("metric".into()), [session.metric.clone()]),
         Tag::custom(
             TagKind::Custom("device-identifier".into()),
             ["mac".to_owned(), session.mac_address.clone()],

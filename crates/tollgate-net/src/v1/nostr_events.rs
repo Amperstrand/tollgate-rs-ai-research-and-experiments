@@ -60,7 +60,10 @@ impl TollGateAdvertisement {
                     price_per_step: items[2].parse().unwrap_or(0),
                     unit: items[3].clone(),
                     mint_url: items[4].clone(),
-                    min_steps: items.get(5).and_then(|s: &String| s.parse().ok()).unwrap_or(0),
+                    min_steps: items
+                        .get(5)
+                        .and_then(|s: &String| s.parse().ok())
+                        .unwrap_or(0),
                 });
             }
         }

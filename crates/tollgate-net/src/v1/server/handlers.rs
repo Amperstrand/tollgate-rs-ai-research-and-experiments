@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{ConnectInfo, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
@@ -37,7 +37,10 @@ pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
 fn json_response(status: StatusCode, body: String) -> Response {
     (
         status,
-        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )],
         body,
     )
         .into_response()
@@ -83,9 +86,7 @@ fn notice_response(
     }
 }
 
-async fn handle_get_details<W: Wallet>(
-    State(state): State<Arc<ServerState<W>>>,
-) -> Response {
+async fn handle_get_details<W: Wallet>(State(state): State<Arc<ServerState<W>>>) -> Response {
     cors_response(json_response(StatusCode::OK, state.advertisement.clone()))
 }
 
