@@ -59,6 +59,30 @@ enum Commands {
         #[arg(long, default_value = "false")]
         no_close: bool,
     },
+    /// Run as a v1 server (accepts Cashu token payments for network access)
+    V1Server {
+        /// Port to listen on (default: 2121)
+        #[arg(long, default_value = "2121")]
+        port: u16,
+        /// Metric type: "milliseconds" or "bytes"
+        #[arg(long, default_value = "milliseconds")]
+        metric: String,
+        /// Step size (e.g. 60000 for 1 minute when metric is milliseconds)
+        #[arg(long, default_value = "60000")]
+        step_size: u64,
+        /// Mint URL to accept
+        #[arg(long, default_value = "https://testnut.cashu.exchange")]
+        mint_url: String,
+        /// Price per step in sats
+        #[arg(long, default_value = "1")]
+        price_per_step: u64,
+        /// Minimum purchase steps
+        #[arg(long, default_value = "1")]
+        min_steps: u64,
+        /// Wallet backend
+        #[arg(long, default_value = "mock")]
+        wallet: WalletType,
+    },
     /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
     V1Client {
         /// Gateway IP of the upstream TollGate
@@ -180,6 +204,53 @@ async fn main() {
                 .await;
             }
         },
+        Commands::V1Server {
+            port,
+            metric,
+            step_size,
+            mint_url,
+            price_per_step,
+            min_steps,
+            wallet: wt,
+        } => {
+            let nostr_keys = nostr::prelude::Keys::generate();
+            let config = v1::server::V1ServerConfig {
+                metric,
+                step_size,
+                accepted_mints: vec![v1::server::AcceptedMint {
+                    url: mint_url.clone(),
+                    price_per_step,
+                    unit: "sat".to_owned(),
+                    min_steps,
+                }],
+                nostr_keys,
+                port,
+            };
+            let server = v1::server::V1Server::new(config);
+            match wt {
+                WalletType::Mock => {
+                    let wallet = Arc::new(mock::MockWallet::new(0));
+                    server.run(wallet).await;
+                }
+                WalletType::Cdk => {
+                    let wallet = Arc::new(
+                        cdk_wallet::CdkWallet::new(&mint_url, [4u8; 64])
+                            .await
+                            .expect("failed to create CDK wallet"),
+                    );
+                    server.run(wallet).await;
+                }
+                #[cfg(feature = "spilman")]
+                WalletType::Spilman => {
+                    let wallet = Arc::new(
+                        cdk_wallet::CdkWallet::new(&mint_url, [4u8; 64])
+                            .await
+                            .expect("failed to create CDK wallet"),
+                    );
+                    server.run(wallet).await;
+                }
+            }
+        }
         Commands::V1Client {
             gateway,
             mac,

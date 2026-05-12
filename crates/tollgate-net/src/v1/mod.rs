@@ -13,6 +13,7 @@
 pub mod http;
 pub mod nostr_events;
 pub mod pricing;
+pub mod server;
 
 use std::sync::Arc;
 
