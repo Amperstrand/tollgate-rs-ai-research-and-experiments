@@ -33,8 +33,8 @@ jobs:
             "include": [
               { "compile_key": "arm64",            "target": "aarch64-unknown-linux-musl" },
               { "compile_key": "armv7",            "target": "armv7-unknown-linux-musleabihf" },
-              { "compile_key": "mipsle-softfloat", "target": "mipsel-unknown-linux-musl" },
-              { "compile_key": "mips-softfloat",   "target": "mips-unknown-linux-musl" }
+              { "compile_key": "mipsle-softfloat", "target": "mipsel-unknown-linux-gnu" },
+              { "compile_key": "mips-softfloat",   "target": "mips-unknown-linux-gnu" }
             ]
           }
           EOF
