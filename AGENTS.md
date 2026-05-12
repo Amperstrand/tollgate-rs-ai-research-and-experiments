@@ -58,14 +58,34 @@ Start with `docs/design/core/tollgate-intro.md`, then follow the reading order i
 
 | Milestone | Description | Status |
 |-----------|-------------|--------|
-| M1 | Core Types, Protocol Codec, and Peer State Machine | Open |
-| M2 | Bootstrap Token Payment (v1-Parity Payment Mode) | Open |
+| M1 | Core Types, Protocol Codec, and Peer State Machine | ✅ Complete |
+| M2 | Bootstrap Token Payment, CDK Wallet Integration | ✅ Complete |
 | M2.5 | v1 Client Mode (tollgate-rs pays v1 routers) | Open |
-| M3 | Spilman Payment Channels | Open |
+| M3 | Spilman Payment Channels (demo) | 🔄 In Progress |
 | M4 | tollgate-net — IP Peering Deployment | Open |
 | M5 | Dynamic Pricing and Operator Controls | Open |
 | M6 | FIPS Mesh Integration | Open |
 | M7 | Production Hardening and Packaging | Open |
+
+### M3 Progress — Spilman Channel Demo
+
+Browser-based educational demo at `docs/private/demos/spilman-real/` with real crypto against a public Cashu mint.
+
+**Waves completed:**
+- **Wave A**: Hand-rolled JS crypto (@noble/curves + @noble/hashes), full channel lifecycle, 6/6 E2E tests
+- **Wave B**: cdk-wasm bridge, 194/194 Rust test vector checks passing in browser
+- **Wave C** (`967d796`): wallet.js swapped from crypto.js to cdk-wasm for channel ops (channel_secret, channel_id, funding_outputs, proofs, signed_balance_update, funding_token_amount). SIG_ALL witness with 2-of-2 P2PK multisig for cooperative close. 6/6 E2E tests passing (28.8s).
+
+**What works:** Channel open → fund → multi-payment → cooperative close. Real blinded mint interactions against testnut.cashu.exchange.
+
+**What's not done yet:**
+- DLEQ proof verification (`verify_proof_dleq`)
+- Unilateral / timeout close paths
+- Persistence (IndexedDB)
+- Real server/client separation (iframe/worker)
+- Migration from low-level WASM bindings to `WasmSpilmanBridge`/`SpilmanClientBridge` high-level classes
+
+**Key files:** `src/wallet.js` (WASM-backed), `src/cdk-wasm-adapter.js` (format conversion + P2BK + SIG_ALL), `src/cdk-wasm-bridge.js` (async loader), `src/crypto.js` (keygen + denomination + close outputs), `src/mint.js`, `tests/e2e-lifecycle.spec.js`
 
 ### Dependency Graph
 
@@ -108,9 +128,10 @@ M2 (bootstrap tokens only, no Spilman) gives a functional TollGate with token-ba
 
 ### Cashu / Wallet
 
-- Starting with simple Cashu token operations (receive, verify, create) for M2
-- Spilman channel wallet operations deferred to M3
-- Library choice TBD — evaluate `cdk` Rust crate and alternatives during M2
+- M2 uses `cdk` crate for bootstrap token operations (receive, verify, send, balance)
+- M3 uses `cdk-spilman` (SatsAndSports fork) compiled to WASM for channel crypto primitives
+- Browser demo uses low-level WASM bindings directly (not high-level `WasmSpilmanBridge` classes)
+- Strategy documented in `docs/private/adr/0005-native-cashu-ts-spilman-strategy.md`
 
 ### Testing
 

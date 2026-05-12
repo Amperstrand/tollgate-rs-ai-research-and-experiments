@@ -72,14 +72,17 @@ Drift between our TS implementation and the Rust reference (cdk-spilman) is the 
 
 | # | Gap | Impact | Status | Target |
 |---|-----|--------|--------|--------|
-| G1 | Simplified message hash (`SHA256(id\|balance)` vs `sig_all_message_hash`) | Balance update signatures not interoperable with Rust peers | Open | Phase 1 (cdk-wasm bridge) |
+| G1 | Simplified message hash (`SHA256(id\|balance)` vs `sig_all_message_hash`) | Balance update signatures not interoperable with Rust peers | **Closed (Wave C)** — `spilman_channel_sender_create_signed_balance_update` uses full SIG_ALL hash | N/A |
 | G2 | No DLEQ verification of mint blind signatures | Trusts mint not to exploit blinding | Open | Phase 2 (cashu-ts native) |
 | G3 | Cooperative close only (no unilateral/timeout) | No recourse if counterparty disappears | Open | Phase 2 (cashu-ts native) |
 | G4 | No persistence | Channel state lost on page reload | Open | Phase 1 (IndexedDB) |
 | G5 | Single-page wallet architecture | No real peer-to-peer separation | Open | Phase 1 (iframe/worker) |
 | G6 | No revocation logic | Cannot invalidate old balance updates | Open | Phase 2 (cashu-ts native) |
-| G7 | Oversized mint quote (waste) | Excess tokens not reclaimed | Open | Phase 1 (exact amount) |
+| G7 | Oversized mint quote (waste) | Excess tokens not reclaimed | **Closed (Wave B)** — `compute_funding_token_amount` calculates exact amount needed | N/A |
 | G8 | No multi-channel support | One channel per page load | Open | Phase 2 (cashu-ts native) |
+| G9 | Not using WasmSpilmanBridge/WasmSpilmanClientBridge | We call low-level WASM bindings and hand-roll orchestration; reference uses high-level bridge classes | Open (intentional) | Wave D (evaluate bridge classes) |
+| G10 | No spending condition witness in close | Cooperative close would fail at mint with SIG_ALL proofs | **Closed (Wave C)** — P2PK witness with both party signatures | N/A |
+| G11 | `crypto.js` still used for keygen, denomination, close outputs | Mixed WASM + JS crypto pipeline | Open | Wave D (migrate remaining ops) |
 
 ### cashu-ts Upstreaming Prerequisites
 

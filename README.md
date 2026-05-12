@@ -46,7 +46,9 @@ in-browser demo with real cryptographic operations against a public Cashu mint.
 - **Protocol trace visualization** — Interactive Mermaid diagrams of protocol flows,
   deployed to GitHub Pages with clickable per-step channel state popups
 - **In-browser Spilman channel demo** — Real ECDH, Schnorr signatures, and blinded mint
-  interactions against testnut.cashu.exchange, all running in the browser with no build step
+  interactions against testnut.cashu.exchange, all running in the browser with no build step.
+  Channel crypto delegated to cdk-wasm (Wave C). Spending condition witnesses for cooperative
+  close. No unilateral close, no DLEQ verification, no persistence.
 
 ### Live Demos
 
@@ -63,29 +65,36 @@ The spilman-real demo is also at `docs/private/demos/spilman-real/` — serve wi
 
 Our goal: get a working Cashu Spilman channel running in a browser, in a simple educational way, so anyone can see how channel payments work without installing anything.
 
-**What we built on**: The crypto functions in `crypto.js` are 1:1 translations from [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) (`cdk-spilman` Rust crate). The channel state machine mirrors the lifecycle in our Rust `cdk_spilman_bridge_spike.rs`. The mint HTTP wrappers follow the [Cashu NUT specs](https://github.com/cashubtc/nuts).
+**What we built on**: The demo calls low-level cdk-wasm bindings (compiled from the same [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) Rust crate) for channel crypto operations. The channel state machine and mint HTTP orchestration are our own JS code. The mint wrappers follow the [Cashu NUT specs](https://github.com/cashubtc/nuts).
 
 **What exists and how we differ**:
 
 | | **Our demo** | **SatsAndSports examples** [[1]](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples) | **cashu-ts** [[2]](https://github.com/cashubtc/cashu-ts) | **Option A simulator** |
 |---|---|---|---|---|
 | **Where it runs** | Browser (any OS, no install) | Terminal (Rust, Node.js, Python, or Go) | Browser or Node.js | Browser |
-| **Real crypto** | Yes — secp256k1 ECDH, Schnorr, blinded signatures via @noble/curves | Yes — cdk-spilman (Rust native) | Yes — @noble/curves | No — simulated SHA-256 only |
+| **Real crypto** | Yes — cdk-wasm (WASM compiled from Rust) + @noble/curves for keygen | Yes — cdk-spilman (Rust native) or WasmSpilmanBridge | Yes — @noble/curves | No — simulated SHA-256 only |
 | **Real mint** | Yes — testnut.cashu.exchange (public, auto-paying) | Yes — local test mint (cdk-spilman-test-mintd) | No channel support yet | No — no mint interaction |
+| **Architecture** | Low-level WASM bindings + hand-rolled JS orchestration | WasmSpilmanBridge / WasmSpilmanClientBridge classes manage full lifecycle | Library API | N/A |
+| **Server/Client** | Both wallets in same page, direct function calls | Real HTTP server (Express/Axum) + separate client process | N/A | N/A |
+| **Close paths** | Cooperative close only | Cooperative + unilateral + timeout (via bridge) | No channel support | Cooperative + unilateral + timeout (simulated) |
+| **DLEQ verification** | Not implemented | Via `verify_proof_dleq` | Not for channels | N/A |
+| **Spending conditions** | ✅ SIG_ALL witness with 2-of-2 P2PK (Wave C) | ✅ Managed by bridge | N/A | N/A |
 | **What you see** | Alice and Charlie wallets, token flow, signature details, mint requests | ASCII art (pay-per-character), terminal logs | Library API calls | Step-by-step walkthrough with data boxes |
 | **Educational** | Shows each phase, what tokens are used, what the signature commits to | Shows protocol flow via terminal output | Not a demo — it's a library | Highly educational — 20-step walkthrough with explanations |
 | **Setup** | Open URL, click button | Clone, build, start server + client, two terminals | npm install, write code | Open URL, click through steps |
-| **Channel close paths** | Cooperative close only | Cooperative + unilateral + timeout | No channel support | Cooperative + unilateral + timeout (simulated) |
 
 Sources:
 - [1] [SatsAndSports/cashu_spilman_channels/examples](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples) — Reference implementations in Rust (Axum), TypeScript (Express), Python (Flask), and Go. Each runs a "pay-per-character ASCII art" server where a client opens a Spilman channel and pays per request. These are the closest existing demos to ours.
 - [2] [cashubtc/cashu-ts](https://github.com/cashubtc/cashu-ts) — Official TypeScript Cashu wallet library. Does not yet support Spilman channels (as of v4.2.1). Our demo reimplements the channel crypto from scratch using `@noble/curves` and `@noble/hashes`, with the goal of eventually upstreaming Spilman support into cashu-ts. Strategy documented in [ADR-0005](docs/private/adr/0005-native-cashu-ts-spilman-strategy.md): three phases from hand-rolled crypto -> cdk-wasm bridge -> native cashu-ts module.
 
 **What we copied, what we changed**:
-- **Crypto functions**: Translated from Rust (`cdk-spilman/src/params.rs`) to JavaScript. Same algorithms, same test vectors. Key difference: we use `@noble/curves` for secp256k1 instead of the `secp256k1` Rust crate.
-- **Channel lifecycle**: Matches the flow in our Rust spike test (`crates/tollgate-net/tests/cdk_spilman_bridge_spike.rs`). Same phases: open → fund → pay → close.
+- **Crypto functions**: Wave C delegates to cdk-wasm (same Rust crate). `crypto.js` remains for key generation, denomination splitting, and cooperative close output construction (contexts "receiver"/"sender" not yet in WASM bindings).
+- **Channel lifecycle**: We hand-roll the orchestration (open → fund → pay → close) in JS. The SatsAndSports examples use `WasmSpilmanBridge`/`WasmSpilmanClientBridge` classes that manage this internally. We are **not** using the high-level bridge classes — we call individual WASM bindings and wire them together ourselves.
+- **Spending conditions**: Wave C added SIG_ALL witness construction for cooperative close (P2PK 2-of-2 multisig). This is handled automatically inside the bridge classes in the reference implementation; we do it manually in `cdk-wasm-adapter.js`.
 - **Mint interaction**: Standard Cashu NUT-01/02/03/05 HTTP endpoints. Same as every Cashu wallet.
 - **UI**: Ours. The split-screen layout, token visualization, and signature detail panels are our design, inspired by the Option A simulator in this repo.
+
+**Honest assessment**: Our demo is **not** architecturally aligned with the SatsAndSports reference. They use high-level bridge classes (`WasmSpilmanBridge`, `SpilmanClientBridge`) that manage the full lifecycle internally. We call low-level WASM bindings and build the orchestration ourselves. The crypto operations use the same WASM binary compiled from the same Rust source, producing identical output. But the integration pattern is different: their thin-client-over-smart-bridge vs our hand-rolled-orchestration-over-raw-bindings. This is intentional for educational purposes — our code exposes each step of the channel lifecycle explicitly.
 
 ### Dependencies and Attribution
 
