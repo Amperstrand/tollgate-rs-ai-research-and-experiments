@@ -1,0 +1,18 @@
+[build]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH 2>/dev/null || true",
+    "apt-get update && apt-get install -y pkg-config libssl-dev:$CROSS_DEB_ARCH 2>/dev/null || true",
+]
+
+[build.env]
+passthrough = [
+    "RUSTFLAGS",
+]
+
+[target.aarch64-unknown-linux-musl]
+
+[target.armv7-unknown-linux-musleabihf]
+
+[target.mipsel-unknown-linux-musl]
+
+[target.mips-unknown-linux-musl]

@@ -40,7 +40,10 @@ impl TollGateHttpClient {
             .timeout(Duration::from_secs(30))
             .build()
             .expect("reqwest client construction should not fail");
-        Self { client, base_url: base_url.to_owned() }
+        Self {
+            client,
+            base_url: base_url.to_owned(),
+        }
     }
 
     /// Fetch the TollGate advertisement (`GET /`).
@@ -68,10 +71,7 @@ impl TollGateHttpClient {
     /// The v1 Go server accepts plain Cashu token strings directly
     /// (no Nostr event wrapping required — TIP-03).
     /// Returns a SessionEvent on success or describes the rejection.
-    pub async fn send_payment(
-        &self,
-        cashu_token: &str,
-    ) -> Result<SessionEvent, V1HttpError> {
+    pub async fn send_payment(&self, cashu_token: &str) -> Result<SessionEvent, V1HttpError> {
         let response = self
             .client
             .post(&self.base_url)
@@ -101,9 +101,7 @@ impl TollGateHttpClient {
             });
         }
 
-        Err(V1HttpError::Unexpected(format!(
-            "status {status}: {body}"
-        )))
+        Err(V1HttpError::Unexpected(format!("status {status}: {body}")))
     }
 
     /// Poll current usage (`GET /usage`).

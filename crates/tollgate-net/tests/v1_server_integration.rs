@@ -6,10 +6,10 @@ use nostr::prelude::*;
 use reqwest::Client;
 use tokio::sync::Mutex;
 use tollgate_net::mock::MockWallet;
+use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
     build_advertisement, AcceptedMint, ServerState, StubMacResolver, StubValve, V1ServerConfig,
 };
-use tollgate_net::v1::server::handlers::build_router;
 
 fn test_config() -> V1ServerConfig {
     V1ServerConfig {
@@ -32,7 +32,11 @@ fn mock_token(amount_sats: u64) -> Vec<u8> {
 
 async fn start_server(
     config: V1ServerConfig,
-) -> (String, tokio::task::JoinHandle<()>, Arc<ServerState<MockWallet>>) {
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Arc<ServerState<MockWallet>>,
+) {
     let wallet = Arc::new(MockWallet::new(0));
     let advertisement = build_advertisement(&config).unwrap();
 
@@ -77,9 +81,10 @@ async fn v1_server_returns_advertisement() {
     let event: Event = Event::from_json(&body).unwrap();
     assert_eq!(event.kind, Kind::Custom(10_021));
 
-    let has_pricing = event.tags.iter().any(|tag| {
-        tag.as_slice().first().map(String::as_str) == Some("price_per_step")
-    });
+    let has_pricing = event
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice().first().map(String::as_str) == Some("price_per_step"));
     assert!(has_pricing);
 
     server.abort();
@@ -92,12 +97,7 @@ async fn v1_server_accepts_payment() {
     let client = Client::new();
 
     let token = mock_token(10);
-    let resp = client
-        .post(&base_url)
-        .body(token)
-        .send()
-        .await
-        .unwrap();
+    let resp = client.post(&base_url).body(token).send().await.unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -126,7 +126,11 @@ async fn v1_server_tracks_usage() {
     let token = mock_token(10);
     client.post(&base_url).body(token).send().await.unwrap();
 
-    let resp = client.get(format!("{base_url}/usage")).send().await.unwrap();
+    let resp = client
+        .get(format!("{base_url}/usage"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -195,12 +199,7 @@ async fn v1_server_rejects_invalid_token() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client
-        .post(&base_url)
-        .body("garbage")
-        .send()
-        .await
-        .unwrap();
+    let resp = client.post(&base_url).body("garbage").send().await.unwrap();
     assert_eq!(resp.status(), 400);
 
     let body = resp.text().await.unwrap();
