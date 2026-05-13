@@ -17,6 +17,8 @@ use tollgate_core::error::WalletError;
 use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
 
+use crate::v1::server::mint_quote_wallet::{MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult, QuoteState};
+
 /// CDK-backed wallet implementing [`Wallet`].
 ///
 /// Connects to a single Cashu mint and handles token creation/reception.
@@ -333,5 +335,56 @@ impl Wallet for CdkWallet {
                 .map_err(|e| WalletError::Internal(format!("balance: {e}")))?;
             Ok(Amount(u64::from(bal)))
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl MintQuoteWallet for CdkWallet {
+    async fn request_mint_quote(
+        &self,
+        amount: u64,
+        _mint_url: &str,
+    ) -> Result<MintQuoteInfo, MintQuoteError> {
+        let cdk_amount = cdk::Amount::from(amount);
+        let quote = self
+            .wallet
+            .mint_quote(PaymentMethod::BOLT11, Some(cdk_amount), None, None)
+            .await
+            .map_err(|e| MintQuoteError::Mint(format!("{e}")))?;
+
+        Ok(MintQuoteInfo {
+            quote_id: quote.id,
+            invoice: quote.request,
+            amount,
+            expiry: quote.expiry,
+        })
+    }
+
+    async fn check_mint_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<QuoteState, MintQuoteError> {
+        let status = self
+            .wallet
+            .check_mint_quote_status(quote_id)
+            .await
+            .map_err(|e| MintQuoteError::Mint(format!("{e}")))?;
+
+        Ok(match status.state {
+            MintQuoteState::Unpaid => QuoteState::Unpaid,
+            MintQuoteState::Paid => QuoteState::Paid,
+            MintQuoteState::Issued => QuoteState::Issued,
+        })
+    }
+
+    async fn mint_tokens(&self, quote_id: &str) -> Result<MintResult, MintQuoteError> {
+        let proofs = self
+            .wallet
+            .mint(quote_id, cdk::amount::SplitTarget::default(), None)
+            .await
+            .map_err(|e| MintQuoteError::Mint(format!("{e}")))?;
+
+        let total: u64 = proofs.iter().map(|p| u64::from(p.amount)).sum();
+        Ok(MintResult { amount: total })
     }
 }

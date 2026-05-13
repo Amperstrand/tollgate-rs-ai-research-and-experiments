@@ -22,8 +22,9 @@ use tollgate_net::mock::MockWallet;
 
 use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
-    build_advertisement, AcceptedMint, InMemorySessionStore, ServerState, StubMacResolver,
-    StubValve, V1ServerConfig,
+    build_advertisement, AcceptedMint, InMemoryLightningQuoteStore, InMemorySessionStore,
+    LightningQuoteRecord, MockMintQuoteWallet, QuoteState, ServerState,
+    StubMacResolver, StubValve, V1ServerConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,8 @@ async fn start_server(
         sessions: Arc::new(InMemorySessionStore::new()),
         mac_resolver: Arc::new(StubMacResolver::default()),
         valve: Arc::new(StubValve),
+        mint_quote_wallet: None,
+        lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
         advertisement,
     });
 
@@ -1645,4 +1648,519 @@ fn extract_allotment(event: &Event) -> Option<u64> {
             None
         }
     })
+}
+
+// ---------------------------------------------------------------------------
+// LN Invoice helpers
+// ---------------------------------------------------------------------------
+
+async fn start_server_with_ln(
+    config: V1ServerConfig,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Arc<ServerState<MockWallet>>,
+    Arc<MockMintQuoteWallet>,
+) {
+    let wallet = Arc::new(MockWallet::new(0));
+    let advertisement = build_advertisement(&config).unwrap();
+    let mint_quote_wallet = Arc::new(MockMintQuoteWallet::new());
+    let lightning_quotes = Arc::new(InMemoryLightningQuoteStore::new());
+
+    let state = Arc::new(ServerState {
+        wallet: wallet.clone(),
+        config,
+        sessions: Arc::new(InMemorySessionStore::new()),
+        mac_resolver: Arc::new(StubMacResolver::default()),
+        valve: Arc::new(StubValve),
+        mint_quote_wallet: Some(mint_quote_wallet.clone()),
+        lightning_quotes,
+        advertisement,
+    });
+
+    let app = build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind to random port");
+    let addr = listener.local_addr().expect("local addr");
+    let base_url = format!("http://{addr}");
+
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("mock server error");
+    });
+
+    (base_url, handle, state, mint_quote_wallet)
+}
+
+// ===========================================================================
+// POST /ln-invoice
+// ===========================================================================
+
+#[tokio::test]
+async fn parity_ln_invoice_post_returns_quote_and_unpaid_state() {
+    let (base_url, server, _state, _wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 1);
+    assert_eq!(body["state"], "UNPAID");
+    assert_eq!(body["access_granted"], false);
+    assert!(body["quote"].as_str().unwrap().starts_with("mock-quote-"));
+    assert!(body["invoice"].as_str().unwrap().starts_with("lnbc"));
+    assert_eq!(body["mint_url"], "https://testnut.cashu.exchange");
+    assert_eq!(body["amount"], 10);
+    assert!(body["expiry"].as_u64().unwrap() > 0);
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_post_accepts_mint_field_alias() {
+    let (base_url, server, _state, _wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 1);
+    assert_eq!(body["state"], "UNPAID");
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_post_missing_amount_returns_error() {
+    let (base_url, server, _state, _wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 0);
+    assert_eq!(body["error"], "amount and mint_url are required");
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_post_unknown_mint_returns_error() {
+    let (base_url, server, _state, _wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://unknown.mint.example.com"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 0);
+    assert_eq!(body["error"], "mint not accepted");
+
+    stop_server(server).await;
+}
+
+// ===========================================================================
+// GET /ln-invoice
+// ===========================================================================
+
+#[tokio::test]
+async fn parity_ln_invoice_get_unpaid_returns_invoice() {
+    let (base_url, server, _state, _wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let post_resp: serde_json::Value = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let quote_id = post_resp["quote"].as_str().unwrap();
+
+    let resp = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 1);
+    assert_eq!(body["state"], "UNPAID");
+    assert_eq!(body["access_granted"], false);
+    assert_eq!(body["quote"], quote_id);
+    assert_eq!(body["mint_url"], "https://testnut.cashu.exchange");
+    assert_eq!(body["amount"], 10);
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_get_paid_grants_access() {
+    let (base_url, server, state, mock_wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let post_resp: serde_json::Value = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let quote_id = post_resp["quote"].as_str().unwrap();
+    mock_wallet
+        .set_quote_state(quote_id, QuoteState::Paid)
+        .await;
+
+    let mut record = state
+        .lightning_quotes
+        .get(quote_id)
+        .await
+        .unwrap()
+        .unwrap();
+    record.cached_state_at = Some(0);
+    state
+        .lightning_quotes
+        .update(quote_id, record)
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 1);
+    assert_eq!(body["state"], "ISSUED");
+    assert_eq!(body["access_granted"], true);
+    assert_eq!(body["allotment"], 600_000);
+    assert_eq!(body["metric"], "milliseconds");
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_get_unknown_quote_returns_not_found() {
+    let (base_url, server, _state, _wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let resp = client
+        .get(format!("{base_url}/ln-invoice?quote=nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 0);
+    assert_eq!(body["error"], "quote not found");
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_get_wrong_mac_returns_not_found() {
+    let (base_url, server, state, _wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let record = LightningQuoteRecord {
+        quote_id: "other-mac-quote".to_owned(),
+        mac_address: "aa:bb:cc:dd:ee:ff".to_owned(),
+        mint_url: "https://testnut.cashu.exchange".to_owned(),
+        amount: 10,
+        expiry: 1_700_000_000,
+        allotment: 0,
+        created_at: 1_000_000,
+        completed_at: None,
+        session_granted: false,
+        processing: false,
+        invoice: "lnbc10mock".to_owned(),
+        cached_state: Some(QuoteState::Unpaid),
+        cached_state_at: Some(1_000_000),
+    };
+    state.lightning_quotes.insert(record).await.unwrap();
+
+    let resp = client
+        .get(format!("{base_url}/ln-invoice?quote=other-mac-quote"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], 0);
+    assert_eq!(body["error"], "quote not found");
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_get_paid_creates_session() {
+    let (base_url, server, state, mock_wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let post_resp: serde_json::Value = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let quote_id = post_resp["quote"].as_str().unwrap();
+    mock_wallet
+        .set_quote_state(quote_id, QuoteState::Paid)
+        .await;
+
+    let mut record = state
+        .lightning_quotes
+        .get(quote_id)
+        .await
+        .unwrap()
+        .unwrap();
+    record.cached_state_at = Some(0);
+    state
+        .lightning_quotes
+        .update(quote_id, record)
+        .await
+        .unwrap();
+
+    let _resp = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap();
+
+    let session = state
+        .sessions
+        .get("00:11:22:33:44:55")
+        .await
+        .unwrap()
+        .expect("session should exist");
+    assert_eq!(session.allotment, 600_000);
+    assert_eq!(session.metric, "milliseconds");
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_get_after_granted_returns_cached() {
+    let (base_url, server, state, mock_wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    let post_resp: serde_json::Value = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let quote_id = post_resp["quote"].as_str().unwrap();
+    mock_wallet
+        .set_quote_state(quote_id, QuoteState::Paid)
+        .await;
+
+    let mut record = state
+        .lightning_quotes
+        .get(quote_id)
+        .await
+        .unwrap()
+        .unwrap();
+    record.cached_state_at = Some(0);
+    state
+        .lightning_quotes
+        .update(quote_id, record)
+        .await
+        .unwrap();
+
+    let resp1 = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), 200);
+    let body1: serde_json::Value = resp1.json().await.unwrap();
+    assert_eq!(body1["access_granted"], true);
+
+    let resp2 = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), 200);
+    let body2: serde_json::Value = resp2.json().await.unwrap();
+    assert_eq!(body2["access_granted"], true);
+    assert_eq!(body2["state"], "ISSUED");
+    assert_eq!(body2["allotment"], 600_000);
+
+    stop_server(server).await;
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_full_lifecycle() {
+    let (base_url, server, state, mock_wallet) = start_server_with_ln(test_config()).await;
+    let client = Client::new();
+
+    // Step 1: POST /ln-invoice → get UNPAID quote
+    let post_resp: serde_json::Value = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(post_resp["status"], 1);
+    assert_eq!(post_resp["state"], "UNPAID");
+    assert_eq!(post_resp["access_granted"], false);
+    assert!(!post_resp["quote"].as_str().unwrap().is_empty());
+    assert!(post_resp["invoice"].as_str().unwrap().starts_with("lnbc"));
+
+    let quote_id = post_resp["quote"].as_str().unwrap();
+
+    // Step 2: GET /ln-invoice?quote=X → still UNPAID
+    let get_resp: serde_json::Value = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(get_resp["status"], 1);
+    assert_eq!(get_resp["state"], "UNPAID");
+    assert_eq!(get_resp["access_granted"], false);
+
+    // Step 3: Simulate Lightning payment — set quote to Paid
+    mock_wallet
+        .set_quote_state(quote_id, QuoteState::Paid)
+        .await;
+
+    // Invalidate cache so GET handler re-checks state
+    let mut record = state
+        .lightning_quotes
+        .get(quote_id)
+        .await
+        .unwrap()
+        .unwrap();
+    record.cached_state_at = Some(0);
+    state
+        .lightning_quotes
+        .update(quote_id, record)
+        .await
+        .unwrap();
+
+    // Step 4: GET /ln-invoice?quote=X → ISSUED, access_granted=true
+    let paid_resp = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(paid_resp.status(), 200);
+    let paid_body: serde_json::Value = paid_resp.json().await.unwrap();
+    assert_eq!(paid_body["status"], 1);
+    assert_eq!(paid_body["state"], "ISSUED");
+    assert_eq!(paid_body["access_granted"], true);
+    // 10 sats × 1 sat/step × 60000ms/step = 600000 ms allotment
+    assert_eq!(paid_body["allotment"], 600_000);
+    assert_eq!(paid_body["metric"], "milliseconds");
+
+    // Step 5: Verify session exists
+    let mac = "00:11:22:33:44:55";
+    let session = state
+        .sessions
+        .get(mac)
+        .await
+        .expect("session store error")
+        .expect("session should exist");
+    assert_eq!(session.allotment, 600_000);
+    assert_eq!(session.metric, "milliseconds");
+
+    // Step 6: GET /balance → shows active session
+    let balance_resp = client.get(format!("{base_url}/balance")).send().await.unwrap();
+    assert_eq!(balance_resp.status(), 200);
+    let balance: serde_json::Value = balance_resp.json().await.unwrap();
+    assert_eq!(balance["status"], 1);
+    assert_eq!(balance["session_active"], true);
+
+    // Step 7: GET /usage → shows active session
+    let usage_resp = client.get(format!("{base_url}/usage")).send().await.unwrap();
+    assert_eq!(usage_resp.status(), 200);
+    let usage_text = usage_resp.text().await.unwrap();
+    assert_ne!(usage_text, "-1/-1");
+    assert!(usage_text.contains('/'));
+
+    stop_server(server).await;
 }

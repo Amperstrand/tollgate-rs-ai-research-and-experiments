@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -20,7 +20,9 @@ use nostr::prelude::*;
 use tollgate_core::wallet::Wallet;
 
 use super::merchant;
-use super::{CustomerSession, ServerState, V1ServerConfig};
+use super::{
+    CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig,
+};
 
 pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
     Router::new()
@@ -31,6 +33,10 @@ pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
         .route("/usage", get(handle_usage::<W>))
         .route("/whoami", get(handle_whoami::<W>))
         .route("/balance", get(handle_balance::<W>))
+        .route(
+            "/ln-invoice",
+            get(handle_get_ln_invoice::<W>).post(handle_post_ln_invoice::<W>),
+        )
         .with_state(state)
 }
 
@@ -321,4 +327,359 @@ fn extract_payment_token(body: &str) -> String {
         }
     }
     body.to_owned()
+}
+
+#[derive(serde::Deserialize)]
+struct LnInvoiceRequest {
+    amount: u64,
+    mint_url: Option<String>,
+    mint: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct LnInvoiceResponse {
+    status: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quote: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invoice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mint_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    amount: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expiry: Option<u64>,
+    state: String,
+    access_granted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    allotment: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metric: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct LnInvoiceQuery {
+    quote: Option<String>,
+}
+
+fn ln_error_response(http_status: StatusCode, error: &str) -> Response {
+    let resp = LnInvoiceResponse {
+        status: 0,
+        quote: None,
+        invoice: None,
+        mint_url: None,
+        amount: None,
+        expiry: None,
+        state: String::new(),
+        access_granted: false,
+        allotment: None,
+        metric: None,
+        error: Some(error.to_owned()),
+    };
+    json_response(
+        http_status,
+        serde_json::to_string(&resp).unwrap_or_default(),
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+async fn handle_post_ln_invoice<W: Wallet>(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<ServerState<W>>>,
+    body: String,
+) -> Response {
+    let req: LnInvoiceRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return cors_response(ln_error_response(
+                StatusCode::BAD_REQUEST,
+                "amount and mint_url are required",
+            ));
+        }
+    };
+
+    let mint_url = req.mint_url.or(req.mint).unwrap_or_default();
+
+    if req.amount == 0 || mint_url.is_empty() {
+        return cors_response(ln_error_response(
+            StatusCode::BAD_REQUEST,
+            "amount and mint_url are required",
+        ));
+    }
+
+    let ip = addr.ip().to_string();
+    let mac = match state.mac_resolver.resolve(&ip) {
+        Ok(mac) => mac,
+        Err(e) => {
+            tracing::warn!("MAC resolution failed for {ip}: {e}");
+            return cors_response(ln_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "cannot resolve MAC address",
+            ));
+        }
+    };
+
+    if !state.config.accepted_mints.iter().any(|m| m.url == mint_url) {
+        return cors_response(ln_error_response(
+            StatusCode::BAD_REQUEST,
+            "mint not accepted",
+        ));
+    }
+
+    let wallet = match &state.mint_quote_wallet {
+        Some(w) => Arc::clone(w),
+        None => {
+            return cors_response(ln_error_response(
+                StatusCode::BAD_REQUEST,
+                "lightning payments not available",
+            ));
+        }
+    };
+
+    let info = match wallet.request_mint_quote(req.amount, &mint_url).await {
+        Ok(info) => info,
+        Err(e) => {
+            tracing::warn!("Mint quote request failed: {e}");
+            return cors_response(ln_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("quote request failed: {e}"),
+            ));
+        }
+    };
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let record = LightningQuoteRecord {
+        quote_id: info.quote_id.clone(),
+        mac_address: mac,
+        mint_url: mint_url.clone(),
+        amount: info.amount,
+        expiry: info.expiry as i64,
+        allotment: 0,
+        created_at: now,
+        completed_at: None,
+        session_granted: false,
+        processing: false,
+        invoice: info.invoice.clone(),
+        cached_state: Some(QuoteState::Unpaid),
+        cached_state_at: Some(now),
+    };
+
+    if let Err(e) = state.lightning_quotes.insert(record).await {
+        tracing::error!("Failed to store lightning quote: {e}");
+        return cors_response(ln_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error",
+        ));
+    }
+
+    let resp = LnInvoiceResponse {
+        status: 1,
+        quote: Some(info.quote_id),
+        invoice: Some(info.invoice),
+        mint_url: Some(mint_url),
+        amount: Some(info.amount),
+        expiry: Some(info.expiry),
+        state: "UNPAID".to_owned(),
+        access_granted: false,
+        allotment: None,
+        metric: None,
+        error: None,
+    };
+
+    cors_response(json_response(
+        StatusCode::OK,
+        serde_json::to_string(&resp).unwrap_or_default(),
+    ))
+}
+
+#[allow(clippy::too_many_lines)]
+async fn handle_get_ln_invoice<W: Wallet>(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<ServerState<W>>>,
+    Query(params): Query<LnInvoiceQuery>,
+) -> Response {
+    let quote_id = match params.quote {
+        Some(q) if !q.is_empty() => q,
+        _ => {
+            return cors_response(ln_error_response(
+                StatusCode::BAD_REQUEST,
+                "quote is required",
+            ));
+        }
+    };
+
+    let ip = addr.ip().to_string();
+    let mac = match state.mac_resolver.resolve(&ip) {
+        Ok(mac) => mac,
+        Err(e) => {
+            tracing::warn!("MAC resolution failed for {ip}: {e}");
+            return cors_response(ln_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "cannot resolve MAC address",
+            ));
+        }
+    };
+
+    let mut record = match state
+        .lightning_quotes
+        .get_for_mac(&quote_id, &mac)
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) | Err(_) => {
+            return cors_response(ln_error_response(
+                StatusCode::NOT_FOUND,
+                "quote not found",
+            ));
+        }
+    };
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let cache_age = record.cached_state_at.map_or(i64::MAX, |at| now - at);
+
+    if cache_age >= 2 {
+        if let Some(ref wallet) = state.mint_quote_wallet {
+            match wallet.check_mint_quote_status(&quote_id).await {
+                Ok(s) => {
+                    record.cached_state = Some(s);
+                    record.cached_state_at = Some(now);
+                    let _ = state
+                        .lightning_quotes
+                        .update(&quote_id, record.clone())
+                        .await;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to check quote status: {e}");
+                }
+            }
+        }
+    }
+
+    let cached_state = record.cached_state.unwrap_or(QuoteState::Unpaid);
+
+    if (cached_state == QuoteState::Paid || cached_state == QuoteState::Issued)
+        && !record.session_granted
+        && !record.processing
+    {
+        record.processing = true;
+        let _ = state
+            .lightning_quotes
+            .update(&quote_id, record.clone())
+            .await;
+
+        if cached_state == QuoteState::Paid {
+            if let Some(ref wallet) = state.mint_quote_wallet {
+                if let Err(e) = wallet.mint_tokens(&quote_id).await {
+                    tracing::error!("Mint tokens failed: {e}");
+                    record.processing = false;
+                    let _ = state
+                        .lightning_quotes
+                        .update(&quote_id, record.clone())
+                        .await;
+                    return cors_response(ln_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "mint tokens failed",
+                    ));
+                }
+            }
+        }
+
+        let allotment = match merchant::calculate_allotment(
+            record.amount,
+            &record.mint_url,
+            &state.config,
+        ) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!("Allotment calculation failed: {e}");
+                record.processing = false;
+                let _ = state
+                    .lightning_quotes
+                    .update(&quote_id, record.clone())
+                    .await;
+                return cors_response(ln_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "allotment calculation failed",
+                ));
+            }
+        };
+
+        let existing = state.sessions.get(&mac).await.ok().flatten();
+        if let Some(mut s) = existing {
+            s.allotment += allotment;
+            s.start_time = now;
+            let _ = state.sessions.update(&mac, s).await;
+        } else {
+            let s = CustomerSession {
+                mac_address: mac.clone(),
+                start_time: now,
+                metric: state.config.metric.clone(),
+                allotment,
+            };
+            let _ = state.sessions.insert(s).await;
+        }
+
+        if let Err(e) = state.valve.open_gate(&mac) {
+            tracing::warn!("Failed to open valve for {mac}: {e}");
+        }
+
+        record.session_granted = true;
+        record.completed_at = Some(now);
+        record.allotment = allotment;
+        record.cached_state = Some(QuoteState::Issued);
+        let _ = state
+            .lightning_quotes
+            .update(&quote_id, record.clone())
+            .await;
+    }
+
+    let resp = if record.session_granted {
+        LnInvoiceResponse {
+            status: 1,
+            quote: Some(record.quote_id),
+            invoice: None,
+            mint_url: Some(record.mint_url),
+            amount: Some(record.amount),
+            expiry: None,
+            state: "ISSUED".to_owned(),
+            access_granted: true,
+            allotment: Some(record.allotment),
+            metric: Some(state.config.metric.clone()),
+            error: None,
+        }
+    } else {
+        let state_str = match record.cached_state {
+            Some(QuoteState::Paid) => "PAID",
+            Some(QuoteState::Issued) => "ISSUED",
+            _ => "UNPAID",
+        };
+        LnInvoiceResponse {
+            status: 1,
+            quote: Some(record.quote_id),
+            invoice: None,
+            mint_url: Some(record.mint_url),
+            amount: Some(record.amount),
+            expiry: None,
+            state: state_str.to_owned(),
+            access_granted: false,
+            allotment: None,
+            metric: None,
+            error: None,
+        }
+    };
+
+    cors_response(json_response(
+        StatusCode::OK,
+        serde_json::to_string(&resp).unwrap_or_default(),
+    ))
 }

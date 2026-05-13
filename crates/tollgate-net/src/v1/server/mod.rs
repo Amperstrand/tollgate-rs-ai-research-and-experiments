@@ -8,9 +8,11 @@
 pub mod config;
 pub mod handlers;
 pub mod janitor;
+pub mod lightning_quotes;
 pub mod logging;
 pub mod mac_resolver;
 pub mod merchant;
+pub mod mint_quote_wallet;
 pub mod payout;
 pub mod session_store;
 pub mod upstream_detector;
@@ -32,6 +34,13 @@ pub use merchant::{
 };
 pub use session_store::{
     InMemorySessionStore, SessionStore, SessionStoreError, SqliteSessionStore,
+};
+pub use lightning_quotes::{
+    spawn_quote_janitor, InMemoryLightningQuoteStore, LightningQuoteRecord, LightningQuoteStore,
+    QuoteStoreError,
+};
+pub use mint_quote_wallet::{
+    MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult, MockMintQuoteWallet, QuoteState,
 };
 pub use upstream_detector::{
     parse_advertisement, probe_gateway, probe_url, DiscoveredUpstream, UpstreamDetectError,
@@ -68,6 +77,8 @@ pub struct ServerState<W: Wallet> {
     pub sessions: Arc<dyn SessionStore>,
     pub mac_resolver: Arc<dyn MacResolver + Send + Sync>,
     pub valve: Arc<dyn Valve + Send + Sync>,
+    pub mint_quote_wallet: Option<Arc<dyn MintQuoteWallet>>,
+    pub lightning_quotes: Arc<dyn LightningQuoteStore>,
     pub advertisement: String,
 }
 
@@ -91,6 +102,8 @@ impl V1Server {
             sessions: Arc::new(InMemorySessionStore::new()),
             mac_resolver: Arc::new(StubMacResolver::default()),
             valve: Arc::new(StubValve),
+            mint_quote_wallet: None,
+            lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
             advertisement,
         });
 
@@ -98,6 +111,11 @@ impl V1Server {
             state.sessions.clone(),
             state.valve.clone(),
             Duration::from_secs(5),
+        );
+
+        let quote_janitor = lightning_quotes::spawn_quote_janitor(
+            state.lightning_quotes.clone(),
+            Duration::from_secs(60),
         );
 
         let app = handlers::build_router(state);
@@ -122,6 +140,9 @@ impl V1Server {
             }
             _ = janitor => {
                 tracing::warn!("janitor task finished unexpectedly");
+            }
+            _ = quote_janitor => {
+                tracing::warn!("quote janitor task finished unexpectedly");
             }
         }
     }

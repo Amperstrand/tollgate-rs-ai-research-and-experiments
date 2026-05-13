@@ -23,17 +23,16 @@ pub mod server;
 use std::sync::Arc;
 
 use tollgate_core::wallet::Wallet;
-
 use self::http::TollGateHttpClient;
 use self::nostr_events::{PricingOption, SessionEvent, TollGateAdvertisement};
-use self::pricing::PricingError;
+
 
 #[derive(Debug, thiserror::Error)]
 pub enum V1ClientError {
     #[error("HTTP error: {0}")]
-    Http(#[from] self::http::V1HttpError),
+    Http(#[from] http::V1HttpError),
     #[error("pricing error: {0}")]
-    Pricing(#[from] PricingError),
+    Pricing(#[from] pricing::PricingError),
     #[error("wallet error: {0}")]
     Wallet(#[from] tollgate_core::error::WalletError),
     #[error("no active session")]

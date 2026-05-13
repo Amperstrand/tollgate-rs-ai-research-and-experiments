@@ -6,8 +6,8 @@ use reqwest::Client;
 use tollgate_net::mock::MockWallet;
 use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
-    build_advertisement, AcceptedMint, InMemorySessionStore, ServerState, StubMacResolver,
-    StubValve, V1ServerConfig,
+    build_advertisement, AcceptedMint, InMemoryLightningQuoteStore, InMemorySessionStore,
+    ServerState, StubMacResolver, StubValve, V1ServerConfig,
 };
 
 fn test_config() -> V1ServerConfig {
@@ -45,6 +45,8 @@ async fn start_server(
         sessions: Arc::new(InMemorySessionStore::new()),
         mac_resolver: Arc::new(StubMacResolver::default()),
         valve: Arc::new(StubValve),
+        mint_quote_wallet: None,
+        lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
         advertisement,
     });
 
