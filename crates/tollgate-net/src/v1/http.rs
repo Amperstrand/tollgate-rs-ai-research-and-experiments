@@ -26,6 +26,10 @@ pub enum V1HttpError {
 pub struct TollGateHttpClient {
     client: Client,
     base_url: String,
+    /// Number of probe attempts before giving up (default: 3).
+    probe_retry_count: u32,
+    /// Delay between probe retry attempts (default: 2s).
+    probe_retry_delay: Duration,
 }
 
 impl TollGateHttpClient {
@@ -43,11 +47,36 @@ impl TollGateHttpClient {
         Self {
             client,
             base_url: base_url.to_owned(),
+            probe_retry_count: 3,
+            probe_retry_delay: Duration::from_secs(2),
         }
     }
 
-    /// Fetch the TollGate advertisement (`GET /`).
+    /// Fetch the TollGate advertisement (`GET /`) with retry.
     pub async fn fetch_advertisement(&self) -> Result<TollGateAdvertisement, V1HttpError> {
+        let mut last_err = None;
+        for attempt in 0..self.probe_retry_count {
+            if attempt > 0 {
+                tracing::info!(
+                    attempt,
+                    total = self.probe_retry_count,
+                    "Retrying tollgate probe"
+                );
+                tokio::time::sleep(self.probe_retry_delay).await;
+            }
+            match self.fetch_advertisement_once().await {
+                Ok(ad) => return Ok(ad),
+                Err(e) => {
+                    tracing::debug!(attempt, error = %e, "Probe attempt failed");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap())
+    }
+
+    /// Single attempt to fetch the TollGate advertisement.
+    async fn fetch_advertisement_once(&self) -> Result<TollGateAdvertisement, V1HttpError> {
         let response = self
             .client
             .get(&self.base_url)
@@ -141,6 +170,13 @@ fn parse_usage_response(body: &str) -> (i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::State;
+    use axum::response::IntoResponse;
+    use axum::routing::get;
+    use axum::Router;
+    use nostr::event::tag::{Tag, TagKind};
+    use nostr::prelude::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn parse_usage_normal() {
@@ -165,5 +201,122 @@ mod tests {
     #[test]
     fn parse_usage_garbage() {
         assert_eq!(parse_usage_response("not a number"), (0, 0));
+    }
+
+    struct RetryServerState {
+        fail_count: u32,
+        request_count: u32,
+        keys: Keys,
+    }
+
+    impl RetryServerState {
+        fn new(fail_count: u32) -> Self {
+            Self {
+                fail_count,
+                request_count: 0,
+                keys: Keys::generate(),
+            }
+        }
+    }
+
+    async fn retry_advertisement(
+        State(state): State<Arc<Mutex<RetryServerState>>>,
+    ) -> impl IntoResponse {
+        let mut s = state.lock().expect("lock");
+        s.request_count += 1;
+        if s.request_count <= s.fail_count {
+            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        let tags = Tags::from_list(vec![
+            Tag::custom(
+                TagKind::Custom("metric".into()),
+                ["milliseconds".to_owned()],
+            ),
+            Tag::custom(TagKind::Custom("step_size".into()), ["60000".to_owned()]),
+            Tag::custom(
+                TagKind::Custom("price_per_step".into()),
+                [
+                    "cashu".to_owned(),
+                    "1".to_owned(),
+                    "sat".to_owned(),
+                    "https://testnut.cashu.exchange".to_owned(),
+                    "1".to_owned(),
+                ],
+            ),
+        ]);
+        let event = EventBuilder::new(Kind::Custom(10_021), "")
+            .tags(tags)
+            .sign_with_keys(&s.keys)
+            .expect("sign ad event");
+        axum::Json(serde_json::to_value(event).expect("serialize ad event")).into_response()
+    }
+
+    async fn start_retry_server(
+        state: Arc<Mutex<RetryServerState>>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let base_url = format!("http://{addr}");
+        let app = Router::new()
+            .route("/", get(retry_advertisement))
+            .with_state(state);
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("mock server error");
+        });
+        (base_url, handle)
+    }
+
+    fn make_retry_client(
+        base_url: &str,
+        retry_count: u32,
+        retry_delay: Duration,
+    ) -> TollGateHttpClient {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("reqwest client construction should not fail");
+        TollGateHttpClient {
+            client,
+            base_url: base_url.to_owned(),
+            probe_retry_count: retry_count,
+            probe_retry_delay: retry_delay,
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_advertisement_retries_on_failure_then_succeeds() {
+        let state = Arc::new(Mutex::new(RetryServerState::new(2)));
+        let (base_url, server) = start_retry_server(state.clone()).await;
+
+        let http = make_retry_client(&base_url, 3, Duration::from_millis(10));
+        let result = http.fetch_advertisement().await;
+        assert!(result.is_ok(), "should succeed after retries: {result:?}");
+
+        let requests = state.lock().expect("lock").request_count;
+        assert_eq!(
+            requests, 3,
+            "should make 3 attempts (2 failures + 1 success)"
+        );
+
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn fetch_advertisement_returns_last_error_when_exhausted() {
+        let state = Arc::new(Mutex::new(RetryServerState::new(99)));
+        let (base_url, server) = start_retry_server(state.clone()).await;
+
+        let http = make_retry_client(&base_url, 2, Duration::from_millis(10));
+        let result = http.fetch_advertisement().await;
+        assert!(result.is_err(), "should fail when all attempts exhausted");
+
+        let requests = state.lock().expect("lock").request_count;
+        assert_eq!(requests, 2, "should make exactly 2 attempts");
+
+        server.abort();
+        let _ = server.await;
     }
 }

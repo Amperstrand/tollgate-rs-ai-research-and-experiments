@@ -18,6 +18,7 @@
 pub mod http;
 pub mod nostr_events;
 pub mod pricing;
+pub mod recovery;
 pub mod server;
 
 use std::sync::Arc;
@@ -71,6 +72,9 @@ pub struct V1Session {
     pub step_size: u64,
 }
 
+/// Minimum time between payment attempts (prevents renewal storms).
+const MIN_PAYMENT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// V1 TollGate client. Manages a single upstream connection lifecycle.
 ///
 /// Generic over `W: Wallet` to support both `CdkWallet` and `MockWallet`
@@ -79,6 +83,7 @@ pub struct V1Client<W: Wallet> {
     config: V1ClientConfig,
     http: TollGateHttpClient,
     session: Option<V1Session>,
+    last_payment_attempt: Option<std::time::Instant>,
     _wallet: std::marker::PhantomData<W>,
 }
 
@@ -90,6 +95,7 @@ impl<W: Wallet> V1Client<W> {
             config,
             http,
             session: None,
+            last_payment_attempt: None,
             _wallet: std::marker::PhantomData,
         }
     }
@@ -101,6 +107,7 @@ impl<W: Wallet> V1Client<W> {
             config,
             http,
             session: None,
+            last_payment_attempt: None,
             _wallet: std::marker::PhantomData,
         }
     }
@@ -247,6 +254,18 @@ impl<W: Wallet> V1Client<W> {
 
     /// Renew the session by making another payment.
     pub async fn renew(&mut self, wallet: &Arc<W>) -> Result<(), V1ClientError> {
+        if let Some(last) = self.last_payment_attempt {
+            let elapsed = last.elapsed();
+            if elapsed < MIN_PAYMENT_INTERVAL {
+                tracing::debug!(
+                    elapsed_ms = elapsed.as_millis(),
+                    "Skipping renewal, too soon since last payment attempt"
+                );
+                return Ok(());
+            }
+        }
+        self.last_payment_attempt = Some(std::time::Instant::now());
+
         let session = self.session.as_ref().ok_or(V1ClientError::NoSession)?;
 
         let step_size = session.step_size;

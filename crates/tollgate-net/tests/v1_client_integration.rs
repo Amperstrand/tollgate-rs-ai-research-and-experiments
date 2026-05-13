@@ -294,3 +294,36 @@ async fn v1_client_rejects_incompatible_mint() {
     server.abort();
     let _ = server.await;
 }
+
+#[tokio::test]
+async fn v1_client_renew_throttles_rapid_calls() {
+    let keys = Keys::generate();
+    let state = Arc::new(Mutex::new(ServerState::new(keys)));
+    let (base_url, server) = start_mock_server(state.clone()).await;
+
+    let wallet = Arc::new(MockWallet::new(10000));
+    let mut client = V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
+
+    client
+        .connect(&wallet)
+        .await
+        .expect("connect should succeed");
+
+    let result1 = client.renew(&wallet).await;
+    assert!(result1.is_ok(), "first renew should succeed: {result1:?}");
+
+    let result2 = client.renew(&wallet).await;
+    assert!(result2.is_ok(), "throttled renew should return Ok (no-op)");
+
+    {
+        let server_state = state.lock().expect("lock");
+        // connect sends 1 payment, first renew sends 1 payment, second renew is throttled (0)
+        assert_eq!(
+            server_state.payments_received, 2,
+            "should only have 2 payments (connect + first renew), not 3"
+        );
+    }
+
+    server.abort();
+    let _ = server.await;
+}
