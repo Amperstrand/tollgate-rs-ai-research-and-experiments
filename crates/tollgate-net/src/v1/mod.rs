@@ -171,18 +171,16 @@ impl<W: Wallet> V1Client<W> {
         )?;
 
         // Step 5: Calculate steps
-        let preferred_steps = if step_size > 0 {
-            self.config.preferred_allotment / step_size
-        } else {
-            1
-        };
+        let preferred_steps = self
+            .config
+            .preferred_allotment
+            .checked_div(step_size)
+            .unwrap_or(1);
         let balance = wallet.balance().await?;
         let balance_sats = balance.0;
-        let max_affordable = if pricing.price_per_step > 0 {
-            balance_sats / pricing.price_per_step
-        } else {
-            0
-        };
+        let max_affordable = balance_sats
+            .checked_div(pricing.price_per_step)
+            .unwrap_or(0);
 
         let steps = preferred_steps
             .max(pricing.min_steps)
@@ -256,17 +254,13 @@ impl<W: Wallet> V1Client<W> {
         let step_size = session.step_size;
         let pricing = &session.selected_pricing;
 
-        let preferred_steps = if step_size > 0 {
-            self.config.preferred_allotment / step_size
-        } else {
-            1
-        };
+        let preferred_steps = self
+            .config
+            .preferred_allotment
+            .checked_div(step_size)
+            .unwrap_or(1);
         let balance = wallet.balance().await?;
-        let max_affordable = if pricing.price_per_step > 0 {
-            balance.0 / pricing.price_per_step
-        } else {
-            0
-        };
+        let max_affordable = balance.0.checked_div(pricing.price_per_step).unwrap_or(0);
 
         let steps = preferred_steps
             .max(pricing.min_steps)
