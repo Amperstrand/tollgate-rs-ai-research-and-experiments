@@ -39,6 +39,7 @@ spilman = [
 [dev-dependencies]
 rand = "0.9"
 async-trait = "0.1"
+tempfile = "3"
 
 [lints]
 workspace = true

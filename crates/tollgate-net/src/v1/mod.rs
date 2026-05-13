@@ -15,6 +15,7 @@
     clippy::cast_sign_loss
 )]
 
+pub mod cli;
 pub mod http;
 pub mod nostr_events;
 pub mod pricing;
