@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 tollgate-core = { path = "../tollgate-core" }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 axum = { version = "0.8", features = ["http1"] }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"

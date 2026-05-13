@@ -20,6 +20,8 @@ pub mod nostr_events;
 pub mod pricing;
 pub mod recovery;
 pub mod server;
+pub mod session_manager;
+pub mod usage_tracker;
 
 use std::sync::Arc;
 
@@ -39,8 +41,7 @@ pub enum V1ClientError {
     NoSession,
 }
 
-/// Configuration for a v1 client connection.
-#[allow(clippy::missing_errors_doc)]
+#[derive(Clone)]
 pub struct V1ClientConfig {
     /// Gateway IP address of the upstream TollGate.
     pub gateway_ip: String,
