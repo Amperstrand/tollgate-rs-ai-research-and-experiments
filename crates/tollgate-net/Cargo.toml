@@ -15,7 +15,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 minicbor = { version = "0.25", features = ["derive", "std"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 async-trait = "0.1"
-cdk = { version = "0.16", default-features = true }
+cdk = { version = "0.16", default-features = false, features = ["wallet"] }
 cdk-sqlite = "0.16"
 cdk-spilman = { git = "https://github.com/SatsAndSports/cashu_spilman_channels", branch = "main", optional = true }
 cashu = { git = "https://github.com/cashubtc/cdk.git", rev = "63866dc6d7da9796c75365cde97157d464331da1", optional = true }
