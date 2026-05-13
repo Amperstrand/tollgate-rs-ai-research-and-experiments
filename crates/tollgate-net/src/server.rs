@@ -176,7 +176,9 @@ fn message_name(msg: &Message) -> &'static str {
 
 #[cfg(feature = "spilman")]
 use {
-    crate::spilman_service::{PaymentProof, SpilmanAsyncNetworking, SpilmanBridge, SpilmanHost},
+    crate::spilman_service::{
+        Payment, PaymentProof, SpilmanAsyncNetworking, SpilmanBridge, SpilmanHost,
+    },
     async_trait::async_trait,
     cashu::nuts::{CurrencyUnit, Id, Proof as CashuProof, PublicKey, SecretKey},
     cdk_spilman::{
@@ -282,6 +284,8 @@ struct ServerSpilmanHost {
     closing_data: std::sync::Mutex<HashMap<String, ClosingData>>,
     keyset_infos: std::sync::Mutex<HashMap<Id, String>>,
     active_keysets: std::sync::Mutex<HashMap<String, Vec<Id>>>,
+    // NOTE(checkpoint): This is still host-global, not per-channel.
+    // Multi-channel amount-due correctness remains unresolved in this checkpoint.
     amount_due: AtomicU64,
 }
 
@@ -606,7 +610,18 @@ async fn handle_spilman_message(
 
     if let Message::ChannelClose(ref close) = msg {
         let spilman_state = state.spilman.lock().await;
+        let channel_id_hex = encode_hex(&close.channel_id.0);
+        spilman_state
+            .bridge
+            .host()
+            .set_lifecycle(&channel_id_hex, ChannelLifecycleState::ClosingCooperative);
         let resp = process_channel_close(&spilman_state.bridge, &spilman_state.net, close).await;
+        if matches!(resp, Message::Reject(_)) {
+            spilman_state.bridge.host().set_lifecycle(
+                &channel_id_hex,
+                ChannelLifecycleState::SettlementFailedRetryable,
+            );
+        }
         responses.push(resp);
     }
 
@@ -751,32 +766,21 @@ where
     N: SpilmanAsyncNetworking + Sync,
 {
     let channel_id_hex = encode_hex(&close.channel_id.0);
-    let signature_hex = encode_hex(&close.final_signature.0);
 
-    // Build a Payment JSON for the bridge. `params` and `funding_proofs` are
-    // only populated if the client included them (i.e. for channels not yet
-    // registered with the server).
-    let params_val: Option<serde_json::Value> = close
-        .channel_params_json
-        .as_ref()
-        .and_then(|b| serde_json::from_slice(b).ok());
-    let proofs_val: Option<Vec<CashuProof>> = close
-        .funding_proofs_json
-        .as_ref()
-        .and_then(|b| serde_json::from_slice(b).ok());
-
-    let mut payment_obj = serde_json::json!({
-        "channel_id": channel_id_hex,
-        "balance": close.final_balance,
-        "signature": signature_hex,
-    });
-    if let Some(p) = params_val {
-        payment_obj["params"] = p;
-    }
-    if let Some(pr) = proofs_val {
-        payment_obj["funding_proofs"] = serde_json::to_value(pr).unwrap_or(serde_json::Value::Null);
-    }
-    let payment_json = payment_obj.to_string();
+    // Build the cooperative-close payload using the concrete cdk-spilman
+    // `Payment` struct, then serialize it. This proves schema compatibility
+    // with `execute_cooperative_close_async` at compile-time + serde-time.
+    let payment_json = match cooperative_close_payment_json(close) {
+        Ok(s) => s,
+        Err(e) => {
+            return Message::Reject(Reject {
+                msg_type: MessageType::Reject as u8,
+                rejected_type: MessageType::ChannelClose as u8,
+                reason_code: ReasonCode::Other,
+                reason_text: Some(format!("cooperative close request invalid: {e}")),
+            });
+        }
+    };
 
     tracing::info!(
         "[spilman] ChannelClose: channel={} balance={} — executing cooperative close",
@@ -813,6 +817,28 @@ where
             })
         }
     }
+}
+
+#[cfg(feature = "spilman")]
+fn cooperative_close_payment_json(close: &ChannelClose) -> Result<String, String> {
+    let payment = Payment {
+        channel_id: encode_hex(&close.channel_id.0),
+        balance: close.final_balance,
+        signature: encode_hex(&close.final_signature.0),
+        params: close
+            .channel_params_json
+            .as_ref()
+            .map(|b| serde_json::from_slice::<serde_json::Value>(b))
+            .transpose()
+            .map_err(|e| format!("invalid channel_params_json: {e}"))?,
+        funding_proofs: close
+            .funding_proofs_json
+            .as_ref()
+            .map(|b| serde_json::from_slice::<Vec<CashuProof>>(b))
+            .transpose()
+            .map_err(|e| format!("invalid funding_proofs_json: {e}"))?,
+    };
+    serde_json::to_string(&payment).map_err(|e| format!("serialize close payment: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -927,6 +953,10 @@ async fn handle_force_close(
 //     (`#[ignore]`, runs against testnut)
 //   - the `spilman-e2e` CI job which runs `tollgate-net` against a local
 //     `cdk-spilman-test-mintd`.
+//
+// This is a checkpoint patch only: it fixes ACK/Reject semantics and close
+// routing, but it does not by itself prove cooperative-close settlement
+// success or mark M3 complete.
 
 #[cfg(all(test, feature = "spilman"))]
 mod spilman_handler_tests {
@@ -1174,6 +1204,31 @@ mod spilman_handler_tests {
         }
     }
 
+    fn make_close(
+        channel_id: [u8; 32],
+        balance: u64,
+        sig_byte: u8,
+        with_funding: bool,
+    ) -> ChannelClose {
+        ChannelClose {
+            msg_type: MessageType::ChannelClose as u8,
+            channel_id: Hash32(channel_id),
+            final_balance: balance,
+            final_signature: TgSignature([sig_byte; 64]),
+            reason: CloseReason::Normal,
+            channel_params_json: if with_funding {
+                Some(br#"{"capacity":1000}"#.to_vec())
+            } else {
+                None
+            },
+            funding_proofs_json: if with_funding {
+                Some(b"[]".to_vec())
+            } else {
+                None
+            },
+        }
+    }
+
     // -----------------------------------------------------------------
     // bridge_error_to_reason mapping
     // -----------------------------------------------------------------
@@ -1247,6 +1302,19 @@ mod spilman_handler_tests {
             close_error_to_reason(&CloseError::UnknownChannel { status: 404 }),
             ReasonCode::FundingInvalid,
         );
+    }
+
+    #[test]
+    fn cooperative_close_payload_round_trips_as_cdk_spilman_payment_schema() {
+        let close = make_close(channel_id_bytes(0xA1), 55, 0x0F, true);
+        let json = cooperative_close_payment_json(&close).expect("serialize payment payload");
+        let parsed: Payment =
+            serde_json::from_str(&json).expect("parse as cdk-spilman Payment schema");
+        assert_eq!(parsed.channel_id, channel_id_hex(0xA1));
+        assert_eq!(parsed.balance, 55);
+        assert_eq!(parsed.signature.len(), 128);
+        assert!(parsed.params.is_some());
+        assert!(parsed.funding_proofs.is_some());
     }
 
     // -----------------------------------------------------------------
@@ -1333,15 +1401,7 @@ mod spilman_handler_tests {
         let bridge = SpilmanBridge::new(TestHost::new());
         let net = UnreachableNetworking;
 
-        let close = ChannelClose {
-            msg_type: MessageType::ChannelClose as u8,
-            channel_id: Hash32(channel_id_bytes(0xDD)),
-            final_balance: 50,
-            final_signature: TgSignature([0u8; 64]),
-            reason: CloseReason::Normal,
-            channel_params_json: None,
-            funding_proofs_json: None,
-        };
+        let close = make_close(channel_id_bytes(0xDD), 50, 0x00, false);
 
         let resp = process_channel_close(&bridge, &net, &close).await;
 
@@ -1359,15 +1419,7 @@ mod spilman_handler_tests {
         let bridge = SpilmanBridge::new(TestHost::new());
         let net = UnreachableNetworking;
 
-        let close = ChannelClose {
-            msg_type: MessageType::ChannelClose as u8,
-            channel_id: Hash32(channel_id_bytes(0xEE)),
-            final_balance: 100,
-            final_signature: TgSignature([0x42; 64]),
-            reason: CloseReason::Normal,
-            channel_params_json: None,
-            funding_proofs_json: None,
-        };
+        let close = make_close(channel_id_bytes(0xEE), 100, 0x42, false);
 
         let resp = process_channel_close(&bridge, &net, &close).await;
         assert!(
