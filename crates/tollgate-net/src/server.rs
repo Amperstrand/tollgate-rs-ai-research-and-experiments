@@ -180,15 +180,38 @@ use {
     async_trait::async_trait,
     cashu::nuts::{CurrencyUnit, Id, Proof as CashuProof, PublicKey, SecretKey},
     cdk_spilman::{
-        compute_channel_secret_from_hex, sign_with_tweaked_key_util, ChannelFunding, ChannelPolicy,
-        ChannelState, ClosingData,
+        compute_channel_secret_from_hex, sign_with_tweaked_key_util, BridgeError, ChannelFunding,
+        ChannelPolicy, ChannelState, CloseError, ClosingData,
     },
     serde_json,
     std::collections::HashMap,
     std::sync::atomic::{AtomicU64, Ordering},
     std::time::{SystemTime, UNIX_EPOCH},
-    tollgate_core::protocol::{BalanceAck, CloseAck, MessageType},
+    tollgate_core::protocol::{
+        BalanceAck, BalanceUpdate, ChannelClose, CloseAck, MessageType, ReasonCode, Reject,
+    },
 };
+
+// ---------------------------------------------------------------------------
+// Spilman channel lifecycle state (server-side, in-memory)
+// ---------------------------------------------------------------------------
+//
+// Distinct from the cdk-spilman `ChannelState` (Open/Closing/Closed) so the
+// server can distinguish cooperative vs unilateral close paths and durable
+// settlement failures. Held inside `ServerSpilmanHost`.
+
+/// Server-side per-channel lifecycle state. In-memory only for M3.
+#[cfg(feature = "spilman")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelLifecycleState {
+    Opening,
+    Open,
+    ClosingCooperative,
+    ClosingUnilateral,
+    Closed,
+    SettlementFailedRetryable,
+    SettlementFailedFinal,
+}
 
 #[cfg(feature = "spilman")]
 fn encode_hex(bytes: &[u8]) -> String {
@@ -255,6 +278,7 @@ struct ServerSpilmanHost {
     channels: std::sync::Mutex<HashMap<String, ChannelFunding>>,
     payments: std::sync::Mutex<HashMap<String, PaymentProof>>,
     states: std::sync::Mutex<HashMap<String, ChannelState>>,
+    lifecycle_states: std::sync::Mutex<HashMap<String, ChannelLifecycleState>>,
     closing_data: std::sync::Mutex<HashMap<String, ClosingData>>,
     keyset_infos: std::sync::Mutex<HashMap<Id, String>>,
     active_keysets: std::sync::Mutex<HashMap<String, Vec<Id>>>,
@@ -269,6 +293,7 @@ impl ServerSpilmanHost {
             channels: std::sync::Mutex::new(HashMap::new()),
             payments: std::sync::Mutex::new(HashMap::new()),
             states: std::sync::Mutex::new(HashMap::new()),
+            lifecycle_states: std::sync::Mutex::new(HashMap::new()),
             closing_data: std::sync::Mutex::new(HashMap::new()),
             keyset_infos: std::sync::Mutex::new(HashMap::new()),
             active_keysets: std::sync::Mutex::new(HashMap::new()),
@@ -292,6 +317,18 @@ impl ServerSpilmanHost {
 
     fn receiver_pubkey_hex(&self) -> String {
         self.receiver_secret.public_key().to_hex()
+    }
+
+    fn set_lifecycle(&self, cid: &str, new_state: ChannelLifecycleState) {
+        self.lifecycle_states
+            .lock()
+            .unwrap()
+            .insert(cid.to_string(), new_state);
+    }
+
+    #[allow(dead_code)]
+    fn get_lifecycle(&self, cid: &str) -> Option<ChannelLifecycleState> {
+        self.lifecycle_states.lock().unwrap().get(cid).copied()
     }
 }
 
@@ -322,6 +359,8 @@ impl SpilmanHost<()> for ServerSpilmanHost {
             .lock()
             .unwrap()
             .insert(cid.to_string(), ChannelState::Open);
+        // Promote lifecycle state to Open on first verified payment.
+        self.set_lifecycle(cid, ChannelLifecycleState::Open);
     }
 
     fn get_amount_due(&self, _cid: &str, _ctx: Option<&()>) -> u64 {
@@ -415,6 +454,7 @@ impl SpilmanHost<()> for ServerSpilmanHost {
             .lock()
             .unwrap()
             .insert(cid.to_string(), ChannelState::Closed);
+        self.set_lifecycle(cid, ChannelLifecycleState::Closed);
         Ok(())
     }
 
@@ -559,74 +599,15 @@ async fn handle_spilman_message(
     drop(session);
 
     if let Message::BalanceUpdate(ref update) = msg {
-        let channel_id_hex = encode_hex(&update.channel_id.0);
-        let signature_hex = encode_hex(&update.balance_signature.0);
-
-        let params_val = update
-            .channel_params_json
-            .as_ref()
-            .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
-        let proofs_val: Option<Vec<CashuProof>> = update
-            .funding_proofs_json
-            .as_ref()
-            .and_then(|b| serde_json::from_slice(b).ok());
-
         let spilman_state = state.spilman.lock().await;
-        match spilman_state.bridge.process_payment(
-            &channel_id_hex,
-            update.cumulative_balance,
-            &signature_hex,
-            params_val.as_ref(),
-            proofs_val.as_deref(),
-            &(),
-        ) {
-            Ok(result) => {
-                tracing::info!(
-                    "[spilman] Payment accepted: channel={} balance={}",
-                    &channel_id_hex[..channel_id_hex.len().min(16)],
-                    result.balance,
-                );
-                responses.push(Message::BalanceAck(BalanceAck {
-                    msg_type: MessageType::BalanceAck as u8,
-                    channel_id: update.channel_id.clone(),
-                    accepted_balance: result.balance,
-                }));
-            }
-            Err(e) => {
-                tracing::warn!("[spilman] Payment rejected: {e}");
-                responses.push(Message::BalanceAck(BalanceAck {
-                    msg_type: MessageType::BalanceAck as u8,
-                    channel_id: update.channel_id.clone(),
-                    accepted_balance: update.cumulative_balance,
-                }));
-            }
-        }
+        let resp = process_balance_update(&spilman_state.bridge, update);
+        responses.push(resp);
     }
 
     if let Message::ChannelClose(ref close) = msg {
-        let channel_id_hex = encode_hex(&close.channel_id.0);
-
-        let close_params_val = close
-            .channel_params_json
-            .as_ref()
-            .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
-        let close_proofs_val: Option<Vec<CashuProof>> = close
-            .funding_proofs_json
-            .as_ref()
-            .and_then(|b| serde_json::from_slice(b).ok());
-
-        let _ = (close_params_val, close_proofs_val);
-
-        tracing::info!(
-            "[spilman] ChannelClose: channel={} balance={}",
-            &channel_id_hex[..channel_id_hex.len().min(16)],
-            close.final_balance,
-        );
-        responses.push(Message::CloseAck(CloseAck {
-            msg_type: MessageType::CloseAck as u8,
-            channel_id: close.channel_id.clone(),
-            accepted_balance: close.final_balance,
-        }));
+        let spilman_state = state.spilman.lock().await;
+        let resp = process_channel_close(&spilman_state.bridge, &spilman_state.net, close).await;
+        responses.push(resp);
     }
 
     log_responses(&responses);
@@ -640,6 +621,196 @@ async fn handle_spilman_message(
                 tracing::error!("Failed to encode response: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, vec![])
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spilman protocol-message handlers (extracted for unit testability)
+// ---------------------------------------------------------------------------
+
+/// Map a Spilman `BridgeError` to the `ReasonCode` used in protocol-level
+/// `Reject` messages. The mapping is intentionally narrow: signature / balance
+/// / channel-state failures map to `BalanceVerificationFailed`; funding /
+/// capacity / policy failures map to `FundingInvalid`; everything else maps
+/// to `Other`.
+#[cfg(feature = "spilman")]
+pub(crate) fn bridge_error_to_reason(err: &BridgeError) -> ReasonCode {
+    match err {
+        BridgeError::InvalidSignature(_)
+        | BridgeError::BalanceMismatch { .. }
+        | BridgeError::InsufficientBalance { .. }
+        | BridgeError::BalanceExceedsCapacity { .. }
+        | BridgeError::ChannelIdMismatch
+        | BridgeError::ChannelClosed
+        | BridgeError::ChannelClosing => ReasonCode::BalanceVerificationFailed,
+        BridgeError::UnknownChannel
+        | BridgeError::ValidationFailed(_)
+        | BridgeError::CapacityTooSmall { .. }
+        | BridgeError::ExpiryTooSoon { .. }
+        | BridgeError::MaxAmountExceeded { .. }
+        | BridgeError::ReceiverKeyNotAcceptable
+        | BridgeError::MintOrKeysetNotAcceptable
+        | BridgeError::UnsupportedUnit(_) => ReasonCode::FundingInvalid,
+        BridgeError::InvalidRequest(_)
+        | BridgeError::ServerMisconfigured(_)
+        | BridgeError::Internal(_) => ReasonCode::Other,
+    }
+}
+
+/// Map a Spilman `CloseError` to the `ReasonCode` used in protocol-level
+/// `Reject` messages for `ChannelClose`.
+#[cfg(feature = "spilman")]
+pub(crate) fn close_error_to_reason(err: &CloseError) -> ReasonCode {
+    match err {
+        CloseError::ValidationFailed { .. } | CloseError::AlreadyClosed { .. } => {
+            ReasonCode::BalanceVerificationFailed
+        }
+        CloseError::UnknownChannel { .. } => ReasonCode::FundingInvalid,
+        CloseError::MintRejected { .. }
+        | CloseError::MintRejectedAfterRetry { .. }
+        | CloseError::UnblindFailed { .. }
+        | CloseError::StorageFailed { .. } => ReasonCode::Other,
+    }
+}
+
+/// Process a `BalanceUpdate` against the Spilman bridge and produce a single
+/// response message: either `BalanceAck` (on verified accept) or `Reject` (on
+/// any verification / state failure).
+///
+/// Stale or lower cumulative balances are rejected by the underlying
+/// `process_payment`/`validate_payment` flow via `BridgeError::InsufficientBalance`,
+/// which maps to `ReasonCode::BalanceVerificationFailed`. Duplicate
+/// (idempotent) balances at the current `amount_due` succeed and re-emit the
+/// same `BalanceAck`.
+#[cfg(feature = "spilman")]
+pub(crate) fn process_balance_update<H>(
+    bridge: &SpilmanBridge<H, ()>,
+    update: &BalanceUpdate,
+) -> Message
+where
+    H: SpilmanHost<()>,
+{
+    let channel_id_hex = encode_hex(&update.channel_id.0);
+    let signature_hex = encode_hex(&update.balance_signature.0);
+
+    let params_val = update
+        .channel_params_json
+        .as_ref()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok());
+    let proofs_val: Option<Vec<CashuProof>> = update
+        .funding_proofs_json
+        .as_ref()
+        .and_then(|b| serde_json::from_slice(b).ok());
+
+    match bridge.process_payment(
+        &channel_id_hex,
+        update.cumulative_balance,
+        &signature_hex,
+        params_val.as_ref(),
+        proofs_val.as_deref(),
+        &(),
+    ) {
+        Ok(result) => {
+            tracing::info!(
+                "[spilman] Payment accepted: channel={} balance={}",
+                &channel_id_hex[..channel_id_hex.len().min(16)],
+                result.balance,
+            );
+            Message::BalanceAck(BalanceAck {
+                msg_type: MessageType::BalanceAck as u8,
+                channel_id: update.channel_id.clone(),
+                accepted_balance: result.balance,
+            })
+        }
+        Err(e) => {
+            let reason_code = bridge_error_to_reason(&e);
+            let reason_text = format!("balance update rejected: {e}");
+            tracing::warn!("[spilman] Payment rejected ({reason_code:?}): {e}");
+            Message::Reject(Reject {
+                msg_type: MessageType::Reject as u8,
+                rejected_type: MessageType::BalanceUpdate as u8,
+                reason_code,
+                reason_text: Some(reason_text),
+            })
+        }
+    }
+}
+
+/// Process a `ChannelClose` by executing the cooperative-close settlement
+/// against the mint via the bridge. Returns `CloseAck` only after the swap
+/// succeeds; otherwise returns a `Reject` describing why settlement failed.
+#[cfg(feature = "spilman")]
+pub(crate) async fn process_channel_close<H, N>(
+    bridge: &SpilmanBridge<H, ()>,
+    net: &N,
+    close: &ChannelClose,
+) -> Message
+where
+    H: SpilmanHost<()>,
+    N: SpilmanAsyncNetworking + Sync,
+{
+    let channel_id_hex = encode_hex(&close.channel_id.0);
+    let signature_hex = encode_hex(&close.final_signature.0);
+
+    // Build a Payment JSON for the bridge. `params` and `funding_proofs` are
+    // only populated if the client included them (i.e. for channels not yet
+    // registered with the server).
+    let params_val: Option<serde_json::Value> = close
+        .channel_params_json
+        .as_ref()
+        .and_then(|b| serde_json::from_slice(b).ok());
+    let proofs_val: Option<Vec<CashuProof>> = close
+        .funding_proofs_json
+        .as_ref()
+        .and_then(|b| serde_json::from_slice(b).ok());
+
+    let mut payment_obj = serde_json::json!({
+        "channel_id": channel_id_hex,
+        "balance": close.final_balance,
+        "signature": signature_hex,
+    });
+    if let Some(p) = params_val {
+        payment_obj["params"] = p;
+    }
+    if let Some(pr) = proofs_val {
+        payment_obj["funding_proofs"] = serde_json::to_value(pr).unwrap_or(serde_json::Value::Null);
+    }
+    let payment_json = payment_obj.to_string();
+
+    tracing::info!(
+        "[spilman] ChannelClose: channel={} balance={} — executing cooperative close",
+        &channel_id_hex[..channel_id_hex.len().min(16)],
+        close.final_balance,
+    );
+
+    match bridge
+        .execute_cooperative_close_async(&payment_json, net)
+        .await
+    {
+        Ok(result) => {
+            tracing::info!(
+                "[spilman] Cooperative close settled: channel={} receiver_sum={} sender_sum={}",
+                &channel_id_hex[..channel_id_hex.len().min(16)],
+                result.receiver_sum,
+                result.sender_sum,
+            );
+            Message::CloseAck(CloseAck {
+                msg_type: MessageType::CloseAck as u8,
+                channel_id: close.channel_id.clone(),
+                accepted_balance: close.final_balance,
+            })
+        }
+        Err(e) => {
+            let reason_code = close_error_to_reason(&e);
+            let reason_text = format!("cooperative close failed: {e:?}");
+            tracing::warn!("[spilman] Cooperative close failed ({reason_code:?}): {e:?}");
+            Message::Reject(Reject {
+                msg_type: MessageType::Reject as u8,
+                rejected_type: MessageType::ChannelClose as u8,
+                reason_code,
+                reason_text: Some(reason_text),
+            })
         }
     }
 }
@@ -670,6 +841,18 @@ async fn handle_force_close(
     );
 
     let spilman_state = state.spilman.lock().await;
+
+    // Mark the channel as ClosingUnilateral while we attempt settlement so
+    // that any concurrent observer sees the in-progress state. The bridge
+    // separately uses the host's `get_balance_and_signature_for_unilateral_exit`
+    // to read the latest accepted (verified) PaymentProof — never an
+    // unverified message — so the closing balance always matches the last
+    // `BalanceAck` we emitted.
+    spilman_state
+        .bridge
+        .host()
+        .set_lifecycle(&channel_id, ChannelLifecycleState::ClosingUnilateral);
+
     match spilman_state
         .bridge
         .execute_unilateral_close_async(&channel_id, &spilman_state.net)
@@ -682,6 +865,12 @@ async fn handle_force_close(
                 result.receiver_sum,
                 result.sender_sum,
             );
+            // `mark_channel_closed` already promotes lifecycle to Closed, but
+            // be explicit in case the bridge ever changes that contract.
+            spilman_state
+                .bridge
+                .host()
+                .set_lifecycle(&channel_id, ChannelLifecycleState::Closed);
             (
                 StatusCode::OK,
                 serde_json::json!({
@@ -694,11 +883,496 @@ async fn handle_force_close(
             )
         }
         Err(e) => {
-            tracing::warn!("[spilman] Unilateral close failed: {e}");
+            let lifecycle = match &e {
+                // Validation, unknown channel, or already-closed errors are
+                // final: retrying with the same inputs won't succeed.
+                CloseError::ValidationFailed { .. }
+                | CloseError::UnknownChannel { .. }
+                | CloseError::AlreadyClosed { .. } => ChannelLifecycleState::SettlementFailedFinal,
+                // Mint / network / storage errors may succeed on retry.
+                CloseError::MintRejected { .. }
+                | CloseError::MintRejectedAfterRetry { .. }
+                | CloseError::UnblindFailed { .. }
+                | CloseError::StorageFailed { .. } => {
+                    ChannelLifecycleState::SettlementFailedRetryable
+                }
+            };
+            spilman_state
+                .bridge
+                .host()
+                .set_lifecycle(&channel_id, lifecycle);
+            tracing::warn!("[spilman] Unilateral close failed ({lifecycle:?}): {e:?}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("close failed: {e}"),
+                format!("close failed: {e:?}"),
             )
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spilman handler unit tests
+// ---------------------------------------------------------------------------
+//
+// These tests live inside `server.rs` so that `process_balance_update`,
+// `process_channel_close`, `bridge_error_to_reason`, and
+// `close_error_to_reason` can stay `pub(crate)` and not be exposed as public
+// API solely for testing.
+//
+// They exercise only the rejection paths (where the bridge rejects the
+// input before any mint call is attempted) — deterministic, no network, no
+// real mint. The cooperative-close *success* path requires a real funded
+// channel and is covered by:
+//   - `spilman_service_integration::spilman_service_full_lifecycle`
+//     (`#[ignore]`, runs against testnut)
+//   - the `spilman-e2e` CI job which runs `tollgate-net` against a local
+//     `cdk-spilman-test-mintd`.
+
+#[cfg(all(test, feature = "spilman"))]
+mod spilman_handler_tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+    use tollgate_core::protocol::{ChannelClose, CloseReason, Hash32, Signature as TgSignature};
+
+    // -----------------------------------------------------------------
+    // Minimal in-memory SpilmanHost for tests
+    // -----------------------------------------------------------------
+
+    struct TestHost {
+        receiver_secret: SecretKey,
+        channels: RefCell<HashMap<String, ChannelFunding>>,
+        payments: RefCell<HashMap<String, PaymentProof>>,
+        states: RefCell<HashMap<String, ChannelState>>,
+        closing_data: RefCell<HashMap<String, ClosingData>>,
+        amount_due: Cell<u64>,
+    }
+
+    impl TestHost {
+        fn new() -> Self {
+            Self {
+                receiver_secret: SecretKey::generate(),
+                channels: RefCell::new(HashMap::new()),
+                payments: RefCell::new(HashMap::new()),
+                states: RefCell::new(HashMap::new()),
+                closing_data: RefCell::new(HashMap::new()),
+                amount_due: Cell::new(0),
+            }
+        }
+
+        /// Pre-populate a synthetic open channel so subsequent BalanceUpdate
+        /// messages reach the signature-verification path rather than being
+        /// rejected for missing funding.
+        fn seed_channel(&self, channel_id: &str) {
+            let funding = ChannelFunding {
+                params_json: r#"{"capacity":1000,"expiry_timestamp":99999999999,"mint":"http://invalid.local","unit":"sat"}"#.to_owned(),
+                funding_proofs_json: "[]".to_owned(),
+                channel_secret_hex:
+                    "0000000000000000000000000000000000000000000000000000000000000001".to_owned(),
+                keyset_info_json: r#"{"id":"009a1f293253e41e","unit":"sat","active":true,"input_fee_ppk":0,"keys":{}}"#.to_owned(),
+            };
+            self.channels
+                .borrow_mut()
+                .insert(channel_id.to_owned(), funding);
+            self.states
+                .borrow_mut()
+                .insert(channel_id.to_owned(), ChannelState::Open);
+        }
+
+        fn record_accepted(&self, channel_id: &str, balance: u64, signature: &str) {
+            self.payments.borrow_mut().insert(
+                channel_id.to_owned(),
+                PaymentProof {
+                    balance,
+                    signature: signature.to_owned(),
+                },
+            );
+            self.amount_due.set(balance);
+        }
+    }
+
+    impl SpilmanHost<()> for TestHost {
+        fn receiver_key_is_acceptable(&self, pk: &PublicKey) -> bool {
+            *pk == self.receiver_secret.public_key()
+        }
+
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _id: &Id) -> bool {
+            true
+        }
+
+        fn get_funding(&self, cid: &str) -> Option<ChannelFunding> {
+            self.channels.borrow().get(cid).cloned()
+        }
+
+        fn save_funding(&self, cid: &str, funding: ChannelFunding, payment: PaymentProof) {
+            self.channels.borrow_mut().insert(cid.to_owned(), funding);
+            self.payments.borrow_mut().insert(cid.to_owned(), payment);
+            self.states
+                .borrow_mut()
+                .insert(cid.to_owned(), ChannelState::Open);
+        }
+
+        fn get_amount_due(&self, _cid: &str, _ctx: Option<&()>) -> u64 {
+            self.amount_due.get()
+        }
+
+        fn record_payment(&self, cid: &str, payment: PaymentProof, _ctx: &()) {
+            self.payments
+                .borrow_mut()
+                .insert(cid.to_owned(), payment.clone());
+            self.amount_due.set(payment.balance);
+        }
+
+        fn get_channel_state(&self, cid: &str) -> ChannelState {
+            self.states
+                .borrow()
+                .get(cid)
+                .copied()
+                .unwrap_or(ChannelState::Open)
+        }
+
+        fn mark_channel_closing(
+            &self,
+            cid: &str,
+            expiry_ts: u64,
+            payment: PaymentProof,
+        ) -> Result<(), String> {
+            self.states
+                .borrow_mut()
+                .insert(cid.to_owned(), ChannelState::Closing);
+            self.closing_data.borrow_mut().insert(
+                cid.to_owned(),
+                ClosingData {
+                    expiry_timestamp: expiry_ts,
+                    balance: payment.balance,
+                    signature: payment.signature,
+                },
+            );
+            Ok(())
+        }
+
+        fn get_closing_data(&self, cid: &str) -> Option<ClosingData> {
+            self.closing_data.borrow().get(cid).cloned()
+        }
+
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy {
+                min_capacity: 1,
+                min_expiry_in_seconds: 60,
+                max_amount_per_output: Some(64),
+            })
+        }
+
+        fn now_seconds(&self) -> u64 {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        }
+
+        fn get_balance_and_signature_for_unilateral_exit(&self, cid: &str) -> Option<PaymentProof> {
+            self.payments.borrow().get(cid).cloned()
+        }
+
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
+            vec![]
+        }
+
+        fn get_keyset_info(&self, _mint: &str, _kid: &Id) -> Option<String> {
+            None
+        }
+
+        fn mark_channel_closed(
+            &self,
+            cid: &str,
+            _expiry_ts: u64,
+            _balance: u64,
+            _receiver_proofs: &str,
+            _sender_proofs: &str,
+            _receiver_sum: u64,
+            _sender_sum: u64,
+        ) -> Result<(), String> {
+            self.states
+                .borrow_mut()
+                .insert(cid.to_owned(), ChannelState::Closed);
+            Ok(())
+        }
+
+        fn compute_channel_secret(
+            &self,
+            _receiver_pk_hex: &str,
+            _sender_pk_hex: &str,
+        ) -> Result<String, String> {
+            Err("not used in these tests".to_owned())
+        }
+
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pk_hex: &str,
+            _message_hex: &str,
+            _tweak_hex: &str,
+        ) -> Result<String, String> {
+            Err("not used in these tests".to_owned())
+        }
+    }
+
+    /// Networking that panics if invoked. Used in tests that only exercise
+    /// the rejection path (where the bridge fails before any swap is tried).
+    struct UnreachableNetworking;
+
+    #[async_trait]
+    impl SpilmanAsyncNetworking for UnreachableNetworking {
+        async fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            _swap_request_json: &str,
+        ) -> Result<String, String> {
+            panic!("UnreachableNetworking::call_mint_swap should not be called in this test");
+        }
+
+        async fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------
+
+    fn channel_id_bytes(b: u8) -> [u8; 32] {
+        [b; 32]
+    }
+
+    fn channel_id_hex(b: u8) -> String {
+        let mut s = String::with_capacity(64);
+        for _ in 0..32 {
+            s.push_str(&format!("{b:02x}"));
+        }
+        s
+    }
+
+    fn make_update(
+        channel_id: [u8; 32],
+        balance: u64,
+        sig_byte: u8,
+        with_funding: bool,
+    ) -> BalanceUpdate {
+        BalanceUpdate {
+            msg_type: MessageType::BalanceUpdate as u8,
+            channel_id: Hash32(channel_id),
+            cumulative_balance: balance,
+            balance_signature: TgSignature([sig_byte; 64]),
+            net_amount: 0,
+            channel_params_json: if with_funding {
+                Some(br#"{"capacity":1000}"#.to_vec())
+            } else {
+                None
+            },
+            funding_proofs_json: if with_funding {
+                Some(b"[]".to_vec())
+            } else {
+                None
+            },
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // bridge_error_to_reason mapping
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn bridge_error_signature_failure_maps_to_balance_verification_failed() {
+        assert_eq!(
+            bridge_error_to_reason(&BridgeError::InvalidSignature("bad sig".into())),
+            ReasonCode::BalanceVerificationFailed,
+        );
+    }
+
+    #[test]
+    fn bridge_error_insufficient_balance_maps_to_balance_verification_failed() {
+        assert_eq!(
+            bridge_error_to_reason(&BridgeError::InsufficientBalance {
+                balance: 10,
+                amount_due: 30,
+            }),
+            ReasonCode::BalanceVerificationFailed,
+        );
+    }
+
+    #[test]
+    fn bridge_error_balance_exceeds_capacity_maps_to_balance_verification_failed() {
+        assert_eq!(
+            bridge_error_to_reason(&BridgeError::BalanceExceedsCapacity {
+                balance: 5_000,
+                capacity: 1_000,
+            }),
+            ReasonCode::BalanceVerificationFailed,
+        );
+    }
+
+    #[test]
+    fn bridge_error_unknown_channel_maps_to_funding_invalid() {
+        assert_eq!(
+            bridge_error_to_reason(&BridgeError::UnknownChannel),
+            ReasonCode::FundingInvalid,
+        );
+    }
+
+    #[test]
+    fn bridge_error_invalid_request_maps_to_other() {
+        assert_eq!(
+            bridge_error_to_reason(&BridgeError::InvalidRequest("empty".into())),
+            ReasonCode::Other,
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // close_error_to_reason mapping
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn close_error_validation_failed_maps_to_balance_verification_failed() {
+        assert_eq!(
+            close_error_to_reason(&CloseError::ValidationFailed {
+                reason: "bad sig".into(),
+                status: 402,
+                expected_balance: None,
+                actual_balance: None,
+            }),
+            ReasonCode::BalanceVerificationFailed,
+        );
+    }
+
+    #[test]
+    fn close_error_unknown_channel_maps_to_funding_invalid() {
+        assert_eq!(
+            close_error_to_reason(&CloseError::UnknownChannel { status: 404 }),
+            ReasonCode::FundingInvalid,
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // process_balance_update — rejection paths
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn balance_update_unknown_channel_without_params_returns_reject() {
+        // No pre-seeded channel and no params/proofs included → UnknownChannel.
+        let bridge = SpilmanBridge::new(TestHost::new());
+        let update = make_update(channel_id_bytes(0xAA), 10, 0, /*with_funding=*/ false);
+        let resp = process_balance_update(&bridge, &update);
+
+        match resp {
+            Message::Reject(r) => {
+                assert_eq!(r.rejected_type, MessageType::BalanceUpdate as u8);
+                assert_eq!(r.reason_code, ReasonCode::FundingInvalid);
+            }
+            other => panic!("expected Reject, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn balance_update_invalid_signature_returns_reject() {
+        // Channel exists with synthetic funding, but signature is garbage.
+        let host = TestHost::new();
+        let cid_hex = channel_id_hex(0xBB);
+        host.seed_channel(&cid_hex);
+        let bridge = SpilmanBridge::new(host);
+
+        let update = make_update(channel_id_bytes(0xBB), 10, 0xFF, false);
+        let resp = process_balance_update(&bridge, &update);
+
+        match resp {
+            Message::Reject(r) => {
+                assert_eq!(r.rejected_type, MessageType::BalanceUpdate as u8);
+                assert_eq!(r.reason_code, ReasonCode::BalanceVerificationFailed);
+                assert!(r.reason_text.is_some(), "reason text should be present");
+            }
+            other => panic!("expected Reject for invalid sig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn balance_update_stale_lower_balance_returns_reject_and_does_not_overwrite() {
+        // After accepting balance=30 (simulated), a subsequent BalanceUpdate
+        // with balance=10 must be rejected and must NOT lower amount_due.
+        let host = TestHost::new();
+        let cid_hex = channel_id_hex(0xCC);
+        host.seed_channel(&cid_hex);
+        host.record_accepted(&cid_hex, 30, "previously_accepted_sig");
+        let bridge = SpilmanBridge::new(host);
+
+        let stale = make_update(channel_id_bytes(0xCC), 10, 0x11, false);
+        let resp = process_balance_update(&bridge, &stale);
+
+        match resp {
+            Message::Reject(r) => {
+                assert_eq!(r.rejected_type, MessageType::BalanceUpdate as u8);
+                assert_eq!(r.reason_code, ReasonCode::BalanceVerificationFailed);
+            }
+            other => panic!("expected Reject for stale balance, got {other:?}"),
+        }
+
+        // Accepted state must be untouched.
+        assert_eq!(bridge.host().amount_due.get(), 30);
+        let last = bridge
+            .host()
+            .payments
+            .borrow()
+            .get(&cid_hex)
+            .cloned()
+            .expect("payment still present");
+        assert_eq!(last.balance, 30);
+        assert_eq!(last.signature, "previously_accepted_sig");
+    }
+
+    // -----------------------------------------------------------------
+    // process_channel_close — rejection paths
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn channel_close_with_empty_signature_returns_reject() {
+        let bridge = SpilmanBridge::new(TestHost::new());
+        let net = UnreachableNetworking;
+
+        let close = ChannelClose {
+            msg_type: MessageType::ChannelClose as u8,
+            channel_id: Hash32(channel_id_bytes(0xDD)),
+            final_balance: 50,
+            final_signature: TgSignature([0u8; 64]),
+            reason: CloseReason::Normal,
+            channel_params_json: None,
+            funding_proofs_json: None,
+        };
+
+        let resp = process_channel_close(&bridge, &net, &close).await;
+
+        match resp {
+            Message::Reject(r) => {
+                assert_eq!(r.rejected_type, MessageType::ChannelClose as u8);
+                assert!(r.reason_text.is_some());
+            }
+            other => panic!("expected Reject from cooperative close, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_close_unknown_channel_returns_reject_without_calling_mint() {
+        let bridge = SpilmanBridge::new(TestHost::new());
+        let net = UnreachableNetworking;
+
+        let close = ChannelClose {
+            msg_type: MessageType::ChannelClose as u8,
+            channel_id: Hash32(channel_id_bytes(0xEE)),
+            final_balance: 100,
+            final_signature: TgSignature([0x42; 64]),
+            reason: CloseReason::Normal,
+            channel_params_json: None,
+            funding_proofs_json: None,
+        };
+
+        let resp = process_channel_close(&bridge, &net, &close).await;
+        assert!(
+            matches!(resp, Message::Reject(_)),
+            "unknown channel must produce Reject, not CloseAck (got {resp:?})"
+        );
     }
 }
