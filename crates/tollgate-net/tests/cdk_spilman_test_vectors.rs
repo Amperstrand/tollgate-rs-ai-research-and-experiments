@@ -66,15 +66,19 @@ async fn http_post(url: &str, body: &str) -> Result<String, String> {
 /// Compute the raw ECDH shared secret (before domain separation) as hex.
 /// The channel_secret in cdk-spilman is SHA256("Cashu_Spilman_channel_secret_v1" || raw_ecdh).
 #[cfg(feature = "spilman")]
-fn compute_raw_ecdh_hex(my_secret: &SecretKey, their_pubkey: &PublicKey) -> Result<String, String> {
+fn compute_raw_ecdh_hex(my_secret: &SecretKey, their_pubkey: &PublicKey) -> String {
     let raw = SharedSecret::new(their_pubkey, my_secret);
-    Ok(hex_encode(&raw.secret_bytes()))
+    hex_encode(&raw.secret_bytes())
 }
 
 /// Hex-encode bytes (inlined to avoid importing cashu::util::hex).
 #[cfg(feature = "spilman")]
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Resolve the output path for test-vectors.json.
@@ -122,7 +126,7 @@ async fn capture_spilman_test_vectors() {
     // ─── Step 2: Compute channel secrets ───
     // Raw ECDH (before domain separation)
     let ecdh_shared_secret_hex =
-        compute_raw_ecdh_hex(&alice_secret, &charlie_pubkey).expect("raw ECDH");
+        compute_raw_ecdh_hex(&alice_secret, &charlie_pubkey);
 
     // Domain-separated channel secret (what cdk-spilman uses internally)
     let channel_secret_hex =
@@ -378,22 +382,22 @@ async fn capture_spilman_test_vectors() {
     // Compute tweaked public key: sender_pubkey + tweak_scalar
     // We can derive it from the sender's key and the tweak.
     let tweaked_pub_hex = {
-        let inner_pk: &secp256k1::PublicKey = &alice_pubkey;
-        let (_, parity) = inner_pk.x_only_public_key();
-        let inner_sk: secp256k1::SecretKey = *alice_secret;
+        let alice_pk: &secp256k1::PublicKey = &alice_pubkey;
+        let (_, parity) = alice_pk.x_only_public_key();
+        let base_sk: secp256k1::SecretKey = *alice_secret;
         let effective = if parity == Parity::Odd {
-            inner_sk.negate()
+            base_sk.negate()
         } else {
-            inner_sk
+            base_sk
         };
         let tweak_bytes = hex_decode(&tweak_scalar_hex).expect("tweak hex");
         let mut tweak_arr = [0u8; 32];
         tweak_arr.copy_from_slice(&tweak_bytes);
         let tweak = Scalar::from_be_bytes(tweak_arr).expect("tweak scalar");
-        let tweaked_sk = effective.add_tweak(&tweak).expect("add tweak");
+        let adjusted_sk = effective.add_tweak(&tweak).expect("add tweak");
         let secp = Secp256k1::new();
-        let tweaked_pk = secp256k1::PublicKey::from_secret_key(&secp, &tweaked_sk);
-        tweaked_pk.to_string()
+        let derived_pk = secp256k1::PublicKey::from_secret_key(&secp, &adjusted_sk);
+        derived_pk.to_string()
     };
 
     // Get the actual signature
