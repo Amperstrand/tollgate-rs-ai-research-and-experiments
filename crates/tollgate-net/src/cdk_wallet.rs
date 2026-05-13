@@ -17,7 +17,9 @@ use tollgate_core::error::WalletError;
 use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
 
-use crate::v1::server::mint_quote_wallet::{MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult, QuoteState};
+use crate::v1::server::mint_quote_wallet::{
+    MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult, QuoteState,
+};
 
 /// CDK-backed wallet implementing [`Wallet`].
 ///
@@ -360,10 +362,7 @@ impl MintQuoteWallet for CdkWallet {
         })
     }
 
-    async fn check_mint_quote_status(
-        &self,
-        quote_id: &str,
-    ) -> Result<QuoteState, MintQuoteError> {
+    async fn check_mint_quote_status(&self, quote_id: &str) -> Result<QuoteState, MintQuoteError> {
         let status = self
             .wallet
             .check_mint_quote_status(quote_id)

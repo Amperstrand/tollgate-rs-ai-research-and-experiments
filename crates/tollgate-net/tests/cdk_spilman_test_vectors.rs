@@ -74,11 +74,13 @@ fn compute_raw_ecdh_hex(my_secret: &SecretKey, their_pubkey: &PublicKey) -> Stri
 /// Hex-encode bytes (inlined to avoid importing cashu::util::hex).
 #[cfg(feature = "spilman")]
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        use std::fmt::Write;
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// Resolve the output path for test-vectors.json.
@@ -125,8 +127,7 @@ async fn capture_spilman_test_vectors() {
 
     // ─── Step 2: Compute channel secrets ───
     // Raw ECDH (before domain separation)
-    let ecdh_shared_secret_hex =
-        compute_raw_ecdh_hex(&alice_secret, &charlie_pubkey);
+    let ecdh_shared_secret_hex = compute_raw_ecdh_hex(&alice_secret, &charlie_pubkey);
 
     // Domain-separated channel secret (what cdk-spilman uses internally)
     let channel_secret_hex =

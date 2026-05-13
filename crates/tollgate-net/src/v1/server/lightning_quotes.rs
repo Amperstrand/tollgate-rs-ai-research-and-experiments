@@ -30,10 +30,22 @@ pub enum QuoteStoreError {
 pub trait LightningQuoteStore: Send + Sync {
     async fn insert(&self, record: LightningQuoteRecord) -> Result<(), QuoteStoreError>;
     async fn get(&self, quote_id: &str) -> Result<Option<LightningQuoteRecord>, QuoteStoreError>;
-    async fn get_for_mac(&self, quote_id: &str, mac: &str) -> Result<Option<LightningQuoteRecord>, QuoteStoreError>;
-    async fn update(&self, quote_id: &str, record: LightningQuoteRecord) -> Result<(), QuoteStoreError>;
+    async fn get_for_mac(
+        &self,
+        quote_id: &str,
+        mac: &str,
+    ) -> Result<Option<LightningQuoteRecord>, QuoteStoreError>;
+    async fn update(
+        &self,
+        quote_id: &str,
+        record: LightningQuoteRecord,
+    ) -> Result<(), QuoteStoreError>;
     async fn remove(&self, quote_id: &str) -> Result<(), QuoteStoreError>;
-    async fn list_stale(&self, max_age_secs: i64, now: i64) -> Result<Vec<LightningQuoteRecord>, QuoteStoreError>;
+    async fn list_stale(
+        &self,
+        max_age_secs: i64,
+        now: i64,
+    ) -> Result<Vec<LightningQuoteRecord>, QuoteStoreError>;
     async fn list_paid_unprocessed(&self) -> Result<Vec<LightningQuoteRecord>, QuoteStoreError>;
 }
 
@@ -43,13 +55,13 @@ pub struct LightningQuoteRecord {
     pub mac_address: String,
     pub mint_url: String,
     pub amount: u64,
-    pub expiry: i64,          // unix timestamp
-    pub allotment: u64,       // set after payment
-    pub created_at: i64,      // unix timestamp
+    pub expiry: i64,     // unix timestamp
+    pub allotment: u64,  // set after payment
+    pub created_at: i64, // unix timestamp
     pub completed_at: Option<i64>,
     pub session_granted: bool,
-    pub processing: bool,     // prevents duplicate mint between monitor and GET handler
-    pub invoice: String,      // BOLT11 invoice string
+    pub processing: bool, // prevents duplicate mint between monitor and GET handler
+    pub invoice: String,  // BOLT11 invoice string
     pub cached_state: Option<QuoteState>,
     pub cached_state_at: Option<i64>, // unix timestamp
 }
@@ -78,7 +90,11 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
         Ok(map.get(quote_id).cloned())
     }
 
-    async fn get_for_mac(&self, quote_id: &str, mac: &str) -> Result<Option<LightningQuoteRecord>, QuoteStoreError> {
+    async fn get_for_mac(
+        &self,
+        quote_id: &str,
+        mac: &str,
+    ) -> Result<Option<LightningQuoteRecord>, QuoteStoreError> {
         let map = self.map.lock().await;
         Ok(match map.get(quote_id) {
             Some(record) if record.mac_address == mac => Some(record.clone()),
@@ -86,7 +102,11 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
         })
     }
 
-    async fn update(&self, quote_id: &str, record: LightningQuoteRecord) -> Result<(), QuoteStoreError> {
+    async fn update(
+        &self,
+        quote_id: &str,
+        record: LightningQuoteRecord,
+    ) -> Result<(), QuoteStoreError> {
         let mut map = self.map.lock().await;
         map.insert(quote_id.to_owned(), record);
         Ok(())
@@ -98,7 +118,11 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
         Ok(())
     }
 
-    async fn list_stale(&self, max_age_secs: i64, now: i64) -> Result<Vec<LightningQuoteRecord>, QuoteStoreError> {
+    async fn list_stale(
+        &self,
+        max_age_secs: i64,
+        now: i64,
+    ) -> Result<Vec<LightningQuoteRecord>, QuoteStoreError> {
         let map = self.map.lock().await;
         let stale: Vec<LightningQuoteRecord> = map
             .values()
@@ -135,7 +159,8 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
         let unpaid_unprocessed: Vec<LightningQuoteRecord> = map
             .values()
             .filter(|r| {
-                !r.processing && !r.session_granted
+                !r.processing
+                    && !r.session_granted
                     && (r.cached_state == Some(QuoteState::Paid)
                         || r.cached_state == Some(QuoteState::Issued))
             })
@@ -221,10 +246,7 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
             record.cached_state_at = Some(now);
 
             if quote_state != QuoteState::Paid && quote_state != QuoteState::Issued {
-                let _ = state
-                    .lightning_quotes
-                    .update(&quote_id, record)
-                    .await;
+                let _ = state.lightning_quotes.update(&quote_id, record).await;
                 continue;
             }
 
@@ -238,30 +260,22 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
                 if let Err(e) = wallet.mint_tokens(&quote_id).await {
                     tracing::error!("quote monitor: mint_tokens failed for {quote_id}: {e}");
                     record.processing = false;
-                    let _ = state
-                        .lightning_quotes
-                        .update(&quote_id, record)
-                        .await;
+                    let _ = state.lightning_quotes.update(&quote_id, record).await;
                     continue;
                 }
             }
 
-            let allotment = match merchant::calculate_allotment(
-                record.amount,
-                &record.mint_url,
-                &state.config,
-            ) {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::error!("quote monitor: allotment calc failed for {quote_id}: {e}");
-                    record.processing = false;
-                    let _ = state
-                        .lightning_quotes
-                        .update(&quote_id, record)
-                        .await;
-                    continue;
-                }
-            };
+            let allotment =
+                match merchant::calculate_allotment(record.amount, &record.mint_url, &state.config)
+                {
+                    Ok(a) => a,
+                    Err(e) => {
+                        tracing::error!("quote monitor: allotment calc failed for {quote_id}: {e}");
+                        record.processing = false;
+                        let _ = state.lightning_quotes.update(&quote_id, record).await;
+                        continue;
+                    }
+                };
 
             let mac = record.mac_address.clone();
             let existing = state.sessions.get(&mac).await.ok().flatten();
@@ -287,12 +301,11 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
             record.completed_at = Some(now);
             record.allotment = allotment;
             record.cached_state = Some(QuoteState::Issued);
-            let _ = state
-                .lightning_quotes
-                .update(&quote_id, record)
-                .await;
+            let _ = state.lightning_quotes.update(&quote_id, record).await;
 
-            tracing::info!("quote monitor: granted access for {quote_id} mac={mac} allotment={allotment}");
+            tracing::info!(
+                "quote monitor: granted access for {quote_id} mac={mac} allotment={allotment}"
+            );
             return;
         }
     })
@@ -381,7 +394,15 @@ mod tests {
     #[tokio::test]
     async fn insert_and_get() {
         let store = InMemoryLightningQuoteStore::new();
-        let record = make_quote("abc123", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
+        let record = make_quote(
+            "abc123",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
         store.insert(record.clone()).await.unwrap();
 
         let got = store.get("abc123").await.unwrap();
@@ -401,30 +422,63 @@ mod tests {
     #[tokio::test]
     async fn get_for_mac_matches() {
         let store = InMemoryLightningQuoteStore::new();
-        let record = make_quote("abc123", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
+        let record = make_quote(
+            "abc123",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
         store.insert(record.clone()).await.unwrap();
 
-        let got = store.get_for_mac("abc123", "aa:bb:cc:dd:ee:ff").await.unwrap();
+        let got = store
+            .get_for_mac("abc123", "aa:bb:cc:dd:ee:ff")
+            .await
+            .unwrap();
         assert_eq!(got, Some(record));
 
-        let mismatch = store.get_for_mac("abc123", "11:22:33:44:55:66").await.unwrap();
+        let mismatch = store
+            .get_for_mac("abc123", "11:22:33:44:55:66")
+            .await
+            .unwrap();
         assert_eq!(mismatch, None);
     }
 
     #[tokio::test]
     async fn get_for_mac_mismatch_returns_none() {
         let store = InMemoryLightningQuoteStore::new();
-        let record = make_quote("abc123", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
+        let record = make_quote(
+            "abc123",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
         store.insert(record.clone()).await.unwrap();
 
-        let mismatch = store.get_for_mac("abc123", "11:22:33:44:55:66").await.unwrap();
+        let mismatch = store
+            .get_for_mac("abc123", "11:22:33:44:55:66")
+            .await
+            .unwrap();
         assert_eq!(mismatch, None);
     }
 
     #[tokio::test]
     async fn update_modifies_record() {
         let store = InMemoryLightningQuoteStore::new();
-        let record = make_quote("abc123", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
+        let record = make_quote(
+            "abc123",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
         store.insert(record.clone()).await.unwrap();
 
         let mut updated = record;
@@ -440,7 +494,15 @@ mod tests {
     #[tokio::test]
     async fn remove_deletes_record() {
         let store = InMemoryLightningQuoteStore::new();
-        let record = make_quote("abc123", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
+        let record = make_quote(
+            "abc123",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
         store.insert(record.clone()).await.unwrap();
 
         store.remove("abc123").await.unwrap();
@@ -454,10 +516,42 @@ mod tests {
         let store = InMemoryLightningQuoteStore::new();
         let now = 2000;
 
-        let old1 = make_quote("old1", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
-        let old2 = make_quote("old2", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1400, 2000, Some(QuoteState::Unpaid));
-        let old3 = make_quote("old3", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1600, 2000, Some(QuoteState::Unpaid));
-        let recent = make_quote("recent", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1990, 2000, Some(QuoteState::Unpaid));
+        let old1 = make_quote(
+            "old1",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
+        let old2 = make_quote(
+            "old2",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1400,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
+        let old3 = make_quote(
+            "old3",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1600,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
+        let recent = make_quote(
+            "recent",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1990,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
 
         store.insert(old1.clone()).await.unwrap();
         store.insert(old2.clone()).await.unwrap();
@@ -475,8 +569,24 @@ mod tests {
         let store = InMemoryLightningQuoteStore::new();
         let now = 2000;
 
-        let recent = make_quote("recent", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1990, 2000, Some(QuoteState::Unpaid));
-        let very_recent = make_quote("very_recent", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1995, 2000, Some(QuoteState::Unpaid));
+        let recent = make_quote(
+            "recent",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1990,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
+        let very_recent = make_quote(
+            "very_recent",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1995,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
 
         store.insert(recent.clone()).await.unwrap();
         store.insert(very_recent.clone()).await.unwrap();
@@ -490,11 +600,27 @@ mod tests {
         let store = InMemoryLightningQuoteStore::new();
         let now = 3000;
 
-        let mut old_settled = make_quote("old_settled", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Paid));
+        let mut old_settled = make_quote(
+            "old_settled",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Paid),
+        );
         old_settled.session_granted = true;
         old_settled.completed_at = Some(2000);
 
-        let mut recent_settled = make_quote("recent_settled", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 2000, 3000, Some(QuoteState::Paid));
+        let mut recent_settled = make_quote(
+            "recent_settled",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            2000,
+            3000,
+            Some(QuoteState::Paid),
+        );
         recent_settled.session_granted = true;
         recent_settled.completed_at = Some(2500);
 
@@ -510,13 +636,45 @@ mod tests {
     async fn list_paid_unprocessed() {
         let store = InMemoryLightningQuoteStore::new();
 
-        let paid1 = make_quote("paid1", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Paid));
-        let issued1 = make_quote("issued1", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Issued));
+        let paid1 = make_quote(
+            "paid1",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Paid),
+        );
+        let issued1 = make_quote(
+            "issued1",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Issued),
+        );
 
-        let mut granted = make_quote("granted", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Paid));
+        let mut granted = make_quote(
+            "granted",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Paid),
+        );
         granted.session_granted = true;
 
-        let mut processing = make_quote("processing", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Paid));
+        let mut processing = make_quote(
+            "processing",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Paid),
+        );
         processing.processing = true;
 
         store.insert(paid1.clone()).await.unwrap();
@@ -534,10 +692,26 @@ mod tests {
     async fn list_paid_unprocessed_skips_granted() {
         let store = InMemoryLightningQuoteStore::new();
 
-        let mut granted = make_quote("granted", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Paid));
+        let mut granted = make_quote(
+            "granted",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Paid),
+        );
         granted.session_granted = true;
 
-        let unpaid = make_quote("unpaid", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
+        let unpaid = make_quote(
+            "unpaid",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
 
         store.insert(granted.clone()).await.unwrap();
         store.insert(unpaid.clone()).await.unwrap();
@@ -550,9 +724,25 @@ mod tests {
     async fn list_paid_unprocessed_skips_unpaid() {
         let store = InMemoryLightningQuoteStore::new();
 
-        let unpaid = make_quote("unpaid", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Unpaid));
+        let unpaid = make_quote(
+            "unpaid",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Unpaid),
+        );
 
-        let issued = make_quote("issued", "aa:bb:cc:dd:ee:ff", "http://mint.example.com", 1000, 1000, 2000, Some(QuoteState::Issued));
+        let issued = make_quote(
+            "issued",
+            "aa:bb:cc:dd:ee:ff",
+            "http://mint.example.com",
+            1000,
+            1000,
+            2000,
+            Some(QuoteState::Issued),
+        );
 
         store.insert(unpaid.clone()).await.unwrap();
         store.insert(issued.clone()).await.unwrap();

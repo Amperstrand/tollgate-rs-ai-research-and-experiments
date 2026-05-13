@@ -26,21 +26,21 @@ use tollgate_core::wallet::Wallet;
 
 pub use config::{ConfigError, MintConfig as FileMintConfig, ProfitShareConfig, ServerConfig};
 pub use janitor::spawn_janitor;
+pub use lightning_quotes::{
+    spawn_quote_janitor, InMemoryLightningQuoteStore, LightningQuoteRecord, LightningQuoteStore,
+    QuoteStoreError,
+};
 pub use logging::init_logging;
 pub use mac_resolver::{DhcpLeasesResolver, MacResolveError, MacResolver, StubMacResolver};
 pub use merchant::{
     build_advertisement, build_notice_event, build_session_event, calculate_allotment,
     AllotmentError,
 };
-pub use session_store::{
-    InMemorySessionStore, SessionStore, SessionStoreError, SqliteSessionStore,
-};
-pub use lightning_quotes::{
-    spawn_quote_janitor, InMemoryLightningQuoteStore, LightningQuoteRecord, LightningQuoteStore,
-    QuoteStoreError,
-};
 pub use mint_quote_wallet::{
     MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult, MockMintQuoteWallet, QuoteState,
+};
+pub use session_store::{
+    InMemorySessionStore, SessionStore, SessionStoreError, SqliteSessionStore,
 };
 pub use upstream_detector::{
     parse_advertisement, probe_gateway, probe_url, DiscoveredUpstream, UpstreamDetectError,

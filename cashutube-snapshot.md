@@ -1,0 +1,10 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - heading "CashuTube" [level=1] [ref=e3]
+    - generic "Manage Channels" [ref=e5] [cursor=pointer]
+    - generic [ref=e8]: 0 active
+  - generic [ref=e9]:
+    - generic [ref=e12]
+    - generic [ref=e16]
+  - generic [ref=e189]:
+    - generic

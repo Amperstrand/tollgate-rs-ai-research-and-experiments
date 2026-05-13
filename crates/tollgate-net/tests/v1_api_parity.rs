@@ -23,8 +23,8 @@ use tollgate_net::mock::MockWallet;
 use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
     build_advertisement, AcceptedMint, InMemoryLightningQuoteStore, InMemorySessionStore,
-    LightningQuoteRecord, MockMintQuoteWallet, QuoteState, ServerState,
-    StubMacResolver, StubValve, V1ServerConfig,
+    LightningQuoteRecord, MockMintQuoteWallet, QuoteState, ServerState, StubMacResolver, StubValve,
+    V1ServerConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -1864,12 +1864,7 @@ async fn parity_ln_invoice_get_paid_grants_access() {
         .set_quote_state(quote_id, QuoteState::Paid)
         .await;
 
-    let mut record = state
-        .lightning_quotes
-        .get(quote_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut record = state.lightning_quotes.get(quote_id).await.unwrap().unwrap();
     record.cached_state_at = Some(0);
     state
         .lightning_quotes
@@ -1972,12 +1967,7 @@ async fn parity_ln_invoice_get_paid_creates_session() {
         .set_quote_state(quote_id, QuoteState::Paid)
         .await;
 
-    let mut record = state
-        .lightning_quotes
-        .get(quote_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut record = state.lightning_quotes.get(quote_id).await.unwrap().unwrap();
     record.cached_state_at = Some(0);
     state
         .lightning_quotes
@@ -2026,12 +2016,7 @@ async fn parity_ln_invoice_get_after_granted_returns_cached() {
         .set_quote_state(quote_id, QuoteState::Paid)
         .await;
 
-    let mut record = state
-        .lightning_quotes
-        .get(quote_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut record = state.lightning_quotes.get(quote_id).await.unwrap().unwrap();
     record.cached_state_at = Some(0);
     state
         .lightning_quotes
@@ -2109,12 +2094,7 @@ async fn parity_ln_invoice_full_lifecycle() {
         .await;
 
     // Invalidate cache so GET handler re-checks state
-    let mut record = state
-        .lightning_quotes
-        .get(quote_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut record = state.lightning_quotes.get(quote_id).await.unwrap().unwrap();
     record.cached_state_at = Some(0);
     state
         .lightning_quotes
@@ -2149,14 +2129,22 @@ async fn parity_ln_invoice_full_lifecycle() {
     assert_eq!(session.metric, "milliseconds");
 
     // Step 6: GET /balance → shows active session
-    let balance_resp = client.get(format!("{base_url}/balance")).send().await.unwrap();
+    let balance_resp = client
+        .get(format!("{base_url}/balance"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(balance_resp.status(), 200);
     let balance: serde_json::Value = balance_resp.json().await.unwrap();
     assert_eq!(balance["status"], 1);
     assert_eq!(balance["session_active"], true);
 
     // Step 7: GET /usage → shows active session
-    let usage_resp = client.get(format!("{base_url}/usage")).send().await.unwrap();
+    let usage_resp = client
+        .get(format!("{base_url}/usage"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(usage_resp.status(), 200);
     let usage_text = usage_resp.text().await.unwrap();
     assert_ne!(usage_text, "-1/-1");

@@ -58,10 +58,7 @@ pub trait MintQuoteWallet: Send + Sync {
         amount: u64,
         mint_url: &str,
     ) -> Result<MintQuoteInfo, MintQuoteError>;
-    async fn check_mint_quote_status(
-        &self,
-        quote_id: &str,
-    ) -> Result<QuoteState, MintQuoteError>;
+    async fn check_mint_quote_status(&self, quote_id: &str) -> Result<QuoteState, MintQuoteError>;
     async fn mint_tokens(&self, quote_id: &str) -> Result<MintResult, MintQuoteError>;
 }
 
@@ -135,10 +132,7 @@ impl MintQuoteWallet for MockMintQuoteWallet {
         })
     }
 
-    async fn check_mint_quote_status(
-        &self,
-        quote_id: &str,
-    ) -> Result<QuoteState, MintQuoteError> {
+    async fn check_mint_quote_status(&self, quote_id: &str) -> Result<QuoteState, MintQuoteError> {
         let quotes = self.quotes.lock().await;
         quotes
             .get(quote_id)
@@ -181,7 +175,10 @@ mod tests {
             .await
             .unwrap();
 
-        let state = wallet.check_mint_quote_status(&info.quote_id).await.unwrap();
+        let state = wallet
+            .check_mint_quote_status(&info.quote_id)
+            .await
+            .unwrap();
         assert_eq!(state, QuoteState::Unpaid);
     }
 

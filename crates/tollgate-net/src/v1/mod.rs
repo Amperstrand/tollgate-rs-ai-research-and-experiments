@@ -22,10 +22,9 @@ pub mod server;
 
 use std::sync::Arc;
 
-use tollgate_core::wallet::Wallet;
 use self::http::TollGateHttpClient;
 use self::nostr_events::{PricingOption, SessionEvent, TollGateAdvertisement};
-
+use tollgate_core::wallet::Wallet;
 
 #[derive(Debug, thiserror::Error)]
 pub enum V1ClientError {

@@ -20,9 +20,7 @@ use nostr::prelude::*;
 use tollgate_core::wallet::Wallet;
 
 use super::merchant;
-use super::{
-    CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig,
-};
+use super::{CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig};
 
 pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
     Router::new()
@@ -421,7 +419,12 @@ async fn handle_post_ln_invoice<W: Wallet>(
         }
     };
 
-    if !state.config.accepted_mints.iter().any(|m| m.url == mint_url) {
+    if !state
+        .config
+        .accepted_mints
+        .iter()
+        .any(|m| m.url == mint_url)
+    {
         return cors_response(ln_error_response(
             StatusCode::BAD_REQUEST,
             "mint not accepted",
@@ -526,17 +529,10 @@ async fn handle_get_ln_invoice<W: Wallet>(
         }
     };
 
-    let mut record = match state
-        .lightning_quotes
-        .get_for_mac(&quote_id, &mac)
-        .await
-    {
+    let mut record = match state.lightning_quotes.get_for_mac(&quote_id, &mac).await {
         Ok(Some(r)) => r,
         Ok(None) | Err(_) => {
-            return cors_response(ln_error_response(
-                StatusCode::NOT_FOUND,
-                "quote not found",
-            ));
+            return cors_response(ln_error_response(StatusCode::NOT_FOUND, "quote not found"));
         }
     };
 
@@ -594,25 +590,22 @@ async fn handle_get_ln_invoice<W: Wallet>(
             }
         }
 
-        let allotment = match merchant::calculate_allotment(
-            record.amount,
-            &record.mint_url,
-            &state.config,
-        ) {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::error!("Allotment calculation failed: {e}");
-                record.processing = false;
-                let _ = state
-                    .lightning_quotes
-                    .update(&quote_id, record.clone())
-                    .await;
-                return cors_response(ln_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "allotment calculation failed",
-                ));
-            }
-        };
+        let allotment =
+            match merchant::calculate_allotment(record.amount, &record.mint_url, &state.config) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("Allotment calculation failed: {e}");
+                    record.processing = false;
+                    let _ = state
+                        .lightning_quotes
+                        .update(&quote_id, record.clone())
+                        .await;
+                    return cors_response(ln_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "allotment calculation failed",
+                    ));
+                }
+            };
 
         let existing = state.sessions.get(&mac).await.ok().flatten();
         if let Some(mut s) = existing {
