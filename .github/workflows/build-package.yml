@@ -147,8 +147,21 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
 
+      - name: Cache cross binary
+        id: cache-cross
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/cross
+          key: ${{ runner.os }}-cross-git-main
+
       - name: Install cross
+        if: steps.cache-cross.outputs.cache-hit != 'true'
         run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cross-${{ matrix.compile_key }}"
+          cache-targets: "false"
 
       - name: Cross-compile binary
         run: |
