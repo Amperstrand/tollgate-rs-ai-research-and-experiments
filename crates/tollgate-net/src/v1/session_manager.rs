@@ -74,11 +74,11 @@ pub struct SessionManagerConfig {
 /// External callers invoke `handle_gateway_connected` and `handle_disconnect`
 /// to manage session lifecycle.
 pub struct SessionManager<W: Wallet> {
-    config: SessionManagerConfig,
-    wallet: Arc<W>,
-    sessions: RwLock<HashMap<String, UpstreamSessionState<W>>>,
+    pub config: SessionManagerConfig,
+    pub wallet: Arc<W>,
+    pub sessions: RwLock<HashMap<String, UpstreamSessionState<W>>>,
     renewal_rx: RwLock<tokio::sync::mpsc::Receiver<RenewalRequest>>,
-    renewal_tx: tokio::sync::mpsc::Sender<RenewalRequest>,
+    pub renewal_tx: tokio::sync::mpsc::Sender<RenewalRequest>,
     cancel: CancellationToken,
 }
 

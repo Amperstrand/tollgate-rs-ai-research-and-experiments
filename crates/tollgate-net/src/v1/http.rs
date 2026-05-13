@@ -24,12 +24,10 @@ pub enum V1HttpError {
 
 /// HTTP client for a single upstream TollGate.
 pub struct TollGateHttpClient {
-    client: Client,
-    base_url: String,
-    /// Number of probe attempts before giving up (default: 3).
-    probe_retry_count: u32,
-    /// Delay between probe retry attempts (default: 2s).
-    probe_retry_delay: Duration,
+    pub client: Client,
+    pub base_url: String,
+    pub probe_retry_count: u32,
+    pub probe_retry_delay: Duration,
 }
 
 impl TollGateHttpClient {
