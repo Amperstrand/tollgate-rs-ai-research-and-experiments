@@ -82,6 +82,9 @@ enum Commands {
         /// Wallet backend
         #[arg(long, default_value = "mock")]
         wallet: WalletType,
+        /// Path to JSON config file (overrides CLI args for metric/step_size/mints)
+        #[arg(long)]
+        config: Option<String>,
     },
     /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
     V1Client {
@@ -118,9 +121,7 @@ enum Commands {
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter("tollgate_net=info,tollgate_core=info")
-        .init();
+    v1::server::init_logging("info");
 
     let cli = Cli::parse();
     match cli.command {
@@ -212,20 +213,36 @@ async fn main() {
             price_per_step,
             min_steps,
             wallet: wt,
+            config: config_path,
         } => {
+            use std::time::Duration;
+            use v1::server::payout::{PayoutConfig, PayoutTarget};
+
             let nostr_keys = nostr::prelude::Keys::generate();
-            let config = v1::server::V1ServerConfig {
-                metric,
-                step_size,
-                accepted_mints: vec![v1::server::AcceptedMint {
+            let server_config = if let Some(path) = config_path {
+                v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
+                    eprintln!("Failed to load config from {path}: {e}");
+                    std::process::exit(1);
+                })
+            } else {
+                let mut sc = v1::server::ServerConfig {
+                    metric,
+                    step_size,
+                    ..v1::server::ServerConfig::default()
+                };
+                sc.accepted_mints = vec![v1::server::config::MintConfig {
                     url: mint_url.clone(),
+                    min_balance: 64,
+                    balance_tolerance_percent: 10,
+                    payout_interval_seconds: 60,
+                    min_payout_amount: 128,
                     price_per_step,
-                    unit: "sat".to_owned(),
-                    min_steps,
-                }],
-                nostr_keys,
-                port,
+                    price_unit: "sat".to_owned(),
+                    purchase_min_steps: min_steps,
+                }];
+                sc
             };
+            let config = server_config.to_server_config(nostr_keys, port);
             let server = v1::server::V1Server::new(config);
             match wt {
                 WalletType::Mock => {
@@ -238,7 +255,29 @@ async fn main() {
                             .await
                             .expect("failed to create CDK wallet"),
                     );
-                    server.run(wallet).await;
+                    let mint_cfg = &server_config.accepted_mints[0];
+                    let profit_share = server_config.profit_share.clone();
+                    let payout_cfg = PayoutConfig {
+                        min_balance: mint_cfg.min_balance,
+                        min_payout_amount: mint_cfg.min_payout_amount,
+                        tolerance_percent: mint_cfg.balance_tolerance_percent,
+                        payout_interval: Duration::from_secs(mint_cfg.payout_interval_seconds),
+                        targets: profit_share
+                            .into_iter()
+                            .map(|ps| PayoutTarget {
+                                identity: ps.identity,
+                                factor: ps.factor,
+                                lightning_address: String::new(),
+                            })
+                            .collect(),
+                    };
+                    let payout = v1::server::payout::spawn_payout_task(wallet.clone(), payout_cfg);
+                    tokio::select! {
+                        () = async { server.run(wallet).await } => {}
+                        _ = payout => {
+                            tracing::warn!("payout task finished");
+                        }
+                    }
                 }
                 #[cfg(feature = "spilman")]
                 WalletType::Spilman => {

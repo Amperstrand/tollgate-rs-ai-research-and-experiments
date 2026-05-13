@@ -154,21 +154,23 @@ async fn handle_post_payment<W: Wallet>(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let session = {
-        let mut sessions = state.sessions.lock().await;
-        sessions
-            .entry(mac.clone())
-            .and_modify(|s| {
-                s.allotment += allotment;
-                s.start_time = now;
-            })
-            .or_insert_with(|| CustomerSession {
-                mac_address: mac.clone(),
-                start_time: now,
-                metric: state.config.metric.clone(),
-                allotment,
-            });
-        sessions.get(&mac).cloned().unwrap()
+    let existing = state.sessions.get(&mac).await.ok().flatten();
+    let session = if let Some(mut s) = existing {
+        s.allotment += allotment;
+        s.start_time = now;
+        let updated = s.clone();
+        let _ = state.sessions.update(&mac, s).await;
+        updated
+    } else {
+        let s = CustomerSession {
+            mac_address: mac.clone(),
+            start_time: now,
+            metric: state.config.metric.clone(),
+            allotment,
+        };
+        let cloned = s.clone();
+        let _ = state.sessions.insert(s).await;
+        cloned
     };
 
     if let Err(e) = state.valve.open_gate(&mac) {
@@ -197,9 +199,8 @@ async fn handle_usage<W: Wallet>(
         Err(_) => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned())),
     };
 
-    let mut sessions = state.sessions.lock().await;
-    let session = match sessions.get(&mac) {
-        Some(s) => s.clone(),
+    let session = match state.sessions.get(&mac).await.ok().flatten() {
+        Some(s) => s,
         None => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned())),
     };
 
@@ -211,7 +212,7 @@ async fn handle_usage<W: Wallet>(
         let elapsed_ms = (now - session.start_time) * 1000;
 
         if elapsed_ms >= session.allotment as i64 {
-            sessions.remove(&mac);
+            let _ = state.sessions.remove(&mac).await;
             if let Err(e) = state.valve.close_gate(&mac) {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
@@ -256,9 +257,8 @@ async fn handle_balance<W: Wallet>(
         }
     };
 
-    let mut sessions = state.sessions.lock().await;
-    let session = match sessions.get(&mac) {
-        Some(s) => s.clone(),
+    let session = match state.sessions.get(&mac).await.ok().flatten() {
+        Some(s) => s,
         None => {
             return cors_response(json_response(
                 StatusCode::OK,
@@ -275,7 +275,7 @@ async fn handle_balance<W: Wallet>(
         let elapsed_ms = (now - session.start_time) * 1000;
 
         if elapsed_ms >= session.allotment as i64 {
-            sessions.remove(&mac);
+            let _ = state.sessions.remove(&mac).await;
             if let Err(e) = state.valve.close_gate(&mac) {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }

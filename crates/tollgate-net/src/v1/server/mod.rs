@@ -5,22 +5,37 @@
     clippy::cast_sign_loss
 )]
 
+pub mod config;
 pub mod handlers;
+pub mod janitor;
+pub mod logging;
 pub mod mac_resolver;
 pub mod merchant;
+pub mod payout;
+pub mod session_store;
+pub mod upstream_detector;
 pub mod valve;
 
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use nostr::prelude::*;
-use tokio::sync::Mutex;
 use tollgate_core::wallet::Wallet;
 
+pub use config::{ConfigError, MintConfig as FileMintConfig, ProfitShareConfig, ServerConfig};
+pub use janitor::spawn_janitor;
+pub use logging::init_logging;
 pub use mac_resolver::{DhcpLeasesResolver, MacResolveError, MacResolver, StubMacResolver};
 pub use merchant::{
     build_advertisement, build_notice_event, build_session_event, calculate_allotment,
     AllotmentError,
+};
+pub use session_store::{
+    InMemorySessionStore, SessionStore, SessionStoreError, SqliteSessionStore,
+};
+pub use upstream_detector::{
+    parse_advertisement, probe_gateway, probe_url, DiscoveredUpstream, UpstreamDetectError,
+    UpstreamDetectorConfig, UpstreamMint,
 };
 pub use valve::{StubValve, Valve, ValveError};
 
@@ -39,7 +54,7 @@ pub struct V1ServerConfig {
     pub port: u16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CustomerSession {
     pub mac_address: String,
     pub start_time: i64,
@@ -50,7 +65,7 @@ pub struct CustomerSession {
 pub struct ServerState<W: Wallet> {
     pub wallet: Arc<W>,
     pub config: V1ServerConfig,
-    pub sessions: Mutex<HashMap<String, CustomerSession>>,
+    pub sessions: Arc<dyn SessionStore>,
     pub mac_resolver: Arc<dyn MacResolver + Send + Sync>,
     pub valve: Arc<dyn Valve + Send + Sync>,
     pub advertisement: String,
@@ -73,11 +88,17 @@ impl V1Server {
         let state = Arc::new(ServerState {
             wallet,
             config: self.config,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(InMemorySessionStore::new()),
             mac_resolver: Arc::new(StubMacResolver::default()),
             valve: Arc::new(StubValve),
             advertisement,
         });
+
+        let janitor = spawn_janitor(
+            state.sessions.clone(),
+            state.valve.clone(),
+            Duration::from_secs(5),
+        );
 
         let app = handlers::build_router(state);
 
@@ -88,11 +109,20 @@ impl V1Server {
             .await
             .expect("failed to bind listener");
 
-        axum::serve(
+        let server = axum::serve(
             listener,
             app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .expect("server exited with error");
+        );
+
+        tokio::select! {
+            result = server => {
+                if let Err(e) = result {
+                    tracing::error!("HTTP server error: {e}");
+                }
+            }
+            _ = janitor => {
+                tracing::warn!("janitor task finished unexpectedly");
+            }
+        }
     }
 }

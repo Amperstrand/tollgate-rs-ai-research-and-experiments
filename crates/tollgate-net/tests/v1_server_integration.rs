@@ -1,14 +1,13 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use nostr::prelude::*;
 use reqwest::Client;
-use tokio::sync::Mutex;
 use tollgate_net::mock::MockWallet;
 use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
-    build_advertisement, AcceptedMint, ServerState, StubMacResolver, StubValve, V1ServerConfig,
+    build_advertisement, AcceptedMint, InMemorySessionStore, ServerState, StubMacResolver,
+    StubValve, V1ServerConfig,
 };
 
 fn test_config() -> V1ServerConfig {
@@ -43,7 +42,7 @@ async fn start_server(
     let state = Arc::new(ServerState {
         wallet: wallet.clone(),
         config,
-        sessions: Mutex::new(HashMap::new()),
+        sessions: Arc::new(InMemorySessionStore::new()),
         mac_resolver: Arc::new(StubMacResolver::default()),
         valve: Arc::new(StubValve),
         advertisement,

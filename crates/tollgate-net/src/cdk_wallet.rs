@@ -6,6 +6,7 @@
 //!
 //! Spilman payment channel operations are in [`crate::spilman_service::SpilmanService`].
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -151,6 +152,78 @@ impl CdkWallet {
             .await
             .map_err(|e| WalletError::Internal(format!("balance: {e}")))?;
         Ok(u64::from(bal))
+    }
+
+    /// Melt tokens to pay a BOLT11 Lightning invoice.
+    ///
+    /// Uses the CDK melt flow: quote → prepare → confirm.
+    /// Returns the amount paid (in sats).
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn melt_to_invoice(&self, invoice: &str) -> Result<u64, WalletError> {
+        let quote = self
+            .wallet
+            .melt_quote(PaymentMethod::BOLT11, invoice.to_owned(), None, None)
+            .await
+            .map_err(|e| WalletError::Internal(format!("melt_quote: {e}")))?;
+
+        tracing::info!("[melt] Created melt quote {} for invoice", quote.id);
+
+        let prepared = self
+            .wallet
+            .prepare_melt(&quote.id, HashMap::new())
+            .await
+            .map_err(|e| WalletError::Internal(format!("prepare_melt: {e}")))?;
+
+        let confirmed = prepared
+            .confirm()
+            .await
+            .map_err(|e| WalletError::Internal(format!("melt confirm: {e}")))?;
+
+        let amount = u64::from(confirmed.amount());
+        let fee = u64::from(confirmed.fee_paid());
+        tracing::info!("[melt] Melted {amount} sat (fee: {fee} sat)");
+        Ok(amount)
+    }
+
+    /// Melt tokens to a Lightning address (user@domain.com).
+    ///
+    /// CDK resolves the LNURL-pay endpoint and creates a melt quote automatically.
+    /// `amount_msat` is in millisatoshis.
+    /// Returns the amount paid (in sats).
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn melt_to_lightning_address(
+        &self,
+        address: &str,
+        amount_msat: u64,
+    ) -> Result<u64, WalletError> {
+        let cdk_amount = cdk::Amount::from(amount_msat);
+
+        let quote = self
+            .wallet
+            .melt_lightning_address_quote(address, cdk_amount)
+            .await
+            .map_err(|e| WalletError::Internal(format!("melt_lightning_address_quote: {e}")))?;
+
+        tracing::info!(
+            "[melt] Created melt quote {} for Lightning address {address}",
+            quote.id
+        );
+
+        let prepared = self
+            .wallet
+            .prepare_melt(&quote.id, HashMap::new())
+            .await
+            .map_err(|e| WalletError::Internal(format!("prepare_melt: {e}")))?;
+
+        let confirmed = prepared
+            .confirm()
+            .await
+            .map_err(|e| WalletError::Internal(format!("melt confirm: {e}")))?;
+
+        let amount = u64::from(confirmed.amount());
+        let fee = u64::from(confirmed.fee_paid());
+        tracing::info!("[melt] Melted {amount} sat to {address} (fee: {fee} sat)");
+        Ok(amount)
     }
 
     /// Get unspent proofs serialized as JSON (requires `spilman` feature).
