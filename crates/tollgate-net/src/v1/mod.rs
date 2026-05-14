@@ -68,7 +68,9 @@ pub struct V1ClientConfig {
 pub struct V1Session {
     pub advertisement: TollGateAdvertisement,
     pub selected_pricing: PricingOption,
-    pub session_event: SessionEvent,
+    /// Session event from the upstream TollGate (kind 1022).
+    /// `None` when re-attaching to an existing session where no event was received.
+    pub session_event: Option<SessionEvent>,
     pub total_allotment: u64,
     pub metric: String,
     pub step_size: u64,
@@ -144,9 +146,7 @@ impl<W: Wallet> V1Client<W> {
             self.session = Some(V1Session {
                 advertisement: ad,
                 selected_pricing: pricing,
-                session_event: SessionEvent::from_json("{}").unwrap_or_else(|_| {
-                    panic!("should not happen: empty JSON for recovered session")
-                }),
+                session_event: None,
                 total_allotment: allotment.max(0) as u64,
                 metric,
                 step_size,
@@ -226,7 +226,7 @@ impl<W: Wallet> V1Client<W> {
         self.session = Some(V1Session {
             advertisement: ad,
             selected_pricing: pricing.clone(),
-            session_event,
+            session_event: Some(session_event),
             total_allotment: allotment,
             metric,
             step_size,
@@ -302,7 +302,7 @@ impl<W: Wallet> V1Client<W> {
 
         if let Some(s) = &mut self.session {
             s.total_allotment = allotment;
-            s.session_event = session_event;
+            s.session_event = Some(session_event);
         }
 
         tracing::info!(allotment, "Session renewed");
