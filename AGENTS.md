@@ -60,32 +60,108 @@ Start with `docs/design/core/tollgate-intro.md`, then follow the reading order i
 |-----------|-------------|--------|
 | M1 | Core Types, Protocol Codec, and Peer State Machine | ✅ Complete |
 | M2 | Bootstrap Token Payment, CDK Wallet Integration | ✅ Complete |
-| M2.5 | v1 Client Mode (tollgate-rs pays v1 routers) | Open |
-| M3 | Spilman Payment Channels (demo) | 🔄 In Progress |
+| M2.5 | v1 Client Mode (tollgate-rs pays v1 routers) | ✅ Core done, LN invoice client pending |
+| M3 | Spilman Payment Channels (server + demo) | 🔄 Server handler done, demo in progress |
 | M4 | tollgate-net — IP Peering Deployment | Open |
 | M5 | Dynamic Pricing and Operator Controls | Open |
 | M6 | FIPS Mesh Integration | Open |
 | M7 | Production Hardening and Packaging | Open |
 
-### M3 Progress — Spilman Channel Demo
+### Current State — Mostly Feature-Complete v1 TollGate
 
-Browser-based educational demo at `docs/private/demos/spilman-real/` with real crypto against a public Cashu mint.
+**22.8K lines of Rust** across `tollgate-core` (4K) and `tollgate-net` (10.6K). **320 tests, all passing, 0 ignored.**
 
-**Waves completed:**
-- **Wave A**: Hand-rolled JS crypto (@noble/curves + @noble/hashes), full channel lifecycle, 6/6 E2E tests
-- **Wave B**: cdk-wasm bridge, 194/194 Rust test vector checks passing in browser
-- **Wave C** (`967d796`): wallet.js swapped from crypto.js to cdk-wasm for channel ops (channel_secret, channel_id, funding_outputs, proofs, signed_balance_update, funding_token_amount). SIG_ALL witness with 2-of-2 P2PK multisig for cooperative close. 6/6 E2E tests passing (28.8s).
+Everything runs against mock servers. Not yet tested on real hardware or against a real Go v1 router.
 
-**What works:** Channel open → fund → multi-payment → cooperative close. Real blinded mint interactions against testnut.cashu.exchange.
+#### v1 Server Mode (replaces Go v1 router) — `tollgate-net v1-server`
 
-**What's not done yet:**
-- DLEQ proof verification (`verify_proof_dleq`)
-- Unilateral / timeout close paths
-- Persistence (IndexedDB)
-- Real server/client separation (iframe/worker)
-- Migration from low-level WASM bindings to `WasmSpilmanBridge`/`SpilmanClientBridge` high-level classes
+All v1 API endpoints implemented with 68 API parity tests:
+- `GET /` → Nostr kind 10021 advertisement (pricing, metric, step size)
+- `POST /` → Cashu token payment → kind 1022 session event
+- `GET /usage` → `"usage/allotment"` text response
+- `GET /balance` → JSON balance details
+- `GET /whoami` → client MAC address
+- `POST /ln-invoice` → Lightning invoice creation (mint quote)
+- `GET /ln-invoice` → Invoice status polling (UNPAID → PAID → ISSUED)
+- Session lifecycle (create, track, janitor cleanup)
+- Profit sharing / payout task
+- CORS headers, JSON config file, MAC resolution
+- Valve: time-based logging stub (real iptables/nftables is M4)
 
-**Key files:** `src/wallet.js` (WASM-backed), `src/cdk-wasm-adapter.js` (format conversion + P2BK + SIG_ALL), `src/cdk-wasm-bridge.js` (async loader), `src/crypto.js` (keygen + denomination + close outputs), `src/mint.js`, `tests/e2e-lifecycle.spec.js`
+#### v1 Client Mode (pays upstream Go v1 routers) — `tollgate-net v1-client`
+
+Full Chandler (client) lifecycle:
+- Fetch advertisement, parse pricing options
+- Select cheapest compatible mint/unit
+- Budget validation (max price per ms/byte)
+- Cashu token creation → POST payment → session establishment
+- Usage polling with auto-renewal at configurable threshold
+- Session recovery (re-attach to existing session via `/usage`)
+- Token recovery (auto-reclaim via wallet, file fallback)
+- Multi-gateway session manager (multiple upstream TollGates)
+- Payment throttling (5s minimum between payments)
+- Trust policy (allowlist / blocklist / default trust_all/trust_none)
+- LN Invoice client payment path — **not yet implemented**
+- Auto-detect upstream → session manager wiring — **not yet implemented**
+
+#### Spilman Channel Server — `tollgate-net` with `--features spilman`
+
+Server-side Spilman handler using JSON-in-CBOR bridge pattern aligned with SatsAndSports reference:
+- `ChannelLifecycleState` enum (7 states)
+- `balance_update_to_payment()` / `channel_close_to_payment()` — CBOR→Payment converters
+- `process_balance_update()` via `bridge.process_payment_via_json()`
+- `process_channel_close()` via `bridge.execute_cooperative_close_async()`
+- Error → ReasonCode mapping (`bridge_error_to_reason`, `close_error_to_reason`)
+- 15 inline tests in `server::spilman_handler_tests`
+- Network integration tests exist but require live mint (`#[ignore]`)
+
+#### Browser Demo — `docs/private/demos/spilman-real/`
+
+Educational demo with real crypto against testnut.cashu.exchange:
+- Waves A-C complete: hand-rolled JS crypto → cdk-wasm bridge → SIG_ALL witness
+- Channel open → fund → multi-payment → cooperative close
+- 6/6 E2E tests passing
+- Not yet: DLEQ verification, unilateral close, persistence, high-level bridge classes
+
+### Known Gaps (What's Not Done)
+
+| Gap | Scope | Notes |
+|-----|-------|-------|
+| Real valve (iptables/nftables) | M4 | Currently time-based logging stub |
+| LN Invoice client payment | M2.5 | Server-side LN works; client can't pay via Lightning yet |
+| Auto-detect → session manager wiring | M2.5 | `upstream_detector.rs` + `SessionManager` exist, not connected in CLI |
+| Physical router testing | All | All 320 tests use mock servers. No real hardware, no real Go v1 interaction |
+| CI .ipk artifacts | M4/M7 | GitHub Actions config exists but not producing downloadable OpenWrt packages yet |
+| Unilateral / timeout close paths | M3 | Cooperative close only |
+| DLEQ proof verification | M3 Browser | Not implemented |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `crates/tollgate-net/src/v1/server/handlers.rs` | V1 server API handlers (all endpoints) |
+| `crates/tollgate-net/src/v1/server/config.rs` | Server configuration (JSON + CLI) |
+| `crates/tollgate-net/src/v1/server/session_store.rs` | Session storage |
+| `crates/tollgate-net/src/v1/server/lightning_quotes.rs` | LN invoice quote management |
+| `crates/tollgate-net/src/v1/server/payout.rs` | Profit sharing / payout task |
+| `crates/tollgate-net/src/v1/server/janitor.rs` | Session cleanup |
+| `crates/tollgate-net/src/v1/server/upstream_detector.rs` | Probe upstream TollGates |
+| `crates/tollgate-net/src/v1/mod.rs` | V1Client (connect, renew, run loop) |
+| `crates/tollgate-net/src/v1/http.rs` | HTTP client for v1 protocol |
+| `crates/tollgate-net/src/v1/pricing.rs` | Pricing selection + budget validation |
+| `crates/tollgate-net/src/v1/recovery.rs` | Token recovery (auto + file) |
+| `crates/tollgate-net/src/v1/session_manager.rs` | Multi-gateway session manager |
+| `crates/tollgate-net/src/v1/usage_tracker.rs` | Usage polling + renewal channel |
+| `crates/tollgate-net/src/v1/nostr_events.rs` | Nostr event parsing/building |
+| `crates/tollgate-net/src/server.rs` | Spilman server handler (~1,460 lines) |
+| `crates/tollgate-net/src/main.rs` | CLI entry point (Provider/Client/V1Server/V1Client) |
+| `crates/tollgate-core/src/protocol.rs` | CBOR protocol messages |
+| `crates/tollgate-core/src/wallet.rs` | Wallet trait |
+| `crates/tollgate-net/tests/v1_api_parity.rs` | 68 API parity tests against Go v1 protocol |
+| `crates/tollgate-net/tests/v1_e2e_lifecycle.rs` | 7 E2E client lifecycle tests |
+| `crates/tollgate-net/tests/v1_server_integration.rs` | 8 server integration tests |
+| `crates/tollgate-net/tests/v1_client_integration.rs` | 5 client integration tests |
+| `crates/tollgate-net/tests/v1_session_manager_integration.rs` | 3 session manager tests |
 
 ### Dependency Graph
 
@@ -110,6 +186,13 @@ M1 → M2 → M3 → M4 → M7
 ### M2 is the First Working TollGate
 
 M2 (bootstrap tokens only, no Spilman) gives a functional TollGate with token-based payments. This is feature-equivalent to v1's payment model but running on v2's architecture. If Spilman channels (M3) prove too hard, M2 + M4 is a shippable product.
+
+### Next Steps
+
+1. **Physical router testing** — flash two OpenWrt routers, one with Go v1, one with tollgate-rs, test client↔server payment flow
+2. **Close remaining M2.5 gaps** — LN Invoice client payment, auto-detect → session manager wiring
+3. **M3 completion** — Spilman network integration tests, unilateral close
+4. **M4 — Real valve** — iptables/nftables implementation for actual traffic gating
 
 ## Working Conventions
 

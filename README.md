@@ -24,14 +24,15 @@ project and consumes the same `tollgate-core`.
 
 ## Implementation Status
 
-Milestones M1–M3 are in progress. M3 (Spilman payment channels) has a working
-in-browser demo with real cryptographic operations against a public Cashu mint.
+**22.8K lines of Rust, 320 tests passing.** V1 server and client modes are feature-complete
+against mock servers — awaiting physical router testing.
 
 | Milestone | Description | Status |
 |-----------|-------------|--------|
 | M1 | Core Types, Protocol Codec, Peer State Machine | ✅ Complete |
 | M2 | Bootstrap Token Payment, CDK Wallet Integration | ✅ Complete |
-| M3 | Spilman Payment Channels (demo) | 🔄 In Progress |
+| M2.5 | V1 Client Mode (pays upstream Go v1 routers) | ✅ Core done, LN invoice client pending |
+| M3 | Spilman Payment Channels (server + demo) | 🔄 Server handler done, demo in progress |
 | M4 | tollgate-net — IP Peering Deployment | Open |
 | M5 | Dynamic Pricing and Operator Controls | Open |
 | M6 | FIPS Mesh Integration | Open |
@@ -41,8 +42,15 @@ in-browser demo with real cryptographic operations against a public Cashu mint.
 
 - **`tollgate-core`** — Full CBOR codec (minicbor), protocol messages, peer state machine,
   quota exhaustion (Terminate/Restrict/Allow), metering types
-- **`tollgate-net`** — Binary with CDK-based Cashu wallet for bootstrap token operations
-  (receive, verify, send, balance) and Spilman channel demo
+- **`tollgate-net` v1 server** — Drop-in Go v1 router replacement: all 7 API endpoints
+  (`GET /`, `POST /`, `GET /usage`, `GET /balance`, `GET /whoami`, `POST /ln-invoice`,
+  `GET /ln-invoice`), session management, Lightning invoice support, profit sharing,
+  janitor cleanup, CORS, JSON config. 68 API parity tests.
+- **`tollgate-net` v1 client** — Pays upstream Go v1 routers: advertisement fetching,
+  pricing selection, Cashu token payment, usage polling, auto-renewal, session recovery,
+  token recovery, multi-gateway session manager, trust policy, payment throttling.
+- **`tollgate-net` Spilman server** — Server-side Spilman handler using JSON-in-CBOR bridge
+  pattern aligned with SatsAndSports reference. 15 inline tests.
 - **Protocol trace visualization** — Interactive Mermaid diagrams of protocol flows,
   deployed to GitHub Pages with clickable per-step channel state popups
 - **In-browser Spilman channel demo** — Real ECDH, Schnorr signatures, and blinded mint
