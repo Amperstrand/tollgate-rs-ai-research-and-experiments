@@ -91,6 +91,9 @@ enum Commands {
         /// Valve backend: "stub" (default) or "nds" (NoDogSplash, requires --features nds)
         #[arg(long, default_value = "stub", value_name = "nds|stub")]
         valve: String,
+        /// Path to ndsctl binary (only used with --valve nds, default: auto-detect)
+        #[arg(long)]
+        ndsctl_path: Option<String>,
     },
     /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
     V1Client {
@@ -264,6 +267,7 @@ async fn main() {
             config: config_path,
             keys: keys_path,
             valve,
+            ndsctl_path,
         } => {
             use std::time::Duration;
             use v1::server::payout::{PayoutConfig, PayoutTarget};
@@ -313,10 +317,23 @@ async fn main() {
                 "nds" => {
                     #[cfg(feature = "nds")]
                     {
-                        Arc::new(v1::server::NdsValve::new())
+                        let ndsctl = ndsctl_path.as_deref().unwrap_or("ndsctl");
+                        let path = std::path::PathBuf::from(ndsctl);
+                        if !path.exists() {
+                            tracing::error!(ndsctl_path = %path.display(), "ndsctl binary not found");
+                            eprintln!(
+                                "ERROR: ndsctl not found at '{}'. \
+                                 Install nodogsplash or specify --ndsctl-path.",
+                                path.display()
+                            );
+                            std::process::exit(1);
+                        }
+                        tracing::info!(ndsctl_path = %path.display(), "Using NDS valve");
+                        Arc::new(v1::server::NdsValve::with_ndsctl_path(path))
                     }
                     #[cfg(not(feature = "nds"))]
                     {
+                        let _ = ndsctl_path;
                         eprintln!(
                             "ERROR: --valve nds requires the 'nds' feature. \
                              Rebuild with: cargo build --features nds"
@@ -324,7 +341,10 @@ async fn main() {
                         std::process::exit(1);
                     }
                 }
-                _ => Arc::new(v1::server::StubValve),
+                _ => {
+                    tracing::info!("Using stub valve (no real traffic control)");
+                    Arc::new(v1::server::StubValve)
+                }
             };
 
             match wt {

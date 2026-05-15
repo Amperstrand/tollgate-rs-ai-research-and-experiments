@@ -189,7 +189,16 @@ mod nds {
                 .arg(mac)
                 .output()
                 .await
-                .map_err(|e| ValveError::Other(format!("ndsctl auth failed: {e}")))?;
+                .map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        ValveError::Other(format!(
+                            "ndsctl not found at '{}' — ensure nodogsplash is installed",
+                            self.ndsctl_path.display()
+                        ))
+                    } else {
+                        ValveError::Other(format!("ndsctl auth failed: {e}"))
+                    }
+                })?;
             if !output.status.success() {
                 return Err(ValveError::Other(format!(
                     "ndsctl auth failed for {mac}: {}",
