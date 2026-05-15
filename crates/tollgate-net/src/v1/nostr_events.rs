@@ -175,6 +175,31 @@ impl SessionEvent {
         }
         None
     }
+
+    /// Start time as Unix timestamp (seconds), from the `start-time` tag.
+    pub fn start_time(&self) -> Option<i64> {
+        for tag in self.event.tags.iter() {
+            let items = tag.as_slice();
+            if items.first().map(String::as_str) == Some("start-time") {
+                return items.get(1).and_then(|s: &String| s.parse().ok());
+            }
+        }
+        None
+    }
+
+    /// Customer pubkey or identifier from the `p` tag.
+    ///
+    /// This is NOT the event author — it identifies the customer
+    /// (MAC address when no Nostr key is known).
+    pub fn customer_pubkey(&self) -> Option<String> {
+        for tag in self.event.tags.iter() {
+            let items = tag.as_slice();
+            if items.first().map(String::as_str) == Some("p") {
+                return items.get(1).cloned();
+            }
+        }
+        None
+    }
 }
 
 /// Notice event (Nostr kind 21023).

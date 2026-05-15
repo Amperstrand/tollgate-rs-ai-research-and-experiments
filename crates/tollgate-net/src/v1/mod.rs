@@ -16,6 +16,7 @@
 )]
 
 pub mod cli;
+pub mod crowsnest;
 pub mod http;
 pub mod nostr_events;
 pub mod pricing;

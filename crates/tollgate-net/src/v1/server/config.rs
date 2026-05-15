@@ -116,6 +116,53 @@ fn default_sat() -> String {
     "sat".to_owned()
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct NostrKeyFile {
+    config_version: String,
+    private_key: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum KeyError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("parse error: {0}")]
+    Parse(#[from] serde_json::Error),
+    #[error("invalid key: {0}")]
+    InvalidKey(String),
+}
+
+/// Load Nostr keys from a JSON file, or generate and save new ones.
+///
+/// File format matches Go v1's `identities.json` (single-identity subset):
+/// ```json
+/// { "config_version": "v0.0.1", "private_key": "<hex>" }
+/// ```
+pub fn load_or_generate_keys(path: &str) -> Result<Keys, KeyError> {
+    match std::fs::read_to_string(path) {
+        Ok(data) => {
+            let kf: NostrKeyFile = serde_json::from_str(&data)?;
+            let keys = Keys::parse(&kf.private_key).map_err(|e| {
+                KeyError::InvalidKey(format!("failed to parse private key: {e}"))
+            })?;
+            tracing::info!(public_key = %keys.public_key(), "Loaded Nostr keys from {path}");
+            Ok(keys)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let keys = Keys::generate();
+            let kf = NostrKeyFile {
+                config_version: "v0.0.1".to_owned(),
+                private_key: keys.secret_key().to_secret_hex(),
+            };
+            let json = serde_json::to_string_pretty(&kf)?;
+            std::fs::write(path, &json)?;
+            tracing::info!(public_key = %keys.public_key(), "Generated new Nostr keys, saved to {path}");
+            Ok(keys)
+        }
+        Err(e) => Err(KeyError::Io(e)),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("IO error: {0}")]
@@ -334,5 +381,44 @@ mod tests {
         assert_eq!(c.step_size, c2.step_size);
         assert_eq!(c.accepted_mints.len(), c2.accepted_mints.len());
         assert_eq!(c.profit_share.len(), c2.profit_share.len());
+    }
+
+    #[test]
+    fn key_load_or_generate_creates_new_file() {
+        let dir = std::env::temp_dir().join("tollgate_key_test_new");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("keys.json");
+
+        let keys = super::super::config::load_or_generate_keys(path.to_str().unwrap()).unwrap();
+        assert!(!keys.public_key().to_hex().is_empty());
+
+        let data = std::fs::read_to_string(&path).unwrap();
+        assert!(data.contains("private_key"));
+        assert!(data.contains("v0.0.1"));
+
+        let loaded = super::super::config::load_or_generate_keys(path.to_str().unwrap()).unwrap();
+        assert_eq!(keys.public_key(), loaded.public_key());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn key_load_or_generate_loads_existing() {
+        let dir = std::env::temp_dir().join("tollgate_key_test_existing");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("existing_keys.json");
+
+        let original = Keys::generate();
+        let kf = super::super::config::NostrKeyFile {
+            config_version: "v0.0.1".to_owned(),
+            private_key: original.secret_key().to_secret_hex(),
+        };
+        let json = serde_json::to_string_pretty(&kf).unwrap();
+        std::fs::write(&path, &json).unwrap();
+
+        let loaded = super::super::config::load_or_generate_keys(path.to_str().unwrap()).unwrap();
+        assert_eq!(original.public_key(), loaded.public_key());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

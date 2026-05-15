@@ -85,6 +85,9 @@ enum Commands {
         /// Path to JSON config file (overrides CLI args for metric/step_size/mints)
         #[arg(long)]
         config: Option<String>,
+        /// Path to Nostr key file (loads or generates new keys)
+        #[arg(long)]
+        keys: Option<String>,
     },
     /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
     V1Client {
@@ -115,6 +118,48 @@ enum Commands {
         /// Max price per byte (0 = no limit)
         #[arg(long, default_value = "0.0001")]
         max_price_per_byte: f64,
+    },
+    /// Run as a v1 client with auto-discovery (probes multiple gateways, creates sessions automatically)
+    V1ClientAuto {
+        /// Gateway IPs to probe (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        gateway_ips: Vec<String>,
+        /// MAC address of our interface (device-identifier)
+        #[arg(long, default_value = "00:00:00:00:00:00")]
+        mac: String,
+        /// Network interface name (for session management)
+        #[arg(long, default_value = "eth0")]
+        interface: String,
+        /// Mint URL (must match an accepted mint on the upstream TollGate)
+        #[arg(long, default_value = "https://testnut.cashu.exchange")]
+        mint_url: String,
+        /// Currency unit
+        #[arg(long, default_value = "sat")]
+        unit: String,
+        /// Preferred allotment (milliseconds for time, bytes for data)
+        #[arg(long, default_value = "60000")]
+        preferred_allotment: u64,
+        /// Usage polling interval in seconds
+        #[arg(long, default_value = "1")]
+        poll_interval: u64,
+        /// Renewal threshold (0.0–1.0, renew when usage reaches this fraction)
+        #[arg(long, default_value = "0.8")]
+        renewal_threshold: f64,
+        /// Max price per millisecond (0 = no limit)
+        #[arg(long, default_value = "0.01")]
+        max_price_per_ms: f64,
+        /// Max price per byte (0 = no limit)
+        #[arg(long, default_value = "0.0001")]
+        max_price_per_byte: f64,
+        /// Scan interval in seconds (how often to probe gateways)
+        #[arg(long, default_value = "30")]
+        scan_interval: u64,
+        /// Probe timeout in seconds (per-gateway)
+        #[arg(long, default_value = "5")]
+        probe_timeout: u64,
+        /// Skip Nostr signature verification on advertisements
+        #[arg(long, default_value = "false")]
+        no_verify_signature: bool,
     },
 }
 
@@ -214,11 +259,18 @@ async fn main() {
             min_steps,
             wallet: wt,
             config: config_path,
+            keys: keys_path,
         } => {
             use std::time::Duration;
             use v1::server::payout::{PayoutConfig, PayoutTarget};
 
-            let nostr_keys = nostr::prelude::Keys::generate();
+            let nostr_keys = match keys_path {
+                Some(path) => v1::server::load_or_generate_keys(&path).unwrap_or_else(|e| {
+                    eprintln!("Failed to load/generate keys from {path}: {e}");
+                    std::process::exit(1);
+                }),
+                None => nostr::prelude::Keys::generate(),
+            };
             let server_config = if let Some(path) = config_path {
                 v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
                     eprintln!("Failed to load config from {path}: {e}");
@@ -324,6 +376,83 @@ async fn main() {
                 tracing::error!("v1 client failed: {e}");
                 std::process::exit(1);
             }
+        }
+        Commands::V1ClientAuto {
+            gateway_ips,
+            mac,
+            interface,
+            mint_url,
+            unit,
+            preferred_allotment,
+            poll_interval,
+            renewal_threshold,
+            max_price_per_ms,
+            max_price_per_byte,
+            scan_interval,
+            probe_timeout,
+            no_verify_signature,
+        } => {
+            use std::time::Duration;
+
+            let wallet = Arc::new(
+                cdk_wallet::CdkWallet::new(&mint_url, [3u8; 64])
+                    .await
+                    .expect("failed to create CDK wallet"),
+            );
+
+            let client_config = v1::V1ClientConfig {
+                gateway_ip: String::new(),
+                mac_address: mac.clone(),
+                our_mint_urls: vec![mint_url],
+                unit,
+                max_price_per_ms,
+                max_price_per_byte,
+                preferred_allotment,
+                poll_interval_secs: poll_interval,
+                renewal_threshold,
+            };
+
+            let sm_config = v1::session_manager::SessionManagerConfig {
+                client_config,
+                tracker_config: v1::usage_tracker::UsageTrackerConfig {
+                    poll_interval: Duration::from_secs(poll_interval),
+                    renewal_threshold,
+                },
+            };
+
+            let session_manager = Arc::new(
+                v1::session_manager::SessionManager::new(sm_config, wallet.clone()),
+            );
+
+            let crowsnest_config = v1::crowsnest::CrowsnestConfig {
+                gateway_ips,
+                scan_interval: Duration::from_secs(scan_interval),
+                probe_timeout: Duration::from_secs(probe_timeout),
+                verify_signature: !no_verify_signature,
+                interface_name: interface.clone(),
+                mac_address: mac,
+            };
+
+            let crowsnest =
+                v1::crowsnest::Crowsnest::new(crowsnest_config, session_manager.clone());
+            let crowsnest_cancel = crowsnest.cancel_token();
+            let crowsnest_handle = crowsnest.spawn();
+
+            let sm_cancel = {
+                let sm = session_manager.clone();
+                tokio::spawn(async move {
+                    sm.run().await.ok();
+                })
+            };
+
+            tracing::info!("V1ClientAuto running. Press Ctrl+C to stop.");
+            tokio::signal::ctrl_c().await.ok();
+
+            tracing::info!("Shutting down...");
+            crowsnest_cancel.cancel();
+            session_manager.stop().await;
+            crowsnest_handle.abort();
+            sm_cancel.abort();
         }
     }
 }

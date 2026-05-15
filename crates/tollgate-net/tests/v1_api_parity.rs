@@ -456,6 +456,111 @@ async fn parity_post_session_event_has_device_identifier_tag() {
     stop_server(server).await;
 }
 
+// Go v1 reference: kind 1022 has ["p", customer_identifier] tag
+#[tokio::test]
+async fn parity_post_session_event_has_p_tag() {
+    let (base_url, server, _state) = start_server(test_config()).await;
+    let client = Client::new();
+
+    let event = pay(&client, &base_url, 10).await;
+
+    let p_tag = event.tags.iter().find_map(|tag| {
+        let items = tag.as_slice();
+        if items.first().map(String::as_str) == Some("p") {
+            items.get(1).cloned()
+        } else {
+            None
+        }
+    });
+    assert!(
+        p_tag.is_some(),
+        "session event must have a 'p' tag"
+    );
+    assert!(
+        p_tag.as_ref().unwrap().contains(':'),
+        "p tag should contain MAC address with colons: {}",
+        p_tag.unwrap()
+    );
+
+    stop_server(server).await;
+}
+
+// Go v1 reference: kind 1022 has ["start-time", unix_timestamp] tag
+#[tokio::test]
+async fn parity_post_session_event_has_start_time_tag() {
+    let (base_url, server, _state) = start_server(test_config()).await;
+    let client = Client::new();
+
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let event = pay(&client, &base_url, 10).await;
+    let after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let start_time = event.tags.iter().find_map(|tag| {
+        let items = tag.as_slice();
+        if items.first().map(String::as_str) == Some("start-time") {
+            items.get(1).and_then(|s| s.parse::<i64>().ok())
+        } else {
+            None
+        }
+    });
+    assert!(start_time.is_some(), "session event must have start-time tag");
+    let st = start_time.unwrap();
+    assert!(
+        st >= before && st <= after,
+        "start-time {st} should be between {before} and {after}"
+    );
+
+    stop_server(server).await;
+}
+
+// Go v1 reference: X-Forwarded-For header is respected for IP resolution
+#[tokio::test]
+async fn parity_post_respects_x_forwarded_for() {
+    let (base_url, server, _state) = start_server(test_config()).await;
+    let client = Client::new();
+
+    let token = mock_token(10);
+    let resp = client
+        .post(&base_url)
+        .header("x-forwarded-for", "1.2.3.4")
+        .body(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = resp.text().await.unwrap();
+    let event: Event = Event::from_json(&body).unwrap();
+    assert_eq!(event.kind, Kind::Custom(1022));
+
+    stop_server(server).await;
+}
+
+// Go v1 reference: GET /whoami respects X-Real-IP header
+#[tokio::test]
+async fn parity_whoami_respects_x_real_ip() {
+    let (base_url, server, _state) = start_server(test_config()).await;
+    let client = Client::new();
+
+    let resp = client
+        .get(format!("{base_url}/whoami"))
+        .header("x-real-ip", "1.2.3.4")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.starts_with("mac="));
+
+    stop_server(server).await;
+}
+
 // Go v1 reference: POST / with Nostr event wrapper (kind 21000) with "payment" tag works
 #[tokio::test]
 async fn parity_post_payment_with_nostr_event_wrapper() {
@@ -469,7 +574,7 @@ async fn parity_post_payment_with_nostr_event_wrapper() {
     // MockWallet reads first 8 bytes of token string as BE u64. Any 8-byte
     // ASCII string produces a huge value that overflows steps * step_size.
     // Instead, send a short string (< 8 bytes) to prove the Nostr wrapper
-    // extraction works: MockWallet rejects it → 400 with token_rejected.
+    // extraction works: MockWallet rejects it → 400 with payment-error-invalid-token.
     let token_str = "short";
     let payment_event_json2 = wrap_token_event_json(&client_keys, tollgate_pubkey, token_str);
 
@@ -501,7 +606,7 @@ async fn parity_post_payment_with_nostr_event_wrapper() {
             None
         }
     });
-    assert_eq!(code.as_deref(), Some("token_rejected"));
+    assert_eq!(code.as_deref(), Some("payment-error-invalid-token"));
 
     stop_server(server).await;
 }
@@ -1415,7 +1520,7 @@ async fn parity_edge_whoami_consistent_with_session() {
     stop_server(server).await;
 }
 
-// Go v1 reference: error notice contains "token_rejected" code for invalid tokens
+// Go v1 reference: error notice contains "payment-error-invalid-token" code for invalid tokens
 #[tokio::test]
 async fn parity_edge_notice_error_code_token_rejected() {
     let (base_url, server, _state) = start_server(test_config()).await;
@@ -1435,8 +1540,8 @@ async fn parity_edge_notice_error_code_token_rejected() {
     });
     assert_eq!(
         code.as_deref(),
-        Some("token_rejected"),
-        "error code should be token_rejected"
+        Some("payment-error-invalid-token"),
+        "error code should be payment-error-invalid-token"
     );
 
     stop_server(server).await;

@@ -71,8 +71,13 @@ pub fn calculate_allotment(
 pub fn build_session_event(
     session: &CustomerSession,
     config: &V1ServerConfig,
+    customer_identifier: &str,
 ) -> Result<String, nostr::event::builder::Error> {
     let tags = Tags::from_list(vec![
+        Tag::custom(
+            TagKind::Custom("p".into()),
+            [customer_identifier.to_owned()],
+        ),
         Tag::custom(
             TagKind::Custom("allotment".into()),
             [session.allotment.to_string()],
@@ -81,6 +86,10 @@ pub fn build_session_event(
         Tag::custom(
             TagKind::Custom("device-identifier".into()),
             ["mac".to_owned(), session.mac_address.clone()],
+        ),
+        Tag::custom(
+            TagKind::Custom("start-time".into()),
+            [session.start_time.to_string()],
         ),
     ]);
 

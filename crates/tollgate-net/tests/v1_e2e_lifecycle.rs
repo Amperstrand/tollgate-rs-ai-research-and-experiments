@@ -191,7 +191,7 @@ async fn rejecting_post_payment(
         Tag::custom(TagKind::Custom("level".into()), ["error".to_owned()]),
         Tag::custom(
             TagKind::Custom("code".into()),
-            ["token_rejected".to_owned()],
+            ["payment-error-invalid-token".to_owned()],
         ),
     ]);
 
@@ -697,7 +697,7 @@ async fn e2e_client_handles_server_rejection() {
             let msg = format!("{http_err}");
             assert!(
                 msg.contains("rejected")
-                    || msg.contains("token_rejected")
+                    || msg.contains("payment-error")
                     || msg.contains("Payment not accepted"),
                 "error should mention rejection: {msg}"
             );

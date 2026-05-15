@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{ConnectInfo, Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
@@ -20,7 +20,7 @@ use nostr::prelude::*;
 use tollgate_core::wallet::Wallet;
 
 use super::merchant;
-use super::{CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig};
+use super::{extract_client_ip, CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig};
 
 pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
     Router::new()
@@ -97,10 +97,11 @@ async fn handle_get_details<W: Wallet>(State(state): State<Arc<ServerState<W>>>)
 #[allow(clippy::too_many_lines)]
 async fn handle_post_payment<W: Wallet>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<Arc<ServerState<W>>>,
     body: String,
 ) -> Response {
-    let ip = addr.ip().to_string();
+    let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
 
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
@@ -122,9 +123,10 @@ async fn handle_post_payment<W: Wallet>(
         Ok(amount) => amount,
         Err(e) => {
             tracing::warn!("Token rejected: {e}");
+            let code = classify_payment_error(&e.to_string());
             return notice_response(
                 "error",
-                "token_rejected",
+                code,
                 &format!("payment rejected: {e}"),
                 StatusCode::BAD_REQUEST,
                 &state.config,
@@ -145,7 +147,7 @@ async fn handle_post_payment<W: Wallet>(
             tracing::warn!("Allotment calculation failed: {e}");
             return notice_response(
                 "error",
-                "insufficient_payment",
+                "allotment-calculation-failed",
                 &format!("{e}"),
                 StatusCode::BAD_REQUEST,
                 &state.config,
@@ -181,7 +183,7 @@ async fn handle_post_payment<W: Wallet>(
         tracing::warn!("Failed to open valve for {mac}: {e}");
     }
 
-    match merchant::build_session_event(&session, &state.config) {
+    match merchant::build_session_event(&session, &state.config, &mac) {
         Ok(json) => cors_response(json_response(StatusCode::OK, json)),
         Err(e) => {
             tracing::error!("Failed to build session event: {e}");
@@ -195,9 +197,10 @@ async fn handle_post_payment<W: Wallet>(
 
 async fn handle_usage<W: Wallet>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<Arc<ServerState<W>>>,
 ) -> Response {
-    let ip = addr.ip().to_string();
+    let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
         Err(_) => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned())),
@@ -237,9 +240,10 @@ async fn handle_usage<W: Wallet>(
 
 async fn handle_whoami<W: Wallet>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<Arc<ServerState<W>>>,
 ) -> Response {
-    let ip = addr.ip().to_string();
+    let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     match state.mac_resolver.resolve(&ip) {
         Ok(mac) => cors_response(text_response(StatusCode::OK, format!("mac={mac}"))),
         Err(_) => cors_response(text_response(StatusCode::OK, "mac=unknown".to_owned())),
@@ -248,9 +252,10 @@ async fn handle_whoami<W: Wallet>(
 
 async fn handle_balance<W: Wallet>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<Arc<ServerState<W>>>,
 ) -> Response {
-    let ip = addr.ip().to_string();
+    let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
         Err(_) => {
@@ -327,6 +332,28 @@ fn extract_payment_token(body: &str) -> String {
     body.to_owned()
 }
 
+/// Classify a wallet error into a Go v1-compatible error code string.
+///
+/// Go v1 uses specific error codes:
+/// - `payment-error-token-spent` — token already redeemed
+/// - `payment-error-invalid-token` — malformed or unparseable token
+/// - `payment-processing-failed` — generic payment failure
+fn classify_payment_error(err_str: &str) -> &'static str {
+    let lower = err_str.to_ascii_lowercase();
+    if lower.contains("already spent") || lower.contains("token already") {
+        "payment-error-token-spent"
+    } else if lower.contains("invalid token")
+        || lower.contains("decode")
+        || lower.contains("token rejected")
+        || lower.contains("too short")
+        || lower.contains("zero amount")
+    {
+        "payment-error-invalid-token"
+    } else {
+        "payment-processing-failed"
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct LnInvoiceRequest {
     amount: u64,
@@ -385,6 +412,7 @@ fn ln_error_response(http_status: StatusCode, error: &str) -> Response {
 #[allow(clippy::too_many_lines)]
 async fn handle_post_ln_invoice<W: Wallet>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<Arc<ServerState<W>>>,
     body: String,
 ) -> Response {
@@ -407,7 +435,7 @@ async fn handle_post_ln_invoice<W: Wallet>(
         ));
     }
 
-    let ip = addr.ip().to_string();
+    let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
         Err(e) => {
@@ -504,6 +532,7 @@ async fn handle_post_ln_invoice<W: Wallet>(
 #[allow(clippy::too_many_lines)]
 async fn handle_get_ln_invoice<W: Wallet>(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<Arc<ServerState<W>>>,
     Query(params): Query<LnInvoiceQuery>,
 ) -> Response {
@@ -517,7 +546,7 @@ async fn handle_get_ln_invoice<W: Wallet>(
         }
     };
 
-    let ip = addr.ip().to_string();
+    let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
         Err(e) => {
