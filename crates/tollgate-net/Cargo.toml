@@ -29,6 +29,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 
 [features]
 default = []
+nds = []
 spilman = [
     "dep:cdk-spilman",
     "dep:cashu",

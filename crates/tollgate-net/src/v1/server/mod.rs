@@ -46,7 +46,10 @@ pub use upstream_detector::{
     parse_advertisement, probe_gateway, probe_url, DiscoveredUpstream, UpstreamDetectError,
     UpstreamDetectorConfig, UpstreamMint,
 };
-pub use valve::{StubValve, Valve, ValveError};
+pub use valve::{ClientStats, StubValve, Valve, ValveError};
+
+#[cfg(feature = "nds")]
+pub use valve::NdsValve;
 
 pub struct AcceptedMint {
     pub url: String,
@@ -91,7 +94,7 @@ impl V1Server {
         Self { config }
     }
 
-    pub async fn run<W: Wallet + 'static>(self, wallet: Arc<W>) {
+    pub async fn run<W: Wallet + 'static>(self, wallet: Arc<W>, valve: Arc<dyn Valve + Send + Sync>) {
         let port = self.config.port;
         let advertisement =
             merchant::build_advertisement(&self.config).expect("failed to build advertisement");
@@ -101,7 +104,7 @@ impl V1Server {
             config: self.config,
             sessions: Arc::new(InMemorySessionStore::new()),
             mac_resolver: Arc::new(StubMacResolver::default()),
-            valve: Arc::new(StubValve),
+            valve,
             mint_quote_wallet: None,
             lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
             advertisement,

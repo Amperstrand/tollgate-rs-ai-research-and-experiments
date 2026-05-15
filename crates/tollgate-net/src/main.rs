@@ -88,6 +88,9 @@ enum Commands {
         /// Path to Nostr key file (loads or generates new keys)
         #[arg(long)]
         keys: Option<String>,
+        /// Valve backend: "stub" (default) or "nds" (NoDogSplash, requires --features nds)
+        #[arg(long, default_value = "stub", value_name = "nds|stub")]
+        valve: String,
     },
     /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
     V1Client {
@@ -260,9 +263,11 @@ async fn main() {
             wallet: wt,
             config: config_path,
             keys: keys_path,
+            valve,
         } => {
             use std::time::Duration;
             use v1::server::payout::{PayoutConfig, PayoutTarget};
+            use v1::server::Valve;
 
             let nostr_keys = match keys_path {
                 Some(path) => v1::server::load_or_generate_keys(&path).unwrap_or_else(|e| {
@@ -296,10 +301,29 @@ async fn main() {
             };
             let config = server_config.to_server_config(nostr_keys, port);
             let server = v1::server::V1Server::new(config);
+
+            let valve: Arc<dyn Valve + Send + Sync> = match valve.as_str() {
+                "nds" => {
+                    #[cfg(feature = "nds")]
+                    {
+                        Arc::new(v1::server::NdsValve::new())
+                    }
+                    #[cfg(not(feature = "nds"))]
+                    {
+                        eprintln!(
+                            "ERROR: --valve nds requires the 'nds' feature. \
+                             Rebuild with: cargo build --features nds"
+                        );
+                        std::process::exit(1);
+                    }
+                }
+                _ => Arc::new(v1::server::StubValve),
+            };
+
             match wt {
                 WalletType::Mock => {
                     let wallet = Arc::new(mock::MockWallet::new(0));
-                    server.run(wallet).await;
+                    server.run(wallet, valve).await;
                 }
                 WalletType::Cdk => {
                     let wallet = Arc::new(
@@ -325,7 +349,7 @@ async fn main() {
                     };
                     let payout = v1::server::payout::spawn_payout_task(wallet.clone(), payout_cfg);
                     tokio::select! {
-                        () = async { server.run(wallet).await } => {}
+                        () = async { server.run(wallet, valve).await } => {}
                         _ = payout => {
                             tracing::warn!("payout task finished");
                         }
@@ -338,7 +362,7 @@ async fn main() {
                             .await
                             .expect("failed to create CDK wallet"),
                     );
-                    server.run(wallet).await;
+                    server.run(wallet, valve).await;
                 }
             }
         }

@@ -216,11 +216,12 @@ jobs:
           PAYLOAD=$(mktemp -d)
           install -D -m 0755 bin/${{ env.BINARY_NAME }} "$PAYLOAD/usr/bin/tollgate-wrt"
 
-          install -D -m 0755 packaging/files/etc/init.d/tollgate-wrt                 "$PAYLOAD/etc/init.d/tollgate-wrt"
-          install -D -m 0644 packaging/files/etc/config/firewall-tollgate             "$PAYLOAD/etc/config/firewall-tollgate"
-          install -D -m 0755 packaging/files/etc/hotplug.d/iface/95-tollgate-restart  "$PAYLOAD/etc/hotplug.d/iface/95-tollgate-restart"
-          install -D -m 0644 packaging/files/lib/upgrade/keep.d/tollgate              "$PAYLOAD/lib/upgrade/keep.d/tollgate"
-          mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/crontabs"
+          install -D -m 0755 packaging/files/etc/init.d/tollgate-wrt                          "$PAYLOAD/etc/init.d/tollgate-wrt"
+          install -D -m 0644 packaging/files/etc/config/firewall-tollgate                      "$PAYLOAD/etc/config/firewall-tollgate"
+          install -D -m 0755 packaging/files/etc/hotplug.d/iface/95-tollgate-restart           "$PAYLOAD/etc/hotplug.d/iface/95-tollgate-restart"
+          install -D -m 0644 packaging/files/lib/upgrade/keep.d/tollgate                       "$PAYLOAD/lib/upgrade/keep.d/tollgate"
+          install -D -m 0755 packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink "$PAYLOAD/etc/uci-defaults/90-tollgate-captive-portal-symlink"
+          mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site" "$PAYLOAD/etc/crontabs"
           install -D -m 0644 LICENSE "$PAYLOAD/usr/share/doc/tollgate-wrt/LICENSE"
 
           # Apply UPX on the staged binary (before packing).
@@ -240,6 +241,7 @@ jobs:
             MAINTAINER="Amperstrand" \
             LICENSE="MIT" \
             DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt" \
+            DEPENDS="nodogsplash" \
             packaging/build-ipk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
 
       - name: Upload package artifact
