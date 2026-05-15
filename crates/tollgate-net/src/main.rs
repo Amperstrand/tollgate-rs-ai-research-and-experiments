@@ -277,10 +277,17 @@ async fn main() {
                 None => nostr::prelude::Keys::generate(),
             };
             let server_config = if let Some(path) = config_path {
-                v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
-                    eprintln!("Failed to load config from {path}: {e}");
-                    std::process::exit(1);
-                })
+                // Load from config file, then apply CLI overrides for
+                // port/metric/step_size (UCI may provide different values
+                // than what's in the config file).
+                let mut sc =
+                    v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
+                        eprintln!("Failed to load config from {path}: {e}");
+                        std::process::exit(1);
+                    });
+                sc.metric = metric.clone();
+                sc.step_size = step_size;
+                sc
             } else {
                 let mut sc = v1::server::ServerConfig {
                     metric,
