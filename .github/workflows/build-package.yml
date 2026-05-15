@@ -204,6 +204,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y upx-ucl
 
+      - name: Fetch pre-built captive portal site
+        run: |
+          set -euo pipefail
+          # Download the pre-built portal site from Go v1 repo (React SPA built by Vite).
+          # This avoids vendoring ~20 static files or adding an npm build step.
+          PORTAL_DIR=$(mktemp -d)
+          curl -sL "https://api.github.com/repos/OpenTollGate/tollgate-module-basic-go/git/trees/main?recursive=1" \
+            | python3 -c "
+          import json, sys, urllib.request
+          data = json.load(sys.stdin)
+          for item in data.get('tree', []):
+              p = item['path']
+              if p.startswith('packaging/files/tollgate-captive-portal-site/') and item['type'] == 'blob':
+                  rel = p.removeprefix('packaging/files/tollgate-captive-portal-site/')
+                  print(rel)
+          " | while read -r rel; do
+              url="https://raw.githubusercontent.com/OpenTollGate/tollgate-module-basic-go/main/packaging/files/tollgate-captive-portal-site/$rel"
+              dest="$PORTAL_DIR/$rel"
+              mkdir -p "$(dirname "$dest")"
+              curl -sL "$url" -o "$dest"
+          done
+          echo "PORTAL_DIR=$PORTAL_DIR" >> $GITHUB_ENV
+          echo "Downloaded portal site:"
+          find "$PORTAL_DIR" -type f | head -20
+
       - name: Build .ipk
         run: |
           set -euo pipefail
@@ -221,8 +246,11 @@ jobs:
           install -D -m 0755 packaging/files/etc/hotplug.d/iface/95-tollgate-restart           "$PAYLOAD/etc/hotplug.d/iface/95-tollgate-restart"
           install -D -m 0644 packaging/files/lib/upgrade/keep.d/tollgate                       "$PAYLOAD/lib/upgrade/keep.d/tollgate"
           install -D -m 0755 packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink "$PAYLOAD/etc/uci-defaults/90-tollgate-captive-portal-symlink"
-          mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site" "$PAYLOAD/etc/crontabs"
+          mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/crontabs"
           install -D -m 0644 LICENSE "$PAYLOAD/usr/share/doc/tollgate-wrt/LICENSE"
+
+          # Install pre-built captive portal site into /etc/tollgate/tollgate-captive-portal-site/
+          cp -a "$PORTAL_DIR/." "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site/"
 
           # Apply UPX on the staged binary (before packing).
           if [ -n "${{ matrix.compression }}" ]; then
