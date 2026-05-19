@@ -35,6 +35,7 @@ pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
             "/ln-invoice",
             get(handle_get_ln_invoice::<W>).post(handle_post_ln_invoice::<W>),
         )
+        .route("/pay", get(handle_get_pay::<W>))
         .with_state(state)
 }
 
@@ -92,6 +93,14 @@ fn notice_response(
 
 async fn handle_get_details<W: Wallet>(State(state): State<Arc<ServerState<W>>>) -> Response {
     cors_response(json_response(StatusCode::OK, state.advertisement.clone()))
+}
+
+/// Captive-portal payment page (Go v1 compatible).
+///
+/// Returns the advertisement (kind 10021) so clients can discover pricing.
+/// Full 402 + `payment_request` / `qr_image` flow uses `/ln-invoice` for Lightning.
+async fn handle_get_pay<W: Wallet>(State(state): State<Arc<ServerState<W>>>) -> Response {
+    handle_get_details(State(state)).await
 }
 
 #[allow(clippy::too_many_lines)]

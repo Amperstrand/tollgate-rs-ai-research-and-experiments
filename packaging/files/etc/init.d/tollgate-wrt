@@ -25,6 +25,7 @@ start_service() {
         procd_open_instance
         procd_set_param command /usr/bin/tollgate-wrt server \
             --config "$CONFIG_FILE" \
+            --wallet cdk \
             --port "$(uci_get tollgate_wrt @server[0] port 2121)" \
             --metric "$(uci_get tollgate_wrt @server[0] metric bytes)" \
             --step-size "$(uci_get tollgate_wrt @server[0] step_size 5000)" \
@@ -33,6 +34,7 @@ start_service() {
     else
         procd_open_instance
         procd_set_param command /usr/bin/tollgate-wrt server \
+            --wallet cdk \
             --port "$(uci_get tollgate_wrt @server[0] port 2121)" \
             --metric "$(uci_get tollgate_wrt @server[0] metric bytes)" \
             --step-size "$(uci_get tollgate_wrt @server[0] step_size 5000)" \

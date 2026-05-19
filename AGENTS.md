@@ -21,13 +21,13 @@ This is the **Amperstrand experimental fork** of [OpenTollGate/tollgate-rs](http
 ### Git Remote Configuration
 
 ```
-origin  → https://github.com/OpenTollGate/tollgate-rs                 (READ-ONLY upstream, fetch only)
-private → https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git (READ-WRITE, this fork)
-```
+origin   → https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git (READ-WRITE, this fork)
+upstream → https://github.com/OpenTollGate/tollgate-rs                 (READ-ONLY upstream, fetch only)
 
-- `git pull origin master` — OK (sync from upstream)
-- `git push private feature-branch` — OK (work on our fork)
-- `git push origin anything` — **FORBIDDEN**
+- `git pull origin master` — OK (sync with fork)
+- `git push origin feature-branch` — OK (work on fork)
+- `git fetch upstream master` — OK (sync from upstream)
+- `git push upstream anything` — **FORBIDDEN**
 - `gh issue create --repo OpenTollGate/tollgate-rs` — **FORBIDDEN**
 - `gh pr create --repo OpenTollGate/tollgate-rs` — **FORBIDDEN**
 

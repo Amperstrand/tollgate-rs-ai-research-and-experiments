@@ -34,7 +34,8 @@ jobs:
               { "compile_key": "arm64",            "target": "aarch64-unknown-linux-musl",    "toolchain": "stable" },
               { "compile_key": "armv7",            "target": "armv7-unknown-linux-musleabihf", "toolchain": "stable" },
               { "compile_key": "mipsle-softfloat", "target": "mipsel-unknown-linux-gnu",       "toolchain": "nightly" },
-              { "compile_key": "mips-softfloat",   "target": "mips-unknown-linux-gnu",         "toolchain": "nightly" }
+              { "compile_key": "mips-softfloat",   "target": "mips-unknown-linux-gnu",         "toolchain": "nightly" },
+              { "compile_key": "amd64",            "target": "x86_64-unknown-linux-musl",      "toolchain": "stable" }
             ]
           }
           EOF
@@ -66,7 +67,8 @@ jobs:
               { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-fast" },
               { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-best" },
               { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-brute" },
-              { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-ultra-brute" }
+              { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-ultra-brute" },
+              { "architecture": "x86_64",           "compile_key": "amd64",            "sdk": "x86-64" }
             ]
           }
           EOF
@@ -168,7 +170,7 @@ jobs:
           set -eu
           mkdir -p bin
           echo "Building ${{ env.BINARY_NAME }} for ${{ matrix.target }}"
-          cross build --release --target ${{ matrix.target }} --bin ${{ env.BINARY_NAME }}
+          cross build --release --target ${{ matrix.target }} --bin ${{ env.BINARY_NAME }} --features nds
           cp "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" bin/${{ env.BINARY_NAME }}
           ls -lh bin/
 

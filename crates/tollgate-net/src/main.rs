@@ -60,6 +60,7 @@ enum Commands {
         no_close: bool,
     },
     /// Run as a v1 server (accepts Cashu token payments for network access)
+    #[command(name = "server", alias = "v1-server")]
     V1Server {
         /// Port to listen on (default: 2121)
         #[arg(long, default_value = "2121")]
