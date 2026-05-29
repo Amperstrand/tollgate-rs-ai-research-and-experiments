@@ -20,6 +20,10 @@ pub fn build_advertisement(
             TagKind::Custom("step_size".into()),
             [config.step_size.to_string()],
         ),
+        Tag::custom(
+            TagKind::Custom("tips".into()),
+            ["1".to_owned(), "2".to_owned(), "3".to_owned(), "4".to_owned()],
+        ),
     ];
 
     for mint in &config.accepted_mints {
