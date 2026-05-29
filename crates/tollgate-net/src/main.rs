@@ -354,8 +354,14 @@ async fn main() {
                     server.run(wallet, valve).await;
                 }
                 WalletType::Cdk => {
+                    // Use the first accepted mint from config for wallet initialization.
+                    // When --config is used, accepted_mints comes from the config file.
+                    // When using CLI flags, accepted_mints[0].url was set from --mint-url above.
+                    let wallet_mint_url = server_config.accepted_mints.first()
+                        .map(|m| m.url.clone())
+                        .unwrap_or(mint_url.clone());
                     let wallet = Arc::new(
-                        cdk_wallet::CdkWallet::new(&mint_url, [4u8; 64])
+                        cdk_wallet::CdkWallet::new(&wallet_mint_url, [4u8; 64])
                             .await
                             .expect("failed to create CDK wallet"),
                     );
@@ -385,8 +391,11 @@ async fn main() {
                 }
                 #[cfg(feature = "spilman")]
                 WalletType::Spilman => {
+                    let wallet_mint_url = server_config.accepted_mints.first()
+                        .map(|m| m.url.clone())
+                        .unwrap_or(mint_url.clone());
                     let wallet = Arc::new(
-                        cdk_wallet::CdkWallet::new(&mint_url, [4u8; 64])
+                        cdk_wallet::CdkWallet::new(&wallet_mint_url, [4u8; 64])
                             .await
                             .expect("failed to create CDK wallet"),
                     );
