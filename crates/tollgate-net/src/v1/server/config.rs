@@ -106,6 +106,7 @@ pub struct MintConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProfitShareConfig {
     pub factor: f64,
+    #[serde(alias = "pubkey")]
     pub identity: String,
 }
 
