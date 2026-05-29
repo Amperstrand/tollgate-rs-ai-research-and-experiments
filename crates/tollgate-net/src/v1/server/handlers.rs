@@ -326,6 +326,7 @@ async fn handle_balance<W: Wallet>(
 }
 
 fn extract_payment_token(body: &str) -> String {
+    // Try verified nostr event first (signed events from nak/relay clients)
     if let Ok(event) = Event::from_json(body) {
         if event.kind == Kind::Custom(21_000) {
             for tag in event.tags.iter() {
@@ -338,6 +339,25 @@ fn extract_payment_token(body: &str) -> String {
             }
         }
     }
+
+    // Fallback: parse kind:21000 JSON directly without signature verification.
+    // Go v1 does not verify signatures on incoming payment events.
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+        if val.get("kind").and_then(|k| k.as_u64()) == Some(21_000) {
+            if let Some(tags) = val.get("tags").and_then(|t| t.as_array()) {
+                for tag in tags {
+                    if let Some(arr) = tag.as_array() {
+                        if arr.first().and_then(|v| v.as_str()) == Some("payment") {
+                            if let Some(token) = arr.get(1).and_then(|v| v.as_str()) {
+                                return token.to_owned();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     body.to_owned()
 }
 
