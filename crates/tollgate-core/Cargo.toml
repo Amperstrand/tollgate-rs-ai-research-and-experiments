@@ -1,0 +1,20 @@
+[package]
+name = "tollgate-core"
+version = "0.1.0"
+description = "Resource-agnostic TollGate payment protocol library"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+minicbor = { version = "0.25", features = ["derive", "std"] }
+sha2 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+
+[lints]
+workspace = true

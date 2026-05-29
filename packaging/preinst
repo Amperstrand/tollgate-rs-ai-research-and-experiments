@@ -1,0 +1,8 @@
+#!/bin/sh
+mkdir -p /etc/tollgate
+if [ -f /etc/tollgate/install_time ]; then
+    date +%s > /etc/tollgate/install_time
+else
+    date +%s > /etc/tollgate/install_time
+fi
+exit 0

@@ -22,8 +22,110 @@ project and consumes the same `tollgate-core`.
 
 → **Start here:** [tollgate-intro.md](docs/design/core/tollgate-intro.md) — goals, architecture, payment model, security.
 
-> tollgate-rs is in the design phase. The protocol and design documents
-> are being finalized before implementation begins.
+## Implementation Status
+
+**22.8K lines of Rust, 320 tests passing.** V1 server and client modes are feature-complete
+against mock servers — awaiting physical router testing.
+
+| Milestone | Description | Status |
+|-----------|-------------|--------|
+| M1 | Core Types, Protocol Codec, Peer State Machine | ✅ Complete |
+| M2 | Bootstrap Token Payment, CDK Wallet Integration | ✅ Complete |
+| M2.5 | V1 Client Mode (pays upstream Go v1 routers) | ✅ Core done, LN invoice client pending |
+| M3 | Spilman Payment Channels (server + demo) | 🔄 Server handler done, demo in progress |
+| M4 | tollgate-net — IP Peering Deployment | Open |
+| M5 | Dynamic Pricing and Operator Controls | Open |
+| M6 | FIPS Mesh Integration | Open |
+| M7 | Production Hardening and Packaging | Open |
+
+### What's Implemented
+
+- **`tollgate-core`** — Full CBOR codec (minicbor), protocol messages, peer state machine,
+  quota exhaustion (Terminate/Restrict/Allow), metering types
+- **`tollgate-net` v1 server** — Drop-in Go v1 router replacement: all 7 API endpoints
+  (`GET /`, `POST /`, `GET /usage`, `GET /balance`, `GET /whoami`, `POST /ln-invoice`,
+  `GET /ln-invoice`), session management, Lightning invoice support, profit sharing,
+  janitor cleanup, CORS, JSON config. 68 API parity tests.
+- **`tollgate-net` v1 client** — Pays upstream Go v1 routers: advertisement fetching,
+  pricing selection, Cashu token payment, usage polling, auto-renewal, session recovery,
+  token recovery, multi-gateway session manager, trust policy, payment throttling.
+- **`tollgate-net` Spilman server** — Server-side Spilman handler using JSON-in-CBOR bridge
+  pattern aligned with SatsAndSports reference. 15 inline tests.
+- **Protocol trace visualization** — Interactive Mermaid diagrams of protocol flows,
+  deployed to GitHub Pages with clickable per-step channel state popups
+- **In-browser Spilman channel demo** — Real ECDH, Schnorr signatures, and blinded mint
+  interactions against testnut.cashu.exchange, all running in the browser with no build step.
+  Channel crypto delegated to cdk-wasm (Wave C). Spending condition witnesses for cooperative
+  close. No unilateral close, no DLEQ verification, no persistence.
+
+### Live Demos
+
+Both demos run entirely in the browser with no build step:
+
+| Demo | URL | What It Shows |
+|------|-----|---------------|
+| **Protocol Traces** | [GitHub Pages](https://amperstrand.github.io/tollgate-rs-ai-research-and-experiments/) | Auto-generated Mermaid sequence diagrams from Rust integration tests. Interactive state popups, balance timelines, educational walkthroughs with quizzes. |
+| **Spilman Channel (real crypto)** | [GitHub Pages](https://amperstrand.github.io/tollgate-rs-ai-research-and-experiments/spilman-real/) | Alice (buyer) and Charlie (seller) execute a full Spilman channel lifecycle in your browser — real ECDH, real Schnorr signatures, real Cashu blinded mint interactions against testnut.cashu.exchange. No build step, no npm, no server. Just open and click. |
+
+The spilman-real demo is also at `docs/private/demos/spilman-real/` — serve with any HTTP server (`python3 -m http.server`).
+
+### Compare and Contrast: Spilman Channel Demos
+
+Our goal: get a working Cashu Spilman channel running in a browser, in a simple educational way, so anyone can see how channel payments work without installing anything.
+
+**What we built on**: The demo calls low-level cdk-wasm bindings (compiled from the same [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) Rust crate) for channel crypto operations. The channel state machine and mint HTTP orchestration are our own JS code. The mint wrappers follow the [Cashu NUT specs](https://github.com/cashubtc/nuts).
+
+**What exists and how we differ**:
+
+| | **Our demo** | **SatsAndSports examples** [[1]](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples) | **cashu-ts** [[2]](https://github.com/cashubtc/cashu-ts) | **Option A simulator** |
+|---|---|---|---|---|
+| **Where it runs** | Browser (any OS, no install) | Terminal (Rust, Node.js, Python, or Go) | Browser or Node.js | Browser |
+| **Real crypto** | Yes — cdk-wasm (WASM compiled from Rust) + @noble/curves for keygen | Yes — cdk-spilman (Rust native) or WasmSpilmanBridge | Yes — @noble/curves | No — simulated SHA-256 only |
+| **Real mint** | Yes — testnut.cashu.exchange (public, auto-paying) | Yes — local test mint (cdk-spilman-test-mintd) | No channel support yet | No — no mint interaction |
+| **Architecture** | Low-level WASM bindings + hand-rolled JS orchestration | WasmSpilmanBridge / WasmSpilmanClientBridge classes manage full lifecycle | Library API | N/A |
+| **Server/Client** | Both wallets in same page, direct function calls | Real HTTP server (Express/Axum) + separate client process | N/A | N/A |
+| **Close paths** | Cooperative close only | Cooperative + unilateral + timeout (via bridge) | No channel support | Cooperative + unilateral + timeout (simulated) |
+| **DLEQ verification** | Not implemented | Via `verify_proof_dleq` | Not for channels | N/A |
+| **Spending conditions** | ✅ SIG_ALL witness with 2-of-2 P2PK (Wave C) | ✅ Managed by bridge | N/A | N/A |
+| **What you see** | Alice and Charlie wallets, token flow, signature details, mint requests | ASCII art (pay-per-character), terminal logs | Library API calls | Step-by-step walkthrough with data boxes |
+| **Educational** | Shows each phase, what tokens are used, what the signature commits to | Shows protocol flow via terminal output | Not a demo — it's a library | Highly educational — 20-step walkthrough with explanations |
+| **Setup** | Open URL, click button | Clone, build, start server + client, two terminals | npm install, write code | Open URL, click through steps |
+
+Sources:
+- [1] [SatsAndSports/cashu_spilman_channels/examples](https://github.com/SatsAndSports/cashu_spilman_channels/tree/main/examples) — Reference implementations in Rust (Axum), TypeScript (Express), Python (Flask), and Go. Each runs a "pay-per-character ASCII art" server where a client opens a Spilman channel and pays per request. These are the closest existing demos to ours.
+- [2] [cashubtc/cashu-ts](https://github.com/cashubtc/cashu-ts) — Official TypeScript Cashu wallet library. Does not yet support Spilman channels (as of v4.2.1). Our demo reimplements the channel crypto from scratch using `@noble/curves` and `@noble/hashes`, with the goal of eventually upstreaming Spilman support into cashu-ts. Strategy documented in [ADR-0005](docs/private/adr/0005-native-cashu-ts-spilman-strategy.md): three phases from hand-rolled crypto -> cdk-wasm bridge -> native cashu-ts module.
+
+**What we copied, what we changed**:
+- **Crypto functions**: Wave C delegates to cdk-wasm (same Rust crate). `crypto.js` remains for key generation, denomination splitting, and cooperative close output construction (contexts "receiver"/"sender" not yet in WASM bindings).
+- **Channel lifecycle**: We hand-roll the orchestration (open → fund → pay → close) in JS. The SatsAndSports examples use `WasmSpilmanBridge`/`WasmSpilmanClientBridge` classes that manage this internally. We are **not** using the high-level bridge classes — we call individual WASM bindings and wire them together ourselves.
+- **Spending conditions**: Wave C added SIG_ALL witness construction for cooperative close (P2PK 2-of-2 multisig). This is handled automatically inside the bridge classes in the reference implementation; we do it manually in `cdk-wasm-adapter.js`.
+- **Mint interaction**: Standard Cashu NUT-01/02/03/05 HTTP endpoints. Same as every Cashu wallet.
+- **UI**: Ours. The split-screen layout, token visualization, and signature detail panels are our design, inspired by the Option A simulator in this repo.
+
+**Honest assessment**: Our demo is **not** architecturally aligned with the SatsAndSports reference. They use high-level bridge classes (`WasmSpilmanBridge`, `SpilmanClientBridge`) that manage the full lifecycle internally. We call low-level WASM bindings and build the orchestration ourselves. The crypto operations use the same WASM binary compiled from the same Rust source, producing identical output. But the integration pattern is different: their thin-client-over-smart-bridge vs our hand-rolled-orchestration-over-raw-bindings. This is intentional for educational purposes — our code exposes each step of the channel lifecycle explicitly.
+
+### Dependencies and Attribution
+
+| Component | Source | What We Use It For |
+|-----------|--------|--------------------|
+| **`cdk`** v0.16 | [cashubtc/cdk](https://github.com/cashubtc/cdk) (crates.io) | Cashu wallet operations: token receive/verify, balance tracking, mint HTTP client |
+| **`cdk-spilman`** v0.15.1 | [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) (git) | Spilman channel primitives: `construct_proofs()`, `parse_keyset_info_from_json()`, `KeysetInfo` |
+| **`cashu`** | [cashubtc/cdk](https://github.com/cashubtc/cdk) at rev `63866dc6` (git) | Cashu proof types (`Proof`, `Secret`, `Amount`) used in test artifacts |
+| **`minicbor`** | crates.io | CBOR encoding for wire protocol (ADR-0002: integer keys, no_std compatible) |
+| **`tollgate-core`** | Our implementation | Protocol codec, state machine, pricing types, quota exhaustion |
+| **`SpilmanChannelManager`** | Our implementation (`spilman_wallet.rs`) | HTTP orchestration: keyset fetch, mint quote, blind signature → proof construction. Calls `cdk-spilman` for crypto primitives |
+| **Channel lifecycle test** | Our implementation (`spilman_integration.rs`) | End-to-end Spilman channel flow against a live mint, with trace artifact generation for visualization |
+
+**What's ours vs what's library code:**
+
+- The **Spilman crypto** (blinding, proof construction, DLEQ verification) comes from
+  `cdk-spilman` (SatsAndSports). We do not implement the cryptographic primitives.
+- The **channel orchestration** (HTTP calls to mint, quote polling, balance update signing,
+  cooperative close flow) is our code in `SpilmanChannelManager`. It wires the library
+  primitives together into a working channel lifecycle.
+- The **protocol codec and state machine** in `tollgate-core` is entirely our implementation.
+- The **visualization** (Mermaid diagrams, interactive state popups, denomination bars) is
+  our implementation, generated from test trace artifacts.
 
 ## Overview
 
@@ -118,7 +220,8 @@ tollgate-core (lib)              Pure logic, resource-agnostic
     ├── tollgate-net (this binary)  Network forwarding, feature-flagged per OS
     │     ├── Linux / macOS / Windows / OpenWrt
     │     ├── FIPS or IP network adapter
-    │     └── Cashu wallet (cdk-spilman based)
+    │     ├── Cashu wallet (cdk — bootstrap tokens)
+    │     └── Spilman channels (cdk-spilman — payment channels)
     │
     └── tollgate-net-esp32 (separate project)
           ├── ESP-IDF / constrained runtime
@@ -135,7 +238,8 @@ different runtime constraints.
 
 - [TollGate v1](https://github.com/OpenTollGate/tollgate-module-basic-go) — Go implementation for OpenWrt, tree topology, Cashu token payments
 - [FIPS](https://github.com/nicobao/fips) — Self-organizing encrypted mesh network
-- [Cashu Spilman Channels](reference/cashu_spilman_channels/ARCHITECTURE.md) — Unidirectional payment channels for Cashu ecash
+- [SatsAndSports/cashu_spilman_channels](https://github.com/SatsAndSports/cashu_spilman_channels) — Cashu Spilman channel crypto primitives (used as `cdk-spilman` dependency)
+- [CDK](https://github.com/cashubtc/cdk) — Cashu Development Kit, official Rust Cashu wallet library
 - [Cashu Protocol](https://cashu.space/) — Ecash protocol
 
 ## License

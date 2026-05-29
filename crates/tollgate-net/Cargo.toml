@@ -1,0 +1,46 @@
+[package]
+name = "tollgate-net"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85.0"
+license = "MIT"
+
+[dependencies]
+tollgate-core = { path = "../tollgate-core" }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+axum = { version = "0.8", features = ["http1"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+minicbor = { version = "0.25", features = ["derive", "std"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+async-trait = "0.1"
+cdk = { version = "0.16", default-features = false, features = ["wallet"] }
+cdk-sqlite = "0.16"
+cdk-spilman = { git = "https://github.com/SatsAndSports/cashu_spilman_channels", branch = "main", optional = true }
+cashu = { git = "https://github.com/cashubtc/cdk.git", rev = "63866dc6d7da9796c75365cde97157d464331da1", optional = true }
+tracing-appender = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nostr = "0.44"
+thiserror = "2"
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[features]
+default = []
+nds = []
+spilman = [
+    "dep:cdk-spilman",
+    "dep:cashu",
+    "cdk-spilman/wallet",
+    "cdk-spilman/configurable-host-reqwest",
+]
+
+[dev-dependencies]
+rand = "0.9"
+async-trait = "0.1"
+tempfile = "3"
+
+[lints]
+workspace = true

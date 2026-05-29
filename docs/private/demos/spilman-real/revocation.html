@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Old-State Prevention in Payment Channels</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* ─── Page Layout ──────────────────────────────────────────── */
+
+        .doc-content {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 8px 16px 60px;
+        }
+
+        .doc-content section {
+            background: none;
+            border: none;
+            padding: 0;
+            margin-bottom: 40px;
+        }
+
+        .doc-content section h2 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--mint-light);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+            margin-bottom: 16px;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .doc-content section h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text-sec);
+            margin-top: 20px;
+            margin-bottom: 8px;
+        }
+
+        .doc-content p {
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text-sec);
+            margin-bottom: 14px;
+        }
+
+        .doc-content ul,
+        .doc-content ol {
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text-sec);
+            padding-left: 24px;
+            margin-bottom: 14px;
+        }
+
+        .doc-content li {
+            margin-bottom: 6px;
+        }
+
+        .doc-content code {
+            background: var(--surface2);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text);
+        }
+
+        .doc-content pre {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 18px;
+            overflow-x: auto;
+            margin: 16px 0;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.7;
+            color: var(--text-sec);
+        }
+
+        .doc-content pre code {
+            background: none;
+            padding: 0;
+            font-size: inherit;
+        }
+
+        /* ─── Back Link ──────────────────────────────────────────── */
+
+        .header-back-link {
+            color: var(--mint-light);
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 600;
+            transition: color 0.15s ease;
+        }
+
+        .header-back-link:hover {
+            color: var(--text);
+            text-decoration: underline;
+        }
+
+        /* ─── Hero ────────────────────────────────────────────────── */
+
+        .hero-section {
+            margin-top: 16px;
+            margin-bottom: 48px !important;
+        }
+
+        .hero-section h1 {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 12px;
+            line-height: 1.3;
+        }
+
+        .hero-section .hero-sub {
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-sec);
+            max-width: 720px;
+        }
+
+        /* ─── Callout ────────────────────────────────────────────── */
+
+        .callout {
+            background: var(--surface2);
+            border-left: 3px solid var(--mint-light);
+            padding: 16px 20px;
+            border-radius: 0 var(--radius) var(--radius) 0;
+            margin: 20px 0;
+        }
+
+        .callout p {
+            margin-bottom: 0;
+        }
+
+        .callout-blue {
+            border-left-color: var(--alice-light);
+        }
+
+        .callout-green {
+            border-left-color: var(--charlie-light);
+        }
+
+        .callout p.callout-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--mint-light);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .callout-blue p.callout-title {
+            color: var(--alice-light);
+        }
+
+        /* ─── Flow Diagram ──────────────────────────────────────── */
+
+        .flow-diagram {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            margin: 20px 0;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 2;
+            color: var(--text-sec);
+            overflow-x: auto;
+        }
+
+        .flow-diagram .flow-label {
+            display: inline-block;
+            min-width: 60px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .flow-diagram .flow-arrow {
+            color: var(--mint-light);
+            margin: 0 6px;
+        }
+
+        .flow-diagram .flow-step {
+            color: var(--muted);
+        }
+
+        .flow-diagram .flow-keep {
+            color: var(--charlie-light);
+            font-weight: 700;
+        }
+
+        /* ─── Comparison Table ───────────────────────────────────── */
+
+        .revocation-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            line-height: 1.5;
+            margin: 20px 0;
+        }
+
+        .revocation-table thead th {
+            background: var(--surface2);
+            color: var(--text);
+            font-weight: 600;
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 2px solid var(--border);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .revocation-table tbody td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-sec);
+            vertical-align: top;
+        }
+
+        .revocation-table tbody tr:hover {
+            background: var(--surface2);
+        }
+
+        .revocation-table tbody td:first-child {
+            font-weight: 600;
+            color: var(--text);
+            white-space: nowrap;
+        }
+
+        .revocation-table colgroup .col-prop { width: 22%; }
+
+        /* ─── Timeline ──────────────────────────────────────────── */
+
+        .timeline {
+            position: relative;
+            padding-left: 28px;
+            margin: 24px 0;
+        }
+
+        .timeline::before {
+            content: "";
+            position: absolute;
+            left: 7px;
+            top: 4px;
+            bottom: 4px;
+            width: 2px;
+            background: var(--border);
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-bottom: 24px;
+        }
+
+        .timeline-item:last-child {
+            padding-bottom: 0;
+        }
+
+        .timeline-item::before {
+            content: "";
+            position: absolute;
+            left: -24px;
+            top: 6px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--mint-light);
+            border: 2px solid var(--bg);
+            box-shadow: 0 0 0 2px var(--mint-light);
+        }
+
+        .timeline-year {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--mint-light);
+            margin-bottom: 4px;
+        }
+
+        .timeline-item p {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text-sec);
+            margin-bottom: 0;
+        }
+
+        /* ─── Comparison Callout ──────────────────────────────────── */
+
+        .comparison-box {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 20px 0;
+        }
+
+        .comparison-box .comp-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+        }
+
+        .comp-card .comp-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 6px;
+        }
+
+        .comp-card .comp-text {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-sec);
+        }
+
+        .comp-spilman {
+            border-top: 2px solid var(--charlie-light);
+        }
+
+        .comp-spilman .comp-title {
+            color: var(--charlie-light);
+        }
+
+        .comp-lightning {
+            border-top: 2px solid var(--error);
+        }
+
+        .comp-lightning .comp-title {
+            color: var(--error);
+        }
+
+        /* ─── Key Takeaway ──────────────────────────────────────── */
+
+        .key-takeaway {
+            background: var(--surface);
+            border: 1px solid var(--mint);
+            border-radius: var(--radius-lg);
+            padding: 24px 28px;
+            margin: 28px 0;
+        }
+
+        .key-takeaway .kt-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--mint-light);
+            margin-bottom: 10px;
+        }
+
+        .key-takeaway p {
+            font-size: 14px;
+            line-height: 1.75;
+            color: var(--text-sec);
+            margin-bottom: 0;
+        }
+
+        /* ─── Footer ──────────────────────────────────────────────── */
+
+        .doc-footer {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 16px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .doc-footer a {
+            color: var(--mint-light);
+            text-decoration: none;
+        }
+
+        .doc-footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* ─── Responsive ────────────────────────────────────────── */
+
+        @media (max-width: 700px) {
+            .comparison-box {
+                grid-template-columns: 1fr;
+            }
+
+            .revocation-table {
+                font-size: 11px;
+            }
+
+            .revocation-table thead th,
+            .revocation-table tbody td {
+                padding: 8px 6px;
+            }
+
+            .doc-content .hero-section h1 {
+                font-size: 1.3rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header-slim">
+        <div class="header-slim-left">
+            <a href="index.html" class="header-back-link">&larr; Demo</a>
+            <span class="header-slim-sep">&middot;</span>
+            <span class="header-slim-title">Old-State Prevention</span>
+            <span class="header-slim-sep">&middot;</span>
+            <span class="header-slim-sub">A History of Revocation in Payment Channels</span>
+        </div>
+    </header>
+
+    <div class="doc-content">
+
+        <!-- ════════════════ Hero ════════════════ -->
+
+        <section class="hero-section">
+            <h1>Old-State Prevention in Payment Channels: From Bitcoin Spilman to Cashu</h1>
+            <p class="hero-sub">Every payment channel must solve one fundamental problem: ensuring that only the latest state can be settled. This document traces the history of how different designs have solved this, from implicit structural guarantees to explicit revocation mechanisms to the elegant simplicity of Cashu Spilman channels.</p>
+        </section>
+
+        <!-- ════════════════ Section 1: The Core Problem ════════════════ -->
+
+        <section>
+            <h2>1. The Core Problem</h2>
+
+            <p>A payment channel lets two parties exchange value without committing every update to a blockchain (or, in the ecash world, to a mint). Instead, they sign new states off-chain and only settle the final result. This is what makes channels fast and cheap.</p>
+
+            <p>But it creates a problem. Both parties hold signed copies of past states. When the channel settles, only the latest state should count. If a party can publish an older state where they held a larger balance, they can steal.</p>
+
+            <p>Consider a simple example. Alice opens a channel funded with 100 sat. She pays Bob 30 sat, creating state N+1 where Bob holds 30 and Alice holds 70. But state N, where Alice still held the full 100, was also a valid signed state. If Alice can publish state N at settlement time, she gets her 30 sat payment back. She stole from Bob.</p>
+
+            <p>Every payment channel design must answer one question: <strong>how do we ensure that old states cannot be settled?</strong> The answer has changed over time, and the evolution tells a story about trade-offs between complexity and structural guarantees.</p>
+        </section>
+
+        <!-- ════════════════ Section 2: Bitcoin Spilman ════════════════ -->
+
+        <section>
+            <h2>2. The Original: Bitcoin Spilman Channels (2013)</h2>
+
+            <p>In April 2013, Jeremy Spilman posted a proof-of-concept to the Bitcoin forum for a unidirectional payment channel built on Bitcoin. It was one of the earliest concrete designs for off-chain payments, and it solved the old-state problem in a way so simple that many later designs overlooked it.</p>
+
+            <h3>How It Worked</h3>
+
+            <ul>
+                <li>The channel was <strong>unidirectional</strong>: money flowed in one direction, from sender to receiver.</li>
+                <li>Both parties locked funds in a 2-of-2 multisig address on the Bitcoin blockchain.</li>
+                <li>Before funding, the sender created a <strong>refund transaction</strong> with an <code>nLockTime</code> that would return funds after a timeout. This ensured the sender could recover money if the receiver disappeared.</li>
+                <li>For each payment, the sender created a new transaction spending the funding output. They signed it with <code>SIGHASH_SINGLE</code>, which commits to a single output but leaves room for the receiver to add their own output. The sender sent this partially-signed transaction to the receiver.</li>
+                <li>The receiver added their output, signed the complete transaction with <code>SIGHASH_ALL</code>, and <strong>kept the fully-signed transaction</strong>. They did not send it back to the sender.</li>
+            </ul>
+
+            <div class="flow-diagram">
+                <div><span class="flow-label">Sender</span> <span class="flow-arrow">&rarr;</span> creates TX spending funding tx <span class="flow-arrow">&rarr;</span> signs <code>SIGHASH_SINGLE</code> <span class="flow-arrow">&rarr;</span> sends to Receiver</div>
+                <div><span class="flow-label">Receiver</span> <span class="flow-arrow">&rarr;</span> adds own output <span class="flow-arrow">&rarr;</span> signs <code>SIGHASH_ALL</code> <span class="flow-arrow">&rarr;</span> <span class="flow-keep">KEEPS (does not return to sender)</span></div>
+            </div>
+
+            <h3>Why Old States Were Not a Problem</h3>
+
+            <p>The old-state prevention was <strong>structural</strong>, built into the protocol by design. The sender never received fully-signed transactions back from the receiver. Each new payment created a transaction where the sender had less money and the receiver had more. The receiver held all the signed transactions, and they always preferred the latest one because it paid them more.</p>
+
+            <p>Spilman's design made it impossible for the sender to cheat, because the sender could not publish any state on their own. The receiver, who held the complete transactions, had no incentive to publish old states since those paid them less. No explicit revocation was needed because the structure itself prevented cheating.</p>
+
+            <div class="callout">
+                <p class="callout-title">Structural Guarantee</p>
+                <p>The receiver "only ever need[s] to care about the latest" state. This is not a rule that participants must follow. It is a property that follows directly from the unidirectional flow and the signing protocol.</p>
+            </div>
+
+            <p>The limitation was real, though. Money could only flow one way. Once the sender exhausted their capacity, the channel was done. No refunds, no back-and-forth. That constraint motivated the next generation of channel designs.</p>
+        </section>
+
+        <!-- ════════════════ Section 3: Lightning ════════════════ -->
+
+        <section>
+            <h2>3. Lightning Network: Explicit Revocation (2015 &ndash; Present)</h2>
+
+            <p>The Lightning Network, described in the 2015 whitepaper by Poon and Dryja, introduced <strong>bidirectional</strong> payment channels. Both parties could send and receive. This was a huge capability upgrade, but it broke the structural old-state prevention that Spilman relied on.</p>
+
+            <h3>Why Bidirectional Changes Everything</h3>
+
+            <p>In a bidirectional channel, either party might have more funds in an older state. Consider: Bob pays Alice 0.5 BTC in state N+1. But state N shows Bob holding 1 BTC. Bob now has a clear incentive to publish state N, because doing so would give him 0.5 BTC more than the honest state N+1. The structural guarantee vanishes the moment both directions are possible.</p>
+
+            <h3>The Solution: Revocation with Penalties</h3>
+
+            <p>Lightning solved this with <strong>asymmetric commitment transactions</strong> and a <strong>revocation protocol</strong>. The mechanism works as follows:</p>
+
+            <ul>
+                <li>Each state update produces two commitment transactions, one for each party. They are asymmetric: Alice's commitment includes a time-locked path for her and a revocable path for Bob, and vice versa.</li>
+                <li>When both parties agree to move from state N to state N+1, they exchange the <strong>private keys</strong> that would let the other party spend from their old commitment transaction (state N).</li>
+                <li>If Alice later publishes her old commitment for state N, Bob now holds the revocation key that lets him <strong>claim all of Alice's funds</strong> as a penalty.</li>
+            </ul>
+
+            <p>The security model shifts from "can't cheat" to "cheating is economically irrational." Publishing an old state is always possible. But doing so triggers a penalty that costs more than the cheat gains. As the Lightning specification states, when a party publishes a revoked commitment, "their peer is able to use the previously exchanged revocation secret to claim the funds of the malicious actor."</p>
+
+            <div class="comparison-box">
+                <div class="comp-card comp-spilman">
+                    <div class="comp-title">Spilman (Unidirectional)</div>
+                    <div class="comp-text">Can't cheat. The sender never holds a fully-signed transaction. The receiver always prefers the latest state. No penalty mechanism needed.</div>
+                </div>
+                <div class="comp-card comp-lightning">
+                    <div class="comp-title">Lightning (Bidirectional)</div>
+                    <div class="comp-text">Can cheat. Both parties hold valid signed states with incentive to publish old ones. Penalty mechanism makes it economically irrational.</div>
+                </div>
+            </div>
+
+            <p>This penalty-based approach is powerful but adds complexity. Each party must store a growing set of revocation secrets, watch the blockchain for old-state publications, and respond within a time window to claim penalties. The cost of this complexity is real: Lightning implementations must handle edge cases around penalty transactions, justice transactions, and watchtower protocols.</p>
+        </section>
+
+        <!-- ════════════════ Section 4: Magic 1 Sat ════════════════ -->
+
+        <section>
+            <h2>4. The "Magic 1 Sat" &mdash; An Explicit Mutual Exclusivity Attempt</h2>
+
+            <p>During early Cashu Spilman prototyping, an idea was floated that would have added an explicit mutual exclusivity mechanism to the channel design. It was called the "magic 1 sat."</p>
+
+            <h3>The Concept</h3>
+
+            <p>The idea was straightforward. A special 1 sat token would be included in every commitment swap, acting as a "state marker." Only the latest state's magic token would be spendable at the mint. When the receiver settles the latest state, the magic token from that swap gets spent. This immediately invalidates all previous states, because their magic tokens have already been consumed.</p>
+
+            <p>This would have created an <strong>explicit mutual exclusivity</strong> guarantee. Spending the latest state automatically invalidates all previous states, because the magic tokens from those older states were already spent as part of progressing to the current state.</p>
+
+            <h3>Why It Was Not Adopted</h3>
+
+            <p>The magic 1 sat idea never made it into <code>cdk-spilman</code> or the Cashu Spilman specification proposal (PR <a href="https://github.com/cashubtc/nuts/pull/296">cashubtc/nuts#296</a>). The reason is simple: the structural guarantee of unidirectional channels makes it unnecessary. The Cashu Spilman design inherits the original Spilman insight that old-state prevention is built into the protocol structure.</p>
+
+            <div class="callout callout-blue">
+                <p class="callout-title">Demo Detail</p>
+                <p>The 1 sat fee you see in the demo comes from the mint's <code>input_fee_ppk=10</code> (1 sat per kilosat). This is a standard Cashu mint fee for processing proofs, not a security mechanism. It has nothing to do with old-state prevention.</p>
+            </div>
+        </section>
+
+        <!-- ════════════════ Section 5: Cashu Spilman ════════════════ -->
+
+        <section>
+            <h2>5. Cashu Spilman: Back to Structural Guarantees (2024 &ndash; Present)</h2>
+
+            <p>Cashu Spilman channels return to the original 2013 insight: unidirectional channels do not need explicit revocation. The design maps Bitcoin Spilman concepts into the ecash world:</p>
+
+            <ul>
+                <li><strong>2-of-2 multisig</strong> becomes P2PK with <code>SIG_ALL</code> (NUT-11), where the sender signs all inputs and outputs atomically.</li>
+                <li><strong>Funding transaction</strong> becomes a funding token, a set of Cashu proofs locked to the channel.</li>
+                <li><strong>Commitment states</strong> become signed balance updates. Each update specifies how much the receiver gets and how much the sender gets back.</li>
+            </ul>
+
+            <h3>SIG_ALL: The Atomic Commitment</h3>
+
+            <p>The key cryptographic tool is <code>SIG_ALL</code> from NUT-11. When the sender creates a balance update (a "commitment swap"), they sign <strong>all inputs and all outputs</strong> as a single atomic unit. The commitment is indivisible. You cannot take the sender's refund outputs without also taking the receiver's payment outputs, because they are all bound together under one signature.</p>
+
+            <h3>Old-State Prevention, Back to Structural</h3>
+
+            <p>The old-state prevention in Cashu Spilman mirrors the 2013 Bitcoin Spilman design:</p>
+
+            <ol>
+                <li><strong>Unidirectional:</strong> the receiver (the mint, in the settlement role) always prefers the latest state, because it pays them more.</li>
+                <li><strong>Sender can't publish unilaterally:</strong> the mint holds the verified commitments. The sender does not receive fully-signed commitments back.</li>
+                <li><strong>No penalty mechanism needed:</strong> there is no incentive to publish old states because no party can benefit from doing so.</li>
+            </ol>
+
+            <div class="callout">
+                <p class="callout-title">From lukechilds' Non-Custodial Ecash Proposal</p>
+                <p>"Since every state update results in a new unilateral exit transaction for the mint that is more valuable than the previous, they only ever need to care about the latest unilateral exit transaction, no complex state management is needed."</p>
+            </div>
+
+            <p>Cashu Spilman proves that for unidirectional channels, structural mutual exclusivity is not just sufficient. It is more elegant than any explicit mechanism. No revocation secrets to store, no penalty transactions to watch for, no justice protocols to implement. The protocol structure itself guarantees that only the latest state matters.</p>
+        </section>
+
+        <!-- ════════════════ Section 6: Comparison Table ════════════════ -->
+
+        <section>
+            <h2>6. Comparison</h2>
+
+            <table class="revocation-table">
+                <colgroup>
+                    <col class="col-prop">
+                    <col>
+                    <col>
+                    <col>
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Property</th>
+                        <th>Bitcoin Spilman (2013)</th>
+                        <th>Lightning (2015+)</th>
+                        <th>Cashu Spilman (2024+)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Direction</td>
+                        <td>Unidirectional</td>
+                        <td>Bidirectional</td>
+                        <td>Unidirectional</td>
+                    </tr>
+                    <tr>
+                        <td>Old-state prevention</td>
+                        <td>Structural (receiver holds latest)</td>
+                        <td>Explicit (revocation + penalty)</td>
+                        <td>Structural (mint holds latest)</td>
+                    </tr>
+                    <tr>
+                        <td>Revocation tokens</td>
+                        <td>None</td>
+                        <td>Per-state secrets exchanged</td>
+                        <td>None</td>
+                    </tr>
+                    <tr>
+                        <td>Cheat punishment</td>
+                        <td>N/A (can't cheat)</td>
+                        <td>Lose all funds</td>
+                        <td>N/A (can't cheat)</td>
+                    </tr>
+                    <tr>
+                        <td>State invalidation</td>
+                        <td>Implicit (latest wins)</td>
+                        <td>Explicit (secrets exchanged)</td>
+                        <td>Implicit (latest wins)</td>
+                    </tr>
+                    <tr>
+                        <td>On-chain footprint</td>
+                        <td>Multisig script</td>
+                        <td>Complex commitment scripts</td>
+                        <td>None (all offchain)</td>
+                    </tr>
+                    <tr>
+                        <td>Mutual exclusivity</td>
+                        <td>Sender can't get signed old states back</td>
+                        <td>Publishing old state triggers penalty spend</td>
+                        <td>Sender can't get signed old states back</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- ════════════════ Section 7: Timeline ════════════════ -->
+
+        <section>
+            <h2>7. Timeline</h2>
+
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="timeline-year">2013</div>
+                    <p>Jeremy Spilman publishes his proof-of-concept on the Bitcoin forum. Structural old-state prevention for unidirectional channels: the sender never gets fully-signed transactions back, the receiver always prefers the latest state.</p>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-year">2015</div>
+                    <p>Lightning Network whitepaper introduces bidirectional channels with explicit revocation and penalty. Publishing an old state becomes possible but economically irrational, as the cheated party can claim all funds.</p>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-year">2024</div>
+                    <p>Cashu Spilman (<code>cdk-spilman</code>) adapts the original Spilman approach for ecash. Returns to structural guarantees: unidirectional flow, sender cannot publish old states, mint always prefers the latest commitment.</p>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-year">2024</div>
+                    <p>The "magic 1 sat" idea is explored during prototyping. An explicit mutual exclusivity mechanism via a state marker token. Investigated and ultimately set aside, as structural guarantees make it unnecessary.</p>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-year">2024</div>
+                    <p><a href="https://github.com/cashubtc/nuts/pull/296">NUT-XX PR #296</a> proposes the Cashu Spilman specification without a magic byte or explicit revocation. The structural guarantee is judged sufficient.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════════════ Section 8: Key Takeaway ════════════════ -->
+
+        <section>
+            <h2>8. Key Takeaway</h2>
+
+            <div class="key-takeaway">
+                <div class="kt-label">The Principle</div>
+                <p>The history of payment channel security can be summarized as a single principle: old states must be either revoked or mutually exclusive with the current state. The original Spilman design achieved mutual exclusivity structurally, because the sender can't publish old states when they never get them back fully signed. Lightning added explicit revocation because bidirectional channels broke this structural guarantee. Cashu Spilman returns to the original insight, proving that for unidirectional channels, structural mutual exclusivity is not just sufficient but more elegant than any explicit mechanism.</p>
+            </div>
+        </section>
+
+    </div>
+
+    <footer class="doc-footer">
+        Part of the TollGate Spilman Channel Demo &middot; <a href="https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments">Source on GitHub</a>
+    </footer>
+
+</body>
+</html>

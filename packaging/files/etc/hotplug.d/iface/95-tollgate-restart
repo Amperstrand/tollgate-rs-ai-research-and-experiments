@@ -1,0 +1,34 @@
+#!/bin/sh
+
+[ "$ACTION" = "ifup" ] || exit 0
+
+WAN_DEVICE=$(uci get network.wan.device 2>/dev/null)
+
+if [ -n "$WAN_DEVICE" ] && [ "$DEVICE" = "$WAN_DEVICE" ]; then
+    :
+elif [ "$INTERFACE" = "wan" ] || [ "$INTERFACE" = "wwan" ]; then
+    :
+else
+    exit 0
+fi
+
+FLAG_FILE="/tmp/tollgate_initial_restart_done"
+
+if [ -f "$FLAG_FILE" ]; then
+    exit 0
+fi
+
+check_connectivity() {
+    ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1
+    return $?
+}
+
+sleep 5
+
+if check_connectivity; then
+    /etc/init.d/tollgate-wrt restart
+    touch "$FLAG_FILE"
+    logger "tollgate-wrt: Restarted service after WAN up and connectivity check."
+else
+    logger "tollgate-wrt: WAN up but no connectivity, skipping restart."
+fi

@@ -1,0 +1,19 @@
+{
+  "name": "spilman-real",
+  "version": "1.0.0",
+  "description": "In-browser demonstration of a complete Cashu Spilman channel lifecycle between Alice (buyer) and Charlie (seller), running against the real [testnut.cashu.exchange](https://testnut.cashu.exchange) mint. No mocked crypto, no stubbed HTTP calls. The signatures, blinding, and proof construction are the real deal.",
+  "type": "module",
+  "main": "playwright.config.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}

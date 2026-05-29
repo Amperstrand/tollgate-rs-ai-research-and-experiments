@@ -1,0 +1,293 @@
+name: Build and Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      full_compression:
+        description: "Build all UPX compression variants (overrides the branch gate)"
+        type: boolean
+        default: false
+  push:
+    branches: [experimental, master]
+    tags: ['v*']
+  pull_request:
+
+env:
+  PACKAGE_NAME: "tollgate-wrt"
+  BINARY_NAME: "tollgate-net"
+
+jobs:
+  # Unique Rust target triples. Each row produces one binary artifact that
+  # may be consumed by multiple package-matrix cells (e.g. aarch64_cortex-a53
+  # and aarch64_cortex-a72 share the same arm64 musl binary).
+  define-compile-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          : ${GITHUB_OUTPUT:=/tmp/github_output}
+          cat > matrix.json << 'EOF'
+          {
+            "include": [
+              { "compile_key": "arm64",            "target": "aarch64-unknown-linux-musl",    "toolchain": "stable" },
+              { "compile_key": "armv7",            "target": "armv7-unknown-linux-musleabihf", "toolchain": "stable" },
+              { "compile_key": "mipsle-softfloat", "target": "mipsel-unknown-linux-gnu",       "toolchain": "nightly" },
+              { "compile_key": "mips-softfloat",   "target": "mips-unknown-linux-gnu",         "toolchain": "nightly" },
+              { "compile_key": "amd64",            "target": "x86_64-unknown-linux-musl",      "toolchain": "stable" }
+            ]
+          }
+          EOF
+          echo "matrix=$(jq -c . matrix.json)" >> $GITHUB_OUTPUT
+
+  # Package matrix. Each cell declares which compile_key it consumes and
+  # which OpenWrt SDK it maps to. Compression variants fan out here.
+  define-package-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      ipk_matrix: ${{ steps.set-matrix.outputs.ipk_matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          : ${GITHUB_OUTPUT:=/tmp/github_output}
+          cat > matrix.json << 'EOF'
+          {
+            "include": [
+              { "architecture": "aarch64_cortex-a53", "compile_key": "arm64",            "sdk": "mediatek-filogic" },
+              { "architecture": "aarch64_cortex-a53", "compile_key": "arm64",            "sdk": "mediatek-filogic", "compression": "upx-ultra-brute" },
+              { "architecture": "aarch64_cortex-a72", "compile_key": "arm64",            "sdk": "bcm27xx-bcm2711" },
+              { "architecture": "aarch64_cortex-a72", "compile_key": "arm64",            "sdk": "bcm27xx-bcm2711", "compression": "upx-ultra-brute" },
+              { "architecture": "arm_cortex-a7",      "compile_key": "armv7",            "sdk": "bcm27xx-bcm2709" },
+              { "architecture": "arm_cortex-a7",      "compile_key": "armv7",            "sdk": "bcm27xx-bcm2709", "compression": "upx-ultra-brute" },
+              { "architecture": "mipsel_24kc",        "compile_key": "mipsle-softfloat", "sdk": "ramips-mt7621" },
+              { "architecture": "mipsel_24kc",        "compile_key": "mipsle-softfloat", "sdk": "ramips-mt7621", "compression": "upx-ultra-brute" },
+              { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic" },
+              { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-fast" },
+              { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-best" },
+              { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-brute" },
+              { "architecture": "mips_24kc",          "compile_key": "mips-softfloat",   "sdk": "ath79-generic", "compression": "upx-ultra-brute" },
+              { "architecture": "x86_64",           "compile_key": "amd64",            "sdk": "x86-64" }
+            ]
+          }
+          EOF
+
+          # Compression gate: UPX variants are expensive. Keep them on main,
+          # tags, and PRs. Strip on day-to-day branch pushes.
+          if [[ "${{ github.event.inputs.full_compression }}" == "true" ]]; then
+            echo "full_compression=true — keeping all variants."
+          elif [[ "$GITHUB_REF" != "refs/heads/master" \
+               && "$GITHUB_REF" != refs/tags/v* \
+               && "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            echo "Non-release ref ($GITHUB_REF) — dropping compression variants."
+            jq -c '{include: [.include[] | select(has("compression") | not)]}' matrix.json > matrix.filtered.json
+            mv matrix.filtered.json matrix.json
+          fi
+
+          echo "ipk_matrix=$(jq -c '{include: [.include[] | . + {format: "ipk"}]}' matrix.json)" >> $GITHUB_OUTPUT
+          echo "matrix=$(jq -c '{include: [.include[] | . + {format: "ipk"}]}' matrix.json)" >> $GITHUB_OUTPUT
+
+  determine-versioning:
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.determine-package-version.outputs.package_version }}
+      release_channel: ${{ steps.determine-release-channel.outputs.release_channel }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: commit-hash
+        shell: bash
+        run: |
+          : ${GITHUB_OUTPUT:=/tmp/github_output}
+          echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Set package_version variable
+        id: determine-package-version
+        shell: bash
+        run: |
+          : ${GITHUB_OUTPUT:=/tmp/github_output}
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "package_version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            SANITIZED_BRANCH_NAME=$(echo "${GITHUB_REF_NAME}" | sed 's/\//-/g')
+            COMMIT_HEIGHT=$(git rev-list --count HEAD)
+            echo "package_version=${SANITIZED_BRANCH_NAME}.${COMMIT_HEIGHT}.${{ steps.commit-hash.outputs.short }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set release channel
+        id: determine-release-channel
+        shell: bash
+        run: |
+          : ${GITHUB_OUTPUT:=/tmp/github_output}
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            if   [[ $TAG_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha ]]; then echo "release_channel=alpha"  >> $GITHUB_OUTPUT
+            elif [[ $TAG_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta  ]]; then echo "release_channel=beta"   >> $GITHUB_OUTPUT
+            elif [[ $TAG_NAME =~ ^v[0-9]+\.[0-9]+\.[0-9]+$      ]]; then echo "release_channel=stable" >> $GITHUB_OUTPUT
+            else                                                          echo "release_channel=dev"    >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "release_channel=dev" >> $GITHUB_OUTPUT
+          fi
+
+  # Cross-compile tollgate-net for each unique Rust target. One job per
+  # target. Produces a binary artifact consumed by package-matrix cells.
+  compile-binaries:
+    needs: [define-compile-matrix, determine-versioning]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.define-compile-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Cache cross binary
+        id: cache-cross
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/cross
+          key: ${{ runner.os }}-cross-git-main
+
+      - name: Install cross
+        if: steps.cache-cross.outputs.cache-hit != 'true'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cross-${{ matrix.compile_key }}"
+          cache-targets: "false"
+
+      - name: Cross-compile binary
+        run: |
+          set -eu
+          mkdir -p bin
+          echo "Building ${{ env.BINARY_NAME }} for ${{ matrix.target }}"
+          cross build --release --target ${{ matrix.target }} --bin ${{ env.BINARY_NAME }} --features nds
+          cp "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" bin/${{ env.BINARY_NAME }}
+          ls -lh bin/
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.compile_key }}
+          path: bin/
+          retention-days: 5
+
+  # Assemble .ipk packages from prebuilt binaries. No OpenWrt SDK needed —
+  # packaging/build-ipk.sh uses standard ar + tar.
+  package-ipk:
+    needs: [define-package-matrix, determine-versioning, compile-binaries]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.define-package-matrix.outputs.ipk_matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Download prebuilt binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: binaries-${{ matrix.compile_key }}
+          path: bin/
+
+      - name: Install UPX
+        if: contains(matrix.compression, 'upx')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl
+
+      - name: Fetch pre-built captive portal site
+        run: |
+          set -euo pipefail
+          # Download the pre-built portal site from Go v1 repo (React SPA built by Vite).
+          # This avoids vendoring ~20 static files or adding an npm build step.
+          PORTAL_DIR=$(mktemp -d)
+          curl -sL "https://api.github.com/repos/OpenTollGate/tollgate-module-basic-go/git/trees/main?recursive=1" \
+            | python3 -c "
+          import json, sys, urllib.request
+          data = json.load(sys.stdin)
+          for item in data.get('tree', []):
+              p = item['path']
+              if p.startswith('packaging/files/tollgate-captive-portal-site/') and item['type'] == 'blob':
+                  rel = p.removeprefix('packaging/files/tollgate-captive-portal-site/')
+                  print(rel)
+          " | while read -r rel; do
+              url="https://raw.githubusercontent.com/OpenTollGate/tollgate-module-basic-go/main/packaging/files/tollgate-captive-portal-site/$rel"
+              dest="$PORTAL_DIR/$rel"
+              mkdir -p "$(dirname "$dest")"
+              curl -sL "$url" -o "$dest"
+          done
+          echo "PORTAL_DIR=$PORTAL_DIR" >> $GITHUB_ENV
+          echo "Downloaded portal site:"
+          find "$PORTAL_DIR" -type f | head -20
+
+      - name: Build .ipk
+        run: |
+          set -euo pipefail
+          COMPRESSION_SUFFIX=""
+          [ -n "${{ matrix.compression }}" ] && COMPRESSION_SUFFIX="-${{ matrix.compression }}"
+          PACKAGE_FILENAME=${PACKAGE_NAME}_${{ needs.determine-versioning.outputs.package_version }}_${{ matrix.architecture }}${COMPRESSION_SUFFIX}.ipk
+          echo "PACKAGE_FILENAME=$PACKAGE_FILENAME" >> $GITHUB_ENV
+
+          # Assemble the payload tree mirroring what the init script expects.
+          PAYLOAD=$(mktemp -d)
+          install -D -m 0755 bin/${{ env.BINARY_NAME }} "$PAYLOAD/usr/bin/tollgate-wrt"
+
+          install -D -m 0755 packaging/files/etc/init.d/tollgate-wrt                          "$PAYLOAD/etc/init.d/tollgate-wrt"
+          install -D -m 0644 packaging/files/etc/config/firewall-tollgate                      "$PAYLOAD/etc/config/firewall-tollgate"
+          install -D -m 0755 packaging/files/etc/hotplug.d/iface/95-tollgate-restart           "$PAYLOAD/etc/hotplug.d/iface/95-tollgate-restart"
+          install -D -m 0644 packaging/files/lib/upgrade/keep.d/tollgate                       "$PAYLOAD/lib/upgrade/keep.d/tollgate"
+          install -D -m 0755 packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink "$PAYLOAD/etc/uci-defaults/90-tollgate-captive-portal-symlink"
+          mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/crontabs"
+          install -D -m 0644 LICENSE "$PAYLOAD/usr/share/doc/tollgate-wrt/LICENSE"
+
+          # Install pre-built captive portal site into /etc/tollgate/tollgate-captive-portal-site/
+          cp -a "$PORTAL_DIR/." "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site/"
+
+          # Apply UPX on the staged binary (before packing).
+          if [ -n "${{ matrix.compression }}" ]; then
+            COMP="${{ matrix.compression }}"
+            UPX_FLAGS="--${COMP#upx-}"
+            ls -lh "$PAYLOAD/usr/bin/tollgate-wrt"
+            upx $UPX_FLAGS "$PAYLOAD/usr/bin/tollgate-wrt"
+            ls -lh "$PAYLOAD/usr/bin/tollgate-wrt"
+          fi
+
+          mkdir -p artifacts
+          env \
+            PKG_NAME="$PACKAGE_NAME" \
+            PKG_VERSION="${{ needs.determine-versioning.outputs.package_version }}" \
+            ARCH="${{ matrix.architecture }}" \
+            MAINTAINER="Amperstrand" \
+            LICENSE="MIT" \
+            DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt" \
+            DEPENDS="nodogsplash" \
+            packaging/build-ipk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PACKAGE_FILENAME }}
+          path: artifacts/${{ env.PACKAGE_FILENAME }}
+          retention-days: 5
+
+      - name: Summary
+        run: |
+          echo "### Built: \`${{ env.PACKAGE_FILENAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Architecture | \`${{ matrix.architecture }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Compression | \`${{ matrix.compression || 'none' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ needs.determine-versioning.outputs.package_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          ls -lh artifacts/

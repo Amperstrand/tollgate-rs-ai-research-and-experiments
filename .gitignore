@@ -3,6 +3,8 @@
 
 # Build
 /target
+**/target
+Cargo.lock
 
 # Editor/IDE
 *.swp
@@ -16,6 +18,7 @@
 AGENTS.md
 CLAUDE.md
 agents/
+.playwright-mcp/
 
 deploy/
 
