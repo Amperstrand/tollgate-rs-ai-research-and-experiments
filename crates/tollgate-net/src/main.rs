@@ -319,26 +319,28 @@ async fn main() {
                     {
                         let ndsctl = ndsctl_path.as_deref().unwrap_or("ndsctl");
                         let path = std::path::PathBuf::from(ndsctl);
-                        if !path.exists() {
-                            tracing::error!(ndsctl_path = %path.display(), "ndsctl binary not found");
-                            eprintln!(
-                                "ERROR: ndsctl not found at '{}'. \
-                                 Install nodogsplash or specify --ndsctl-path.",
-                                path.display()
+                        if path.exists() {
+                            tracing::info!(ndsctl_path = %path.display(), "Using NDS valve");
+                            Arc::new(v1::server::NdsValve::with_ndsctl_path(path))
+                                as Arc<dyn Valve + Send + Sync>
+                        } else {
+                            // Fail open at the API level rather than crash-loop:
+                            // keep serving so the failure is diagnosable.
+                            tracing::error!(
+                                ndsctl_path = %path.display(),
+                                "ndsctl not found; falling back to stub valve (NO real gating)"
                             );
-                            std::process::exit(1);
+                            Arc::new(v1::server::StubValve)
                         }
-                        tracing::info!(ndsctl_path = %path.display(), "Using NDS valve");
-                        Arc::new(v1::server::NdsValve::with_ndsctl_path(path))
                     }
                     #[cfg(not(feature = "nds"))]
                     {
                         let _ = ndsctl_path;
-                        eprintln!(
-                            "ERROR: --valve nds requires the 'nds' feature. \
-                             Rebuild with: cargo build --features nds"
+                        tracing::error!(
+                            "--valve nds requested but binary built without the 'nds' feature; \
+                             falling back to stub valve (NO real gating). Rebuild with --features nds."
                         );
-                        std::process::exit(1);
+                        Arc::new(v1::server::StubValve)
                     }
                 }
                 _ => {

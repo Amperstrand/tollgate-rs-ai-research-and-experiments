@@ -170,7 +170,10 @@ jobs:
           set -eu
           mkdir -p bin
           echo "Building ${{ env.BINARY_NAME }} for ${{ matrix.target }}"
-          cross build --release --target ${{ matrix.target }} --bin ${{ env.BINARY_NAME }}
+          # The OpenWrt init script auto-selects the NoDogSplash (ndsctl) valve
+          # when ndsctl is present, so the shipped binary MUST include the `nds`
+          # feature or it crash-loops on `--valve nds`.
+          cross build --release --target ${{ matrix.target }} --bin ${{ env.BINARY_NAME }} --features nds
           cp "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" bin/${{ env.BINARY_NAME }}
           ls -lh bin/
 
