@@ -24,7 +24,10 @@ use std::time::Duration;
 use nostr::prelude::*;
 use tollgate_core::wallet::Wallet;
 
-pub use config::{load_or_generate_keys, ConfigError, KeyError, MintConfig as FileMintConfig, ProfitShareConfig, ServerConfig};
+pub use config::{
+    load_or_generate_keys, ConfigError, Identities, KeyError, MintConfig as FileMintConfig,
+    OwnedIdentity, ProfitShareConfig, PublicIdentity, ServerConfig, CONFIG_SCHEMA_VERSION,
+};
 pub use janitor::spawn_janitor;
 pub use lightning_quotes::{
     spawn_quote_janitor, InMemoryLightningQuoteStore, LightningQuoteRecord, LightningQuoteStore,
