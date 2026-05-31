@@ -353,8 +353,14 @@ async fn main() {
                     server.run(wallet, valve).await;
                 }
                 WalletType::Cdk => {
+                    // Connect the wallet to the first configured accepted mint so
+                    // it matches what we advertise; fall back to the CLI --mint-url.
+                    let wallet_mint_url = server_config
+                        .accepted_mints
+                        .first()
+                        .map_or_else(|| mint_url.clone(), |m| m.url.clone());
                     let wallet = Arc::new(
-                        cdk_wallet::CdkWallet::new(&mint_url, [4u8; 64])
+                        cdk_wallet::CdkWallet::new(&wallet_mint_url, [4u8; 64])
                             .await
                             .expect("failed to create CDK wallet"),
                     );
@@ -375,6 +381,12 @@ async fn main() {
                             .collect(),
                     };
                     let payout = v1::server::payout::spawn_payout_task(wallet.clone(), payout_cfg);
+                    // Real deployments: resolve client MACs from OpenWrt DHCP
+                    // leases and enable Lightning invoice endpoints (CdkWallet
+                    // implements MintQuoteWallet).
+                    let server = server
+                        .with_mac_resolver(Arc::new(v1::server::DhcpLeasesResolver))
+                        .with_mint_quote_wallet(wallet.clone());
                     tokio::select! {
                         () = async { server.run(wallet, valve).await } => {}
                         _ = payout => {

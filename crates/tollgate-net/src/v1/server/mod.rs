@@ -87,11 +87,42 @@ pub struct ServerState<W: Wallet> {
 
 pub struct V1Server {
     config: V1ServerConfig,
+    sessions: Option<Arc<dyn SessionStore>>,
+    mac_resolver: Option<Arc<dyn MacResolver + Send + Sync>>,
+    mint_quote_wallet: Option<Arc<dyn MintQuoteWallet>>,
 }
 
 impl V1Server {
     pub fn new(config: V1ServerConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            sessions: None,
+            mac_resolver: None,
+            mint_quote_wallet: None,
+        }
+    }
+
+    /// Override the session store (defaults to in-memory).
+    #[must_use]
+    pub fn with_session_store(mut self, sessions: Arc<dyn SessionStore>) -> Self {
+        self.sessions = Some(sessions);
+        self
+    }
+
+    /// Override the MAC resolver (defaults to a fixed stub MAC).
+    #[must_use]
+    pub fn with_mac_resolver(mut self, resolver: Arc<dyn MacResolver + Send + Sync>) -> Self {
+        self.mac_resolver = Some(resolver);
+        self
+    }
+
+    /// Enable Lightning invoice endpoints by supplying a mint-quote wallet.
+    ///
+    /// Without this, `/ln-invoice` returns "lightning payments not available".
+    #[must_use]
+    pub fn with_mint_quote_wallet(mut self, wallet: Arc<dyn MintQuoteWallet>) -> Self {
+        self.mint_quote_wallet = Some(wallet);
+        self
     }
 
     pub async fn run<W: Wallet + 'static>(self, wallet: Arc<W>, valve: Arc<dyn Valve + Send + Sync>) {
@@ -99,13 +130,20 @@ impl V1Server {
         let advertisement =
             merchant::build_advertisement(&self.config).expect("failed to build advertisement");
 
+        let sessions = self
+            .sessions
+            .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));
+        let mac_resolver = self
+            .mac_resolver
+            .unwrap_or_else(|| Arc::new(StubMacResolver::default()));
+
         let state = Arc::new(ServerState {
             wallet,
             config: self.config,
-            sessions: Arc::new(InMemorySessionStore::new()),
-            mac_resolver: Arc::new(StubMacResolver::default()),
+            sessions,
+            mac_resolver,
             valve,
-            mint_quote_wallet: None,
+            mint_quote_wallet: self.mint_quote_wallet,
             lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
             advertisement,
         });

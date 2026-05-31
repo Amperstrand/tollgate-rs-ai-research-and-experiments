@@ -31,6 +31,7 @@ jobs:
           cat > matrix.json << 'EOF'
           {
             "include": [
+              { "compile_key": "x86_64",           "target": "x86_64-unknown-linux-musl",      "toolchain": "stable" },
               { "compile_key": "arm64",            "target": "aarch64-unknown-linux-musl",    "toolchain": "stable" },
               { "compile_key": "armv7",            "target": "armv7-unknown-linux-musleabihf", "toolchain": "stable" },
               { "compile_key": "mipsle-softfloat", "target": "mipsel-unknown-linux-gnu",       "toolchain": "nightly" },
@@ -54,6 +55,7 @@ jobs:
           cat > matrix.json << 'EOF'
           {
             "include": [
+              { "architecture": "x86_64",              "compile_key": "x86_64",           "sdk": "x86-64" },
               { "architecture": "aarch64_cortex-a53", "compile_key": "arm64",            "sdk": "mediatek-filogic" },
               { "architecture": "aarch64_cortex-a53", "compile_key": "arm64",            "sdk": "mediatek-filogic", "compression": "upx-ultra-brute" },
               { "architecture": "aarch64_cortex-a72", "compile_key": "arm64",            "sdk": "bcm27xx-bcm2711" },

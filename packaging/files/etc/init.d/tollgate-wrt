@@ -21,10 +21,14 @@ start_service() {
     NDS_ARGS=""
     [ "$VALVE_MODE" = "nds" ] && NDS_ARGS="--ndsctl-path $NDSCTL_PATH"
 
+    KEYS_FILE="/etc/tollgate/keys.json"
+
     if [ -f "$CONFIG_FILE" ]; then
         procd_open_instance
-        procd_set_param command /usr/bin/tollgate-wrt server \
+        procd_set_param command /usr/bin/tollgate-wrt v1-server \
+            --wallet cdk \
             --config "$CONFIG_FILE" \
+            --keys "$KEYS_FILE" \
             --port "$(uci_get tollgate_wrt @server[0] port 2121)" \
             --metric "$(uci_get tollgate_wrt @server[0] metric bytes)" \
             --step-size "$(uci_get tollgate_wrt @server[0] step_size 5000)" \
@@ -32,7 +36,9 @@ start_service() {
             $NDS_ARGS
     else
         procd_open_instance
-        procd_set_param command /usr/bin/tollgate-wrt server \
+        procd_set_param command /usr/bin/tollgate-wrt v1-server \
+            --wallet cdk \
+            --keys "$KEYS_FILE" \
             --port "$(uci_get tollgate_wrt @server[0] port 2121)" \
             --metric "$(uci_get tollgate_wrt @server[0] metric bytes)" \
             --step-size "$(uci_get tollgate_wrt @server[0] step_size 5000)" \
