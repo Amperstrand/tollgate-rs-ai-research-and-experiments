@@ -293,7 +293,7 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
                 let _ = state.sessions.insert(s).await;
             }
 
-            if let Err(e) = state.valve.open_gate(&mac) {
+            if let Err(e) = state.valve.open_gate(&mac).await {
                 tracing::warn!("quote monitor: valve open failed for {mac}: {e}");
             }
 

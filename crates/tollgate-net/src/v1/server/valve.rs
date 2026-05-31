@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -55,38 +56,46 @@ impl ClientStats {
 // Valve trait
 // ---------------------------------------------------------------------------
 
+#[async_trait]
 pub trait Valve: Send + Sync {
-    fn open_gate(&self, mac_address: &str) -> Result<(), ValveError>;
-    fn close_gate(&self, mac_address: &str) -> Result<(), ValveError>;
+    async fn open_gate(&self, mac_address: &str) -> Result<(), ValveError>;
+    async fn close_gate(&self, mac_address: &str) -> Result<(), ValveError>;
 
     /// Open gate until a specific unix timestamp. The valve should auto-close at that time.
     /// Default: just calls [`open_gate`](Valve::open_gate) (ignores timestamp).
-    fn open_gate_until(&self, mac_address: &str, until_timestamp: i64) -> Result<(), ValveError> {
+    async fn open_gate_until(
+        &self,
+        mac_address: &str,
+        until_timestamp: i64,
+    ) -> Result<(), ValveError> {
         let _ = until_timestamp;
-        self.open_gate(mac_address)
+        self.open_gate(mac_address).await
     }
 
     /// Get client data stats (download/upload bytes) from ndsctl.
     /// Default: returns zero stats.
-    fn get_client_stats(&self, _mac_address: &str) -> Result<ClientStats, ValveError> {
+    async fn get_client_stats(&self, _mac_address: &str) -> Result<ClientStats, ValveError> {
         Ok(ClientStats::default())
     }
 
     /// Get total data usage (download + upload) since baseline was set.
     /// Default: returns 0.
-    fn get_client_usage_since_baseline(&self, _mac_address: &str) -> Result<u64, ValveError> {
+    async fn get_client_usage_since_baseline(
+        &self,
+        _mac_address: &str,
+    ) -> Result<u64, ValveError> {
         Ok(0)
     }
 
     /// Set the data usage baseline for a MAC (capture current usage as starting point).
     /// Default: no-op.
-    fn set_data_baseline(&self, _mac_address: &str) -> Result<(), ValveError> {
+    async fn set_data_baseline(&self, _mac_address: &str) -> Result<(), ValveError> {
         Ok(())
     }
 
     /// Clear the data baseline for a MAC.
     /// Default: no-op.
-    fn clear_data_baseline(&self, _mac_address: &str) -> Result<(), ValveError> {
+    async fn clear_data_baseline(&self, _mac_address: &str) -> Result<(), ValveError> {
         Ok(())
     }
 }
@@ -102,8 +111,9 @@ pub trait Valve: Send + Sync {
 /// without real traffic control.
 pub struct StubValve;
 
+#[async_trait]
 impl Valve for StubValve {
-    fn open_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+    async fn open_gate(&self, mac_address: &str) -> Result<(), ValveError> {
         tracing::info!(
             mac = mac_address,
             "VALVE OPEN: traffic allowed (stub, no real gating)"
@@ -111,7 +121,7 @@ impl Valve for StubValve {
         Ok(())
     }
 
-    fn close_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+    async fn close_gate(&self, mac_address: &str) -> Result<(), ValveError> {
         tracing::info!(
             mac = mac_address,
             "VALVE CLOSE: session should end, traffic should be blocked (stub, no real gating)"
@@ -127,6 +137,7 @@ impl Valve for StubValve {
 #[cfg(feature = "nds")]
 mod nds {
     use super::{ClientStats, Valve, ValveError};
+    use async_trait::async_trait;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -434,44 +445,42 @@ mod nds {
         }
     }
 
+    #[async_trait]
     impl Valve for NdsValve {
-        fn open_gate(&self, mac_address: &str) -> Result<(), ValveError> {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.open_gate_inner(mac_address))
+        async fn open_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+            self.open_gate_inner(mac_address).await
         }
 
-        fn close_gate(&self, mac_address: &str) -> Result<(), ValveError> {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.close_gate_inner(mac_address))
+        async fn close_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+            self.close_gate_inner(mac_address).await
         }
 
-        fn open_gate_until(
+        async fn open_gate_until(
             &self,
             mac_address: &str,
             until_timestamp: i64,
         ) -> Result<(), ValveError> {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.open_gate_until_inner(mac_address, until_timestamp))
+            self.open_gate_until_inner(mac_address, until_timestamp).await
         }
 
-        fn get_client_stats(&self, mac_address: &str) -> Result<ClientStats, ValveError> {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.fetch_client_stats(mac_address))
+        async fn get_client_stats(&self, mac_address: &str) -> Result<ClientStats, ValveError> {
+            self.fetch_client_stats(mac_address).await
         }
 
-        fn get_client_usage_since_baseline(&self, mac_address: &str) -> Result<u64, ValveError> {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.get_client_usage_since_baseline_inner(mac_address))
+        async fn get_client_usage_since_baseline(
+            &self,
+            mac_address: &str,
+        ) -> Result<u64, ValveError> {
+            self.get_client_usage_since_baseline_inner(mac_address).await
         }
 
-        fn set_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.set_data_baseline_inner(mac_address))
+        async fn set_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
+            self.set_data_baseline_inner(mac_address).await
         }
 
-        fn clear_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async { self.clear_data_baseline_inner(mac_address).await; Ok(()) })
+        async fn clear_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
+            self.clear_data_baseline_inner(mac_address).await;
+            Ok(())
         }
     }
 
@@ -731,30 +740,34 @@ pub use nds::NdsValve;
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_stub_valve_still_works() {
+    #[tokio::test]
+    async fn test_stub_valve_still_works() {
         let valve = StubValve;
-        assert!(valve.open_gate("aa:bb:cc:dd:ee:ff").is_ok());
-        assert!(valve.close_gate("aa:bb:cc:dd:ee:ff").is_ok());
+        assert!(valve.open_gate("aa:bb:cc:dd:ee:ff").await.is_ok());
+        assert!(valve.close_gate("aa:bb:cc:dd:ee:ff").await.is_ok());
     }
 
-    #[test]
-    fn test_stub_valve_defaults() {
+    #[tokio::test]
+    async fn test_stub_valve_defaults() {
         let valve = StubValve;
-        assert!(valve.open_gate_until("aa:bb:cc:dd:ee:ff", 9999999999).is_ok());
+        assert!(valve
+            .open_gate_until("aa:bb:cc:dd:ee:ff", 9999999999)
+            .await
+            .is_ok());
 
-        let stats = valve.get_client_stats("aa:bb:cc:dd:ee:ff").unwrap();
+        let stats = valve.get_client_stats("aa:bb:cc:dd:ee:ff").await.unwrap();
         assert_eq!(stats.downloaded, 0);
         assert_eq!(stats.uploaded, 0);
 
         assert_eq!(
             valve
                 .get_client_usage_since_baseline("aa:bb:cc:dd:ee:ff")
+                .await
                 .unwrap(),
             0
         );
 
-        assert!(valve.set_data_baseline("aa:bb:cc:dd:ee:ff").is_ok());
-        assert!(valve.clear_data_baseline("aa:bb:cc:dd:ee:ff").is_ok());
+        assert!(valve.set_data_baseline("aa:bb:cc:dd:ee:ff").await.is_ok());
+        assert!(valve.clear_data_baseline("aa:bb:cc:dd:ee:ff").await.is_ok());
     }
 }

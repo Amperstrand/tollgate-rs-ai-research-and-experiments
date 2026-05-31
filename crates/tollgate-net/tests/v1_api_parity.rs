@@ -2004,7 +2004,9 @@ async fn parity_ln_invoice_get_unknown_quote_returns_not_found() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 404);
+    // 200 (not 404): busybox wget drops bodies on non-2xx, so the v1 protocol
+    // returns errors as 200 + {"status":0,"error":...}.
+    assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], 0);
@@ -2040,7 +2042,7 @@ async fn parity_ln_invoice_get_wrong_mac_returns_not_found() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], 0);

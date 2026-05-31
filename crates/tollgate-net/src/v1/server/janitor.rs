@@ -61,7 +61,7 @@ pub fn spawn_janitor(
                     }
                 }
 
-                if let Err(e) = valve.close_gate(&session.mac_address) {
+                if let Err(e) = valve.close_gate(&session.mac_address).await {
                     tracing::warn!(
                         "janitor: failed to close valve for mac={}: {e}",
                         session.mac_address,

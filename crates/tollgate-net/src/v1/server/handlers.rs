@@ -28,6 +28,10 @@ pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
             "/",
             get(handle_get_details::<W>).post(handle_post_payment::<W>),
         )
+        // `/pay` mirrors the Go captive-portal entry point. For the Cashu
+        // token gate it returns the same kind:10021 advertisement (pricing)
+        // the client pays against; the LN 402 + payment_request path is M-later.
+        .route("/pay", get(handle_get_details::<W>))
         .route("/usage", get(handle_usage::<W>))
         .route("/whoami", get(handle_whoami::<W>))
         .route("/balance", get(handle_balance::<W>))
@@ -179,7 +183,7 @@ async fn handle_post_payment<W: Wallet>(
         cloned
     };
 
-    if let Err(e) = state.valve.open_gate(&mac) {
+    if let Err(e) = state.valve.open_gate(&mac).await {
         tracing::warn!("Failed to open valve for {mac}: {e}");
     }
 
@@ -220,7 +224,7 @@ async fn handle_usage<W: Wallet>(
 
         if elapsed_ms >= session.allotment as i64 {
             let _ = state.sessions.remove(&mac).await;
-            if let Err(e) = state.valve.close_gate(&mac) {
+            if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
             return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()));
@@ -246,7 +250,9 @@ async fn handle_whoami<W: Wallet>(
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     match state.mac_resolver.resolve(&ip) {
         Ok(mac) => cors_response(text_response(StatusCode::OK, format!("mac={mac}"))),
-        Err(_) => cors_response(text_response(StatusCode::OK, "mac=unknown".to_owned())),
+        // Unknown source IP (e.g. request not from a DHCP client): return an
+        // empty value rather than a bogus MAC so callers can detect "unknown".
+        Err(_) => cors_response(text_response(StatusCode::OK, "mac=".to_owned())),
     }
 }
 
@@ -285,7 +291,7 @@ async fn handle_balance<W: Wallet>(
 
         if elapsed_ms >= session.allotment as i64 {
             let _ = state.sessions.remove(&mac).await;
-            if let Err(e) = state.valve.close_gate(&mac) {
+            if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
             return cors_response(json_response(
@@ -551,8 +557,10 @@ async fn handle_get_ln_invoice<W: Wallet>(
         Ok(mac) => mac,
         Err(e) => {
             tracing::warn!("MAC resolution failed for {ip}: {e}");
+            // Return 200 with an error body: busybox wget (used by clients and
+            // the test harness) discards the body on non-2xx responses.
             return cors_response(ln_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::OK,
                 "cannot resolve MAC address",
             ));
         }
@@ -561,7 +569,7 @@ async fn handle_get_ln_invoice<W: Wallet>(
     let mut record = match state.lightning_quotes.get_for_mac(&quote_id, &mac).await {
         Ok(Some(r)) => r,
         Ok(None) | Err(_) => {
-            return cors_response(ln_error_response(StatusCode::NOT_FOUND, "quote not found"));
+            return cors_response(ln_error_response(StatusCode::OK, "quote not found"));
         }
     };
 
@@ -651,7 +659,7 @@ async fn handle_get_ln_invoice<W: Wallet>(
             let _ = state.sessions.insert(s).await;
         }
 
-        if let Err(e) = state.valve.open_gate(&mac) {
+        if let Err(e) = state.valve.open_gate(&mac).await {
             tracing::warn!("Failed to open valve for {mac}: {e}");
         }
 
