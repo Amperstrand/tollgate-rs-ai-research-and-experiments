@@ -263,6 +263,12 @@ impl Wallet for CdkWallet {
                 &token_str[..token_str.len().min(20)]
             );
 
+            let balance_before = self
+                .wallet
+                .total_balance()
+                .await
+                .map(|b| u64::from(b))
+                .unwrap_or(0);
             let mut last_err = String::new();
             for attempt in 0..3 {
                 match self
@@ -278,6 +284,21 @@ impl Wallet for CdkWallet {
                     Err(e) => {
                         last_err = format!("{e}");
                         tracing::warn!("[NUT-00] Receive attempt {}/3 failed: {e}", attempt + 1);
+                        // Some mints can return transient/ambiguous receive
+                        // errors even when proofs were partially accepted.
+                        // Attempt recovery and accept any observed balance delta.
+                        let _ = self.wallet.recover_incomplete_sagas().await;
+                        if let Ok(current_balance) = self.wallet.total_balance().await {
+                            let current = u64::from(current_balance);
+                            if current > balance_before {
+                                let recovered = current - balance_before;
+                                tracing::info!(
+                                    "[NUT-00] Recovered receive via saga reconciliation: {} sat",
+                                    recovered
+                                );
+                                return Ok(Amount(recovered));
+                            }
+                        }
                         if attempt < 2 {
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         }
