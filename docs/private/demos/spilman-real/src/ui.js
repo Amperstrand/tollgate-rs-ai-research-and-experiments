@@ -560,3 +560,15 @@ export function setCustomPaymentEnabled(enabled) {
   const btn = document.getElementById("send-custom-payment-btn");
   if (btn) btn.disabled = !enabled;
 }
+
+export function resetMeter() {
+  const readout = document.getElementById("meter-readout");
+  const dial = document.getElementById("meter-dial");
+  const bulb = document.getElementById("meter-bulb");
+  const section = document.getElementById("meter-section");
+
+  if (readout) readout.textContent = "5W · 0 sat consumed";
+  if (dial) dial.style.transform = "translate(-50%, 0) rotate(0deg)";
+  if (bulb) bulb.classList.remove("bulb-on");
+  if (section) section.classList.remove("meter-enabled");
+}

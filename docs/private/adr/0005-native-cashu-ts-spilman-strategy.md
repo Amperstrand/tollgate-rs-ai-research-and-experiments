@@ -10,8 +10,8 @@
 The in-browser Spilman demo (`docs/private/demos/spilman-real/`) proves that Spilman channel crypto works in JavaScript using `@noble/curves` and `@noble/hashes`. It currently hand-rolls 16 crypto functions (551 lines in `crypto.js`) translated from the Rust `cdk-spilman` crate. These functions are production-grade in algorithm but have known simplifications that make them unsuitable for direct upstreaming to cashu-ts:
 
 1. **Simplified message hash**: signs `SHA256(channel_id || "|" || balance)` instead of the full `sig_all_message_hash` (serialized swap request with commitment outputs)
-2. **No DLEQ verification**: mint blind signatures trusted without proof
-3. **No unilateral/timeout close**: cooperative close only
+2. **DLEQ verified on funding only**: mint blind signatures verified during funding (4/4 against testnut), not yet on settlement outputs
+3. **No timeout close**: cooperative and unilateral close implemented, timeout/refund path not yet wired
 4. **No persistence**: in-memory only
 5. **Single-page architecture**: both wallets in same JS context, no real peer separation
 
@@ -45,7 +45,7 @@ cdk-wasm is **not** the destination. It is the bridge and the oracle:
 
 | Role | When | How |
 |------|------|-----|
-| **Runtime bridge** | Phase 1 | cdk-wasm handles operations our JS crypto can't yet (full sig_all_message_hash, DLEQ, unilateral close) while we implement them in TS |
+| **Runtime bridge** | Phase 1 | cdk-wasm handles operations our JS crypto can't yet (full sig_all_message_hash, settlement DLEQ, timeout close) while we implement them in TS |
 | **CI oracle** | All phases | Test harness calls both cdk-wasm and our TS implementation on identical inputs, asserts byte-for-byte output equivalence |
 | **Protocol reference** | All phases | cdk-wasm output defines "correct" - our TS implementation must match exactly |
 | **Discarded** | Phase 2+ | Once cashu-ts has native Spilman, cdk-wasm is no longer needed at runtime. It may remain in CI as oracle for as long as useful |
@@ -73,8 +73,8 @@ Drift between our TS implementation and the Rust reference (cdk-spilman) is the 
 | # | Gap | Impact | Status | Target |
 |---|-----|--------|--------|--------|
 | G1 | Simplified message hash (`SHA256(id\|balance)` vs `sig_all_message_hash`) | Balance update signatures not interoperable with Rust peers | **Closed (Wave C)** — `spilman_channel_sender_create_signed_balance_update` uses full SIG_ALL hash | N/A |
-| G2 | No DLEQ verification of mint blind signatures | Trusts mint not to exploit blinding | Open | Phase 2 (cashu-ts native) |
-| G3 | Cooperative close only (no unilateral/timeout) | No recourse if counterparty disappears | Open | Phase 2 (cashu-ts native) |
+| G2 | No DLEQ verification of mint blind signatures | Trusts mint not to exploit blinding | **Partially closed** — DLEQ verified on funding (4/4 proofs against testnut), not yet on settlement | Phase 2 (cashu-ts native) |
+| G3 | Cooperative close only (no unilateral/timeout) | No recourse if counterparty disappears | **Partially closed** — unilateral close implemented (Charlie closes alone via `validate_due=false`), timeout close not yet | Phase 2 (cashu-ts native) |
 | G4 | No persistence | Channel state lost on page reload | Open | Phase 1 (IndexedDB) |
 | G5 | Single-page wallet architecture | No real peer-to-peer separation | Open | Phase 1 (iframe/worker) |
 | G6 | No revocation logic | Cannot invalidate old balance updates | Open | Phase 2 (cashu-ts native) |

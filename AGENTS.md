@@ -8,7 +8,7 @@ This is the **Amperstrand experimental fork** of [OpenTollGate/tollgate-rs](http
 
 - All code on this branch was primarily written by AI agents (Claude, GPT, GLM) with human review
 - 320 unit/integration tests pass against **mock servers** — zero testing against real hardware or real Go v1 routers
-- The Spilman channel browser demo (`docs/private/demos/spilman-real/`) runs against a public testnet mint (testnut.cashu.exchange) with cooperative close only — no unilateral close, no DLEQ verification, no persistence
+- The Spilman channel browser demo (`docs/private/demos/spilman-real/`) runs against a public testnet mint (testnut.cashu.exchange) with cooperative + unilateral close, DLEQ verification on funding, and an interactive utility meter — no persistence
 - Documentation (README, WALKTHROUGH, revocation essay) was AI-generated and audited against primary sources — errors may remain
 - This branch is for **research and learning only**. Do not rely on it for production use
 

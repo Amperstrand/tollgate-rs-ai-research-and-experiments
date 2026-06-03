@@ -56,7 +56,7 @@ against mock servers — awaiting physical router testing.
 - **In-browser Spilman channel demo** — Real ECDH, Schnorr signatures, and blinded mint
   interactions against testnut.cashu.exchange, all running in the browser with no build step.
   Channel crypto delegated to cdk-wasm (Wave C). Spending condition witnesses for cooperative
-  close. No unilateral close, no DLEQ verification, no persistence.
+  close. Unilateral close implemented. DLEQ verification wired into funding. Interactive utility meter with real-time auto-payments. No persistence.
 
 ### Live Demos
 
@@ -84,8 +84,8 @@ Our goal: get a working Cashu Spilman channel running in a browser, in a simple 
 | **Real mint** | Yes — testnut.cashu.exchange (public, auto-paying) | Yes — local test mint (cdk-spilman-test-mintd) | No channel support yet | No — no mint interaction |
 | **Architecture** | Low-level WASM bindings + hand-rolled JS orchestration | WasmSpilmanBridge / WasmSpilmanClientBridge classes manage full lifecycle | Library API | N/A |
 | **Server/Client** | Both wallets in same page, direct function calls | Real HTTP server (Express/Axum) + separate client process | N/A | N/A |
-| **Close paths** | Cooperative close only | Cooperative + unilateral + timeout (via bridge) | No channel support | Cooperative + unilateral + timeout (simulated) |
-| **DLEQ verification** | Not implemented | Via `verify_proof_dleq` | Not for channels | N/A |
+| **Close paths** | Cooperative + unilateral close | Cooperative + unilateral + timeout (via bridge) | No channel support | Cooperative + unilateral + timeout (simulated) |
+| **DLEQ verification** | ✅ Verified on funding (4/4 proofs against testnut) | Via `verify_proof_dleq` | Not for channels | N/A |
 | **Spending conditions** | ✅ SIG_ALL witness with 2-of-2 P2PK (Wave C) | ✅ Managed by bridge | N/A | N/A |
 | **What you see** | Alice and Charlie wallets, token flow, signature details, mint requests | ASCII art (pay-per-character), terminal logs | Library API calls | Step-by-step walkthrough with data boxes |
 | **Educational** | Shows each phase, what tokens are used, what the signature commits to | Shows protocol flow via terminal output | Not a demo — it's a library | Highly educational — 20-step walkthrough with explanations |

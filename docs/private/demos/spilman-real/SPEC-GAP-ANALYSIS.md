@@ -54,9 +54,7 @@ The crypto is correct — test vectors validated against Rust, 6/6 E2E tests pas
 
 **Spec** (tollgate-payment-channels.md): "Receiver unilateral close — receiver acts without sender cooperation, presents the latest signed balance update and cannot claim more than that cumulative amount."
 
-**Demo**: Cooperative close only. Charlie cannot settle without Alice's signature.
-
-**Why**: The WASM bindings don't expose the unilateral close path yet. The spending condition supports it (the proofs have the timeout), but the witness construction for unilateral close isn't implemented in the demo.
+**Demo**: ✅ Implemented. Charlie can close without Alice's cooperation using the same swap mechanics with `validate_due=false` per Rust bridge.rs:1681-1689. Both cooperative and unilateral close buttons available in the UI.
 
 ### 5. Timeout Refund
 
@@ -64,15 +62,15 @@ The crypto is correct — test vectors validated against Rust, 6/6 E2E tests pas
 
 **Demo**: No timeout path exercised. The expiry timestamp is set (now + 3600s) but the demo never triggers it.
 
-**Why**: Same as unilateral close — the path exists in the spending condition but the witness construction isn't implemented.
+**Why**: The refund path requires `get_sender_blinded_pubkey_for_stage1_refund` (params.rs) which isn't yet exposed in the WASM bindings. The spending condition supports it but the witness construction for timeout refund isn't implemented.
 
 ### 6. Metering
 
 **Spec** (tollgate-protocol.md): `MeteringReport` messages with cumulative delivered/received counters, elapsed time. Both sides send at each interval. Counters reset at session start. Cumulative values make the protocol self-healing (lost/duplicated reports don't corrupt accounting).
 
-**Demo**: No metering at all. No resource being measured. Payments are explicit amounts chosen by the user.
+**Demo**: ✅ Interactive utility meter implemented. Charlie sells electricity at 5 watts, 1 sat/watt-second. When Alice turns on the light bulb, the meter ticks down her balance at 5 sat/sec with auto-payments through the channel. This is a visual demo of metered resource consumption — not the full `MeteringReport` protocol (no cumulative counters, no dual pricing, no interval-based reports).
 
-**Why**: The demo is resource-agnostic — it doesn't model bytes, watt-hours, or any measurable resource. Metering would require a resource adapter.
+**Why**: The meter demonstrates the *concept* of pay-per-use resource delivery. The full metering protocol (cumulative counters, elapsed time, dual pricing dimensions) would require a resource adapter and the `MeteringReport` message format.
 
 ### 7. Pricing / PriceSheet
 
@@ -173,8 +171,8 @@ The crypto is correct — test vectors validated against Rust, 6/6 E2E tests pas
 The gaps fall into three categories:
 
 **Crypto gaps** (block settlement correctness):
-- DLEQ verification — must add before production
-- Unilateral close witness — required for trustless operation
+- DLEQ verification — ✅ funding verified (4/4 proofs), settlement verification still needed
+- Unilateral close witness — ✅ implemented (Charlie closes alone via `validate_due=false`)
 - Timeout refund witness — required for sender fund recovery
 
 **Protocol gaps** (block peer-to-peer operation):

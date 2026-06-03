@@ -6,12 +6,15 @@ import {
   addMintRequest, markStepDot, completeAllDots,
   setEducationText, highlightFlowArrow, highlightFlowNodes,
   updatePaymentPreview, setCustomPaymentEnabled,
+  resetMeter,
 } from "./ui.js";
 import { runTestVectors } from "./test-vectors.js";
 import { runCdkVectors } from "./test-vectors-cdk.js";
+import { MeterController } from "./meter.js";
 
 let alice;
 let charlie;
+let meter;
 
 function propagateCloseToAlice(closeResult) {
   if (!alice.channel) return;
@@ -62,8 +65,12 @@ function updateAll() {
   if (ch?.status === "FUNDED") {
     setCustomPaymentEnabled(true);
     updatePaymentPreview(ch.balanceToReceiver, ch.capacity);
+    if (meter) meter.enable();
   } else {
     setCustomPaymentEnabled(false);
+    if (meter && (ch?.status === "CLOSED" || ch?.status === "CLOSING")) {
+      meter.disable();
+    }
   }
 }
 
@@ -78,7 +85,52 @@ function init() {
   setEducationText(EDU.initial);
   setCustomPaymentEnabled(false);
   debugLog("Wallets initialized");
+
+  meter = new MeterController({
+    onPayment(amount) {
+      const payment = alice.createPayment(amount);
+      charlie.acceptPayment(amount, payment);
+      animateTokenFlow(amount);
+      updateAll();
+      updateSignaturePanel(alice);
+      debugLog(`Meter auto-payment: ${amount} sat`);
+    },
+    onDepleted() {
+      debugLog("Meter: channel depleted");
+      setEducationText("Channel depleted by metering. All sats have flowed to Charlie through auto-payments triggered by electricity consumption. Each sat was a commitment swap — the same mechanism as manual payments, but automatic. This is how TollGate enables pay-per-use resource delivery.");
+    },
+    onStatusChange(data) {
+      const readout = document.getElementById("meter-readout");
+      const dial = document.getElementById("meter-dial");
+      const bulb = document.getElementById("meter-bulb");
+      const section = document.getElementById("meter-section");
+
+      if (readout) {
+        readout.textContent = `${data.watts}W · ${data.satPerSec} sat/sec · ${data.channelRemaining} sat remaining · ${data.totalConsumed} sat consumed`;
+      }
+      if (dial) {
+        dial.style.transform = `translate(-50%, 0) rotate(${data.dialAngle}deg)`;
+      }
+      if (bulb) {
+        bulb.classList.toggle("bulb-on", data.isOn);
+      }
+      if (section && meter) {
+        section.classList.toggle("meter-enabled", meter.isEnabled);
+      }
+    },
+    getChannelState() {
+      return alice?.channel || null;
+    },
+  });
 }
+
+document.getElementById("meter-bulb")?.addEventListener("click", () => {
+  if (!meter) return;
+  meter.toggle();
+  if (meter.isOn) {
+    setEducationText("Metering: Charlie sells electricity at 5 watts for 1 sat per watt-second. The meter ticks down Alice's balance in real-time. Each sat consumed triggers a commitment swap through the Spilman channel — the same mechanism as manual payments, but automatic. This is how TollGate enables pay-per-use resource delivery.");
+  }
+});
 
 async function runFullLifecycle() {
   setPhase("running");
@@ -161,6 +213,8 @@ window.runVectors = async function () {
 document.getElementById("run-lifecycle-btn")?.addEventListener("click", runFullLifecycle);
 document.getElementById("reset-btn")?.addEventListener("click", () => {
   resetUI();
+  if (meter) meter.reset();
+  resetMeter();
   init();
   debugLog("Reset");
 });

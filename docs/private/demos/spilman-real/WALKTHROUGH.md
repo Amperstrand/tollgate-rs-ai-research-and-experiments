@@ -182,11 +182,11 @@ The fee exists because the mint has to store each spent proof forever (to preven
 
 ## Architecture Notes
 
-**Cooperative close only.** The demo only implements the path where both parties agree to settle. A full implementation would also support unilateral close (Charlie submits the latest commitment without Alice's cooperation) and timeout close (Alice reclaims after the channel expires). Both require additional witness construction logic.
+**Cooperative and unilateral close.** The demo implements cooperative close (both parties agree to settle) and unilateral close (Charlie submits the latest commitment without Alice's cooperation, using `validate_due=false`). Timeout close (Alice reclaims after the channel expires) is not yet implemented — the spending condition supports it but the witness construction for the refund path isn't wired in.
 
 **Both wallets in the same page.** Alice calls `charlie.acceptPayment()` directly. In production, Alice and Charlie are separate processes communicating over a network. The crypto is identical either way.
 
-**No DLEQ verification.** When the mint returns blind signatures, it also returns a DLEQ (Discrete Logarithm Equality) proof that it signed with the correct key. The demo parses these but doesn't verify them. This means the demo trusts the mint isn't signing with a different key than it published. A production wallet should verify.
+**DLEQ verification on funding.** When the mint returns blind signatures during funding, Alice verifies the DLEQ (Discrete Logarithm Equality) proof against the mint's published keyset. This confirms the mint signed with the correct key — 4/4 proofs verified against testnut. DLEQ is not yet verified on settlement (swap) outputs.
 
 **Low-level WASM bindings.** The demo calls individual WASM functions (`compute_channel_secret`, `construct_proofs`, `sign_with_tweaked_key`, etc.) and wires them together in JavaScript. The SatsAndSports reference implementation uses `WasmSpilmanBridge` and `SpilmanClientBridge` classes that handle this orchestration internally. The demo's approach is more verbose but makes each step visible and auditable.
 

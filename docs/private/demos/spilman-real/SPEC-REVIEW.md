@@ -98,9 +98,9 @@ The spec says "sender locks ecash in a 2-of-2 multisig" but doesn't mention that
 
 ### DLEQ verification
 
-The spec mentions "verifies DLEQ proofs" in the Funding step 5 but doesn't elaborate. DLEQ verification is the mechanism by which the receiver proves the mint signed with the correct key. Skipping it (as the demo does) means trusting the mint. This is a real security gap that implementers need to understand.
+The spec mentions "verifies DLEQ proofs" in the Funding step 5 but doesn't elaborate. The demo now verifies DLEQ proofs during funding — Alice checks each blind signature against the mint's published keyset (4/4 proofs verified against testnut). This confirms the mint isn't signing with a different key than it published. DLEQ is not yet verified on settlement (swap) outputs.
 
-**Recommendation**: Expand the DLEQ note to explain the security implication of skipping it.
+**Recommendation**: Expand the DLEQ note to explain the security implication of skipping it on settlement.
 
 ### Close output context names
 

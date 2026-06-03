@@ -59,9 +59,9 @@ These operations use cdk-wasm (compiled from the same Rust crate as the SatsAndS
 
 - **Both wallets in the same page.** Alice calls `charlie.acceptPayment()` directly. No network between them.
 - **In-memory only.** Nothing persists across page reloads.
-- **No unilateral or timeout close path.** Only cooperative close is implemented.
+- **Unilateral close implemented.** Charlie can close without Alice's cooperation using the same swap mechanics with `validate_due=false`.
 - **No multi-channel support.** One channel per page load.
-- **No DLEQ verification.** The mint's blind signatures include DLEQ proofs but `construct_proofs` parses them without verifying.
+- **DLEQ verification on funding.** Alice verifies the mint's blind signatures against its published keyset during `fundChannel` (4/4 proofs verified against testnut).
 - **Alice mints fresh tokens each run.** She does not reuse existing proofs from a wallet or fund from a Cashu token (`compute_channel_from_token` not used).
 - **Not using WasmSpilmanBridge/WasmSpilmanClientBridge.** We call low-level WASM bindings and hand-roll the orchestration. The SatsAndSports examples use high-level bridge classes that manage lifecycle, storage, and networking internally.
 - **Cooperative close uses crypto.js for output construction.** The "receiver"/"sender" context outputs still use JS-side deterministic output creation; only the final `construct_proofs` call goes through WASM.
@@ -203,8 +203,8 @@ These are the authoritative references for the Cashu Spilman channel protocol an
 - [x] Spending condition witnesses for cooperative close - closes G10
 - [x] 6/6 Playwright E2E tests passing against real mint
 - [ ] Evaluate switching from low-level bindings to `WasmSpilmanBridge`/`WasmSpilmanClientBridge` (Wave D)
-- [ ] Add DLEQ verification pass-through via cdk-wasm - partially closes G2
-- [ ] Add unilateral close path via cdk-wasm - partially closes G3
+- [x] Add DLEQ verification pass-through via cdk-wasm - partially closes G2 (4/4 proofs verified against testnut)
+- [x] Add unilateral close path via cdk-wasm - partially closes G3 (Charlie closes alone via `validate_due=false`)
 - [ ] Channel state persistence (IndexedDB) - closes G4
 - [ ] Peer separation (iframe/worker) - closes G5
 - [ ] CI oracle: Playwright test comparing cdk-wasm and `crypto.js` on identical inputs
