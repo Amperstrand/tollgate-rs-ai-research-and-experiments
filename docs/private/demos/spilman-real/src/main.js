@@ -97,7 +97,7 @@ function init() {
     },
     onDepleted() {
       debugLog("Meter: channel depleted");
-      setEducationText("Channel depleted by metering. All sats have flowed to Charlie through auto-payments triggered by electricity consumption. Each sat was a commitment swap — the same mechanism as manual payments, but automatic. This is how TollGate enables pay-per-use resource delivery.");
+      setEducationText("Credit exhausted! The meter consumed all prepaid sats via auto-payments. Use the Pay button to top up — send more sats to Charlie — then click the bulb to resume consumption. This is the TollGate model: pay-as-you-go resource delivery via streaming micropayments.");
     },
     onStatusChange(data) {
       const readout = document.getElementById("meter-readout");
@@ -106,7 +106,8 @@ function init() {
       const section = document.getElementById("meter-section");
 
       if (readout) {
-        readout.textContent = `${data.watts}W · ${data.satPerSec} sat/sec · ${data.channelRemaining} sat remaining · ${data.totalConsumed} sat consumed`;
+        const credit = data.creditRemaining;
+        readout.textContent = `${data.watts}W · ${data.satPerSec} sat/sec · ${credit} sat credit · ${data.totalConsumed} sat consumed`;
       }
       if (dial) {
         dial.style.transform = `translate(-50%, 0) rotate(${data.dialAngle}deg)`;
@@ -126,9 +127,16 @@ function init() {
 
 document.getElementById("meter-bulb")?.addEventListener("click", () => {
   if (!meter) return;
+  const ch = alice?.channel;
+  if (!ch || ch.status !== "FUNDED") return;
+  const credit = ch.capacity - ch.balanceToReceiver;
+  if (credit <= 0 && !meter.isOn) {
+    setEducationText("No credit remaining. Use the Pay button to top up — send sats to Charlie as prepaid credit. Then click the bulb to start consuming.");
+    return;
+  }
   meter.toggle();
   if (meter.isOn) {
-    setEducationText("Metering: Charlie sells electricity at 5 watts for 1 sat per watt-second. The meter ticks down Alice's balance in real-time. Each sat consumed triggers a commitment swap through the Spilman channel — the same mechanism as manual payments, but automatic. This is how TollGate enables pay-per-use resource delivery.");
+    setEducationText("Meter ON: Charlie sells electricity at 5 watts for 1 sat per watt-second. The bulb auto-pays at 5 sat/sec through commitment swaps — the same mechanism as manual payments. Alice's credit ticks down in real-time. When it hits zero, the bulb turns off. Click Pay to top up again.");
   }
 });
 

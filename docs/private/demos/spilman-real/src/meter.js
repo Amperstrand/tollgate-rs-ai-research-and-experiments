@@ -1,7 +1,9 @@
 /**
  * MeterController — Real-time utility meter for Spilman channel consumption.
- * Charlie sells electricity at 5 watts, 1 sat/watt-second.
- * Each second of consumption triggers an auto-payment through the channel.
+ * Model: Alice prepays (tops up) by sending sats to Charlie. The bulb represents
+ * resource consumption — when ON, it auto-pays at 5W (5 sat/sec) through the channel.
+ * Bulb only turns on if Alice has positive remaining credit (capacity - balanceToReceiver > 0).
+ * When credit runs out, bulb turns off. Alice can "Pay" again to top up and restart.
  */
 
 const WATTS = 5;
@@ -140,12 +142,14 @@ export class MeterController {
   _notify() {
     const ch = this._getChannelState();
     const remaining = ch ? ch.capacity - ch.balanceToReceiver : 0;
+    const prepaid = ch ? ch.balanceToReceiver : 0;
     this._onStatusChange({
       isOn: this._isOn,
       watts: WATTS,
       satPerSec: SAT_PER_SEC,
       totalConsumed: this._totalConsumed,
-      channelRemaining: remaining,
+      creditRemaining: remaining,
+      prepaid: prepaid,
       dialAngle: this._dialAngle,
     });
   }
