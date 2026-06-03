@@ -1,5 +1,10 @@
 // crypto.js — JS implementations of cdk-spilman crypto primitives
-// Mirrors: https://github.com/SatsAndSports/cashu_spilman_channels/blob/main/crates/cdk-spilman/src/params.rs
+// Reference: https://github.com/SatsAndSports/cashu_spilman_channels/blob/main/crates/cdk-spilman/src/params.rs
+//
+// NUT-XX naming convention (from https://github.com/cashubtc/nuts/pull/296):
+//   Alice  = sender   (pays into the channel)
+//   Charlie = receiver (receives payments)
+//   Bob    = mint     (holds the ecash, processes swaps)
 //
 // ARCHITECTURE (Wave C):
 //   wallet.js delegates channel ops (secret, ID, funding, proofs, signing) to cdk-wasm.
@@ -50,6 +55,8 @@ export function computeRawEcdh(mySecretKeyHex, theirPublicKeyHex) {
 
 // ─── Channel Secret ──────────────────────────────────────────────
 // [TEST-VECTORS] Used by test-vectors.js. wallet.js uses WASM compute_channel_secret instead.
+// Rust source: params.rs:94-103 compute_channel_secret()
+//   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH_x_coordinate)
 
 export function computeChannelSecret(mySecretKeyHex, theirPublicKeyHex) {
   const rawEcdh = computeRawEcdh(mySecretKeyHex, theirPublicKeyHex);
@@ -62,6 +69,8 @@ export function computeChannelSecret(mySecretKeyHex, theirPublicKeyHex) {
 
 // ─── Channel ID ──────────────────────────────────────────────────
 // [TEST-VECTORS] Used by test-vectors.js. wallet.js uses WASM channel_parameters_get_channel_id instead.
+// Rust source: params.rs:485-507 get_channel_id_bytes() / get_channel_id()
+//   SHA256("mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|max|setup_ts|sender_pk|receiver_pk|expiry_ts|channel_secret")
 
 export function getChannelId(params, channelSecretHex) {
   const parts = [
@@ -91,6 +100,8 @@ function bigIntToBytes32(n) {
 // [TEST-VECTORS] Used by test-vectors.js for createSignedBalanceUpdate.
 // Also called internally by createSignedBalanceUpdate below.
 // wallet.js/cdk-wasm-adapter.js has its own deriveBlindingScalar for cooperative close.
+// Rust source: params.rs:539-562 derive_blinding_scalar()
+//   SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{retry}")
 
 export function deriveBlindingScalar(channelSecret, channelId, context) {
   const prefix = new TextEncoder().encode("Cashu_Spilman_P2BK_v1");
@@ -110,6 +121,9 @@ export function deriveBlindingScalar(channelSecret, channelId, context) {
 // ─── Deterministic Output Construction ───────────────────────────
 // [TEST-VECTORS] createDeterministicSecret, createDeterministicBlindingFactor, blindMessage
 // used by test-vectors.js. createDeterministicOutput used by wallet.js for close contexts.
+// Rust source: params.rs:888-936 create_deterministic_output_with_blinding()
+//   nonce:    SHA256(channel_secret || "{channel_id}|{context}|{amount}|nonce|{index}")
+//   blinding: SHA256(channel_secret || "{channel_id}|{context}|{amount}|blinding|{index}")
 
 export function createDeterministicSecret(channelSecret, channelId, context, amount, index) {
   const text = new TextEncoder().encode(`${channelId}|${context}|${amount}|nonce|${index}`);

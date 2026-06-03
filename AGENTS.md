@@ -2,6 +2,18 @@
 
 This is the **Amperstrand experimental fork** of [OpenTollGate/tollgate-rs](https://github.com/OpenTollGate/tollgate-rs).
 
+## ⚠️ AI-Experimental Branch
+
+**The `experimental` branch contains AI-generated code that has NOT been tested on real hardware and is NOT expected to be stable.**
+
+- All code on this branch was primarily written by AI agents (Claude, GPT, GLM) with human review
+- 320 unit/integration tests pass against **mock servers** — zero testing against real hardware or real Go v1 routers
+- The Spilman channel browser demo (`docs/private/demos/spilman-real/`) runs against a public testnet mint (testnut.cashu.exchange) with cooperative close only — no unilateral close, no DLEQ verification, no persistence
+- Documentation (README, WALKTHROUGH, revocation essay) was AI-generated and audited against primary sources — errors may remain
+- This branch is for **research and learning only**. Do not rely on it for production use
+
+**Stable code lives on `master`.** The `experimental` branch is where AI-driven exploration happens before human review and merging.
+
 ## CRITICAL: Upstream Boundary
 
 **This repository is a private fork of a public open-source project. The upstream project is maintained by other people.**
@@ -120,8 +132,9 @@ Server-side Spilman handler using JSON-in-CBOR bridge pattern aligned with SatsA
 Educational demo with real crypto against testnut.cashu.exchange:
 - Waves A-C complete: hand-rolled JS crypto → cdk-wasm bridge → SIG_ALL witness
 - Channel open → fund → multi-payment → cooperative close
-- 6/6 E2E tests passing
+- E2E lifecycle verified working against live mint (June 2026)
 - Not yet: DLEQ verification, unilateral close, persistence, high-level bridge classes
+- Test vectors stale: Phase 0 crypto.js 73/169 pass (ECDH mismatch @noble/curves vs secp256k1 crate); WASM 6/8 pass (create_funding_outputs fails). Demo E2E works — WASM crypto is correct, vectors need regeneration
 
 ### Known Gaps (What's Not Done)
 
@@ -134,6 +147,7 @@ Educational demo with real crypto against testnut.cashu.exchange:
 | CI .ipk artifacts | M4/M7 | GitHub Actions config exists but not producing downloadable OpenWrt packages yet |
 | Unilateral / timeout close paths | M3 | Cooperative close only |
 | DLEQ proof verification | M3 Browser | Not implemented |
+| Test vectors stale | M3 Browser | Phase 0 crypto.js test vectors: 73/169 pass (ECDH mismatch @noble/curves vs secp256k1 crate). WASM test vectors: 6/8 pass (create_funding_outputs fails). Demo E2E lifecycle works fine — WASM crypto is correct, test vectors need regeneration |
 
 ### Key Files
 
@@ -190,8 +204,14 @@ M2 (bootstrap tokens only, no Spilman) gives a functional TollGate with token-ba
 ### Next Steps
 
 1. **Physical router testing** — flash two OpenWrt routers, one with Go v1, one with tollgate-rs, test client↔server payment flow
-2. **Close remaining M2.5 gaps** — LN Invoice client payment, auto-detect → session manager wiring
-3. **M3 completion** — Spilman network integration tests, unilateral close
+2. **Close remaining M2.5 gaps**:
+   - **LN Invoice client payment** — `v1/http.rs` needs `POST /ln-invoice` + `GET /ln-invoice` client methods; `v1/mod.rs` needs LN payment branch in `V1Client::connect/renew`. Server-side reference: `v1/server/handlers.rs:418-715`, `lightning_quotes.rs:29-362`
+   - **Auto-detect → session manager wiring** — `Crowsnest` (crowsnest.rs) + `SessionManager` (session_manager.rs) + `V1ClientAuto` CLI path (main.rs:445-521) all exist. Missing: platform-specific interface/gateway enumeration (crowsnest only scans caller-supplied `gateway_ips`). Consider merging `V1ClientAuto` into default client path
+3. **M3 completion**:
+   - **Unilateral close** — Rust/WASM already has `execute_unilateral_close`, `execute_unilateral_close_async`. Browser WASM exposes `WasmSpilmanBridge.executeUnilateralClose(channel_id)`. Missing: wire into demo state machine + UI
+   - **DLEQ verification** — WASM exports `verify_proof_dleq(proof_json, mint_pubkey_hex)`. Missing: call it in funding proof intake path
+   - **Test vector regeneration** — Phase 0 crypto.js vectors show ECDH mismatch (@noble/curves vs secp256k1 crate); WASM `create_funding_outputs` fails. Need to regenerate vectors from current Rust
+   - **Persistence** — cdk-spilman has `ClientStorage` abstraction + `MemoryClientStorage`. Browser needs IndexedDB-backed storage
 4. **M4 — Real valve** — iptables/nftables implementation for actual traffic gating
 
 ## Working Conventions

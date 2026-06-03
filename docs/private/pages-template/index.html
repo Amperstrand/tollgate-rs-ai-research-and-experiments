@@ -242,6 +242,9 @@
               </style>
           </head>
           <body>
+            <div style="background:#7c2d12;color:#fed7aa;padding:8px 16px;font-size:13px;text-align:center;font-family:ui-monospace,monospace;">
+                ⚠ AI-Generated Experimental Code — NOT audited for correctness or security. <a href="https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments" style="color:#fdba74;text-decoration:underline;">Source</a>
+            </div>
             <nav class="section-nav" id="nav">
               <span class="nav-brand">TollGate</span>
               <a href="#bootstrap" data-section="bootstrap">Bootstrap Token</a>
@@ -360,17 +363,13 @@
                 </div>
               </div>
               <div class="teacher-panel" id="spilman-lesson">
-                <h3>Professor view: who can claim what, and when?</h3>
+                <h3>Claim Paths: who can claim what, and when?</h3>
                 <p class="teacher-intro">
                   Think of the channel as a locked box. Alice puts 100 sat in the box. Charlie cannot take more than Alice has signed over to him. Alice cannot take everything back until the timeout path is valid.
                 </p>
                 <div class="lesson-grid">
                   <div class="lesson-card">
-                    <strong>Student question</strong>
-                    <p>Why do Alice and Charlie both compute the same secret during setup?</p>
-                  </div>
-                  <div class="lesson-card">
-                    <strong>Professor answer</strong>
+                    <strong>Why do both parties compute the same secret?</strong>
                     <p>The shared secret makes the funding proofs deterministic. Charlie can verify the proofs belong to this channel before accepting balance updates.</p>
                   </div>
                 </div>

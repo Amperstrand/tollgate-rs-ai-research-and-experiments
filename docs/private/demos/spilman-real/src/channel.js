@@ -1,4 +1,6 @@
-// channel.js — Spilman channel state machine (plain functions, no classes)
+// channel.js — Demo channel state machine (plain functions, no classes)
+// This state machine is ours — cdk-spilman Rust does not use an INIT/FUNDED/CLOSING/CLOSED enum.
+// The Rust crate manages channel state implicitly via EstablishedChannel + bridge methods.
 
 export const STATUS = {
   INIT: "INIT",

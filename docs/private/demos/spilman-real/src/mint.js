@@ -1,5 +1,10 @@
-// Mint HTTP API wrappers — raw fetch() for testnut.cashu.exchange
+// mint.js — Mint HTTP API wrappers for testnut.cashu.exchange
 // NUT specs: https://github.com/cashubtc/nuts
+//   NUT-01: getKeys, getKeysets (public key exchange)
+//   NUT-02: getMintInfo (mint capabilities)
+//   NUT-03: postMintQuoteBolt11, getMintQuoteState, postMintBolt11 (blind minting)
+//   NUT-05: postSwap (token swap with spending conditions)
+//   NUT-07: postCheckState (proof spend state)
 
 export const MINT_URL = "https://testnut.cashu.exchange";
 

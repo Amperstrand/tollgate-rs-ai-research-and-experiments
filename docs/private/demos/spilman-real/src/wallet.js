@@ -1,4 +1,5 @@
-// wallet.js — Alice (buyer/sender) and Charlie (seller/receiver) wallet objects
+// wallet.js — Alice (sender) and Charlie (receiver) wallet objects
+// NUT-XX naming: Alice=sender, Charlie=receiver, Bob=mint (https://github.com/cashubtc/nuts/pull/296)
 //
 // Wave C: Crypto operations delegated to cdk-wasm (WASM compiled from the same
 // Rust crate that generates our test vectors). crypto.js kept for:
