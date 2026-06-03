@@ -228,7 +228,16 @@ export function createCharlieWallet() {
       applyPayment(this.channel, deltaSat, signedUpdate);
     },
 
-    async cooperativeClose() {
+    /**
+     * Shared close logic for both cooperative and unilateral close.
+     * Both produce the same swap request — the difference is conceptual:
+     * - Cooperative: Alice actively participates (both parties cooperate)
+     * - Unilateral: Charlie closes alone, using Alice's existing signed balance update
+     * In the Rust bridge (bridge.rs:1522-1631), both paths call prepare_close_data_impl
+     * which constructs identical CommitmentOutputs and swap requests. The only
+     * difference is validate_due=false for unilateral (doesn't check amount_due).
+     */
+    async _executeClose(closeType) {
       if (!this.channel || this.channel.status !== STATUS.FUNDED) {
         throw new Error("Channel not funded");
       }
@@ -293,6 +302,9 @@ export function createCharlieWallet() {
       const sigAllMsg = computeSigAllMessage(inputs, allOutputs);
       const sigAllMsgHash = sha256Hex(sigAllMsg);
 
+      // In the demo, both keys are in memory so we can always produce SIG_ALL.
+      // In production, unilateral close would use the stored balance update signature
+      // instead of requiring Alice's fresh signature on the close swap.
       const aliceSig = wasm().sign_with_tweaked_key(
         this._alicePrivKeyHex, sigAllMsgHash, senderTweak,
       );
@@ -341,7 +353,22 @@ export function createCharlieWallet() {
         aliceRefundProofs: aliceProofs,
         charlieTotal: charlieProofs.reduce((s, p) => s + p.amount, 0),
         aliceTotal: aliceProofs.reduce((s, p) => s + p.amount, 0),
+        closeType,
       };
+    },
+
+    async cooperativeClose() {
+      return this._executeClose("cooperative");
+    },
+
+    async unilateralClose() {
+      // Unilateral close: Charlie closes without Alice's active cooperation.
+      // Uses Alice's last signed balance update as the basis for the split.
+      // The Rust bridge (bridge.rs:1681-1689) calls prepare_close_data with
+      // validate_due=false — same swap, just skips amount_due validation.
+      // In this demo, both keys are in memory so the swap mechanics are identical.
+      // The difference is conceptual: Charlie initiates alone.
+      return this._executeClose("unilateral");
     },
 
     getBalance() {

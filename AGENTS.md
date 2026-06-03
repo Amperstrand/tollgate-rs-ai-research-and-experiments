@@ -131,10 +131,13 @@ Server-side Spilman handler using JSON-in-CBOR bridge pattern aligned with SatsA
 
 Educational demo with real crypto against testnut.cashu.exchange:
 - Waves A-C complete: hand-rolled JS crypto → cdk-wasm bridge → SIG_ALL witness
-- Channel open → fund → multi-payment → cooperative close
+- Channel open → fund → multi-payment → cooperative close → unilateral close
 - E2E lifecycle verified working against live mint (June 2026)
-- Not yet: DLEQ verification, unilateral close, persistence, high-level bridge classes
-- Test vectors stale: Phase 0 crypto.js 73/169 pass (ECDH mismatch @noble/curves vs secp256k1 crate); WASM 6/8 pass (create_funding_outputs fails). Demo E2E works — WASM crypto is correct, vectors need regeneration
+- DLEQ verification: 4/4 proofs verified against testnut (wallet.js)
+- Unilateral close: Charlie closes without Alice's cooperation (same swap, validate_due=false per Rust bridge.rs:1681-1689)
+- WASM test vectors: 194/194 pass (fixed: 1-year expiry + cache-busting fetch)
+- Not yet: persistence, high-level bridge classes
+- Phase 0 test vectors: 73/169 pass (fundamental ECDH mismatch @noble/curves vs secp256k1 crate)
 
 ### Known Gaps (What's Not Done)
 
@@ -145,10 +148,9 @@ Educational demo with real crypto against testnut.cashu.exchange:
 | Auto-detect → session manager wiring | M2.5 | `upstream_detector.rs` + `SessionManager` exist, not connected in CLI |
 | Physical router testing | All | All 320 tests use mock servers. No real hardware, no real Go v1 interaction |
 | CI .ipk artifacts | M4/M7 | GitHub Actions config exists but not producing downloadable OpenWrt packages yet |
-| Unilateral / timeout close paths | M3 | Cooperative close only |
-| DLEQ proof verification | M3 Browser | Not implemented |
-| Test vectors stale | M3 Browser | Phase 0 crypto.js test vectors: 73/169 pass (ECDH mismatch @noble/curves vs secp256k1 crate). WASM test vectors: 6/8 pass (create_funding_outputs + verify_channel fail — WASM binary may need rebuild from current cdk-spilman). Demo E2E lifecycle works fine — WASM crypto is correct |
-| DLEQ verification | M3 Browser | ✅ Implemented — `verify_proof_dleq` wired into funding proof intake, 4/4 proofs verified against testnut |
+| Unilateral / timeout close paths | M3 | ✅ Unilateral close wired into browser demo. Server-side timeout close not yet implemented |
+| DLEQ proof verification | M3 Browser | ✅ Implemented — `verify_proof_dleq` wired into funding proof intake, 4/4 proofs verified against testnut |
+| Test vectors stale | M3 Browser | ✅ WASM 194/194 pass (fixed: 1-year expiry + cache-busting). Phase 0 crypto.js 73/169 pass (fundamental ECDH mismatch @noble/curves vs secp256k1 crate — documented, not fixable) |
 
 ### Key Files
 

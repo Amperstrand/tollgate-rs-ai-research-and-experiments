@@ -1434,6 +1434,27 @@ section h2 {
     gap: 8px;
 }
 
+.close-buttons {
+    display: flex;
+    gap: 6px;
+}
+
+.close-buttons button {
+    flex: 1;
+}
+
+.btn-secondary {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    opacity: 0.85;
+}
+
+.btn-secondary:hover {
+    opacity: 1;
+    background: var(--surface3);
+}
+
 /* ─── Debug Panel ───────────────────────────────────────────── */
 
 #debug-panel {

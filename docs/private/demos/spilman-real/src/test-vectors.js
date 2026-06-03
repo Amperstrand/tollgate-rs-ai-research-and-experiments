@@ -41,7 +41,7 @@ export async function runTestVectors() {
   // ── Fetch vectors ────────────────────────────────────────────────
   let v;
   try {
-    const resp = await fetch("../test-vectors.json");
+    const resp = await fetch("../test-vectors.json?t=" + Date.now());
     if (!resp.ok) {
       return {
         pass: true,

@@ -27,6 +27,7 @@ const EDU = {
   pay1: "Step 3 — First Commitment Swap. Alice constructs a swap that spends the funding token: 10 sat to Charlie, 90 sat back to Alice. She signs with SIG_ALL, which commits to the exact inputs AND outputs. No mint interaction needed — this is just a Schnorr signature on the full swap specification. Charlie can verify the signature by reconstructing the same swap from the channel secret. This is the atomic guarantee that prevents over-claiming.",
   pay2: "Step 4 — Second Commitment Swap. Alice constructs a new swap: 30 sat to Charlie, 70 sat to Alice. The SIG_ALL signature again commits to exact outputs. The previous 10-sat swap is now SUPERSEDED — only the latest signed swap is valid. Charlie stores this and discards the old one. This is how Spilman channels achieve streaming: each signature replaces the previous one, moving value incrementally — no mint contact needed.",
   close: "Step 5 — Cooperative Close. Charlie submits the latest commitment swap to the mint. NOW the proofs get split: the mint takes the funding token [64, 32, 4] as inputs and creates fresh proofs in whatever denominations are needed — Charlie gets 30 sat, Alice gets 69 sat (100 − 30 − 1 sat mint fee). The funding token is spent atomically — both sides get their proofs in a single mint transaction. Channel settled.",
+  unilateral: "Unilateral Close. Charlie closes the channel WITHOUT Alice's cooperation. In the Rust bridge (bridge.rs:1681-1689), unilateral close calls prepare_close_data with validate_due=false — the same swap request as cooperative close, but initiated by the receiver alone using Alice's last signed balance update as proof of the current balance. In production, this lets Charlie settle even if Alice disappears. In this demo, both keys are in memory so the swap mechanics are identical — the difference is who initiates.",
 };
 
 function interceptMintRequests() {
@@ -243,10 +244,31 @@ document.getElementById("step5-btn")?.addEventListener("click", async () => {
     setEducationText(EDU.close);
     const closeResult = await charlie.cooperativeClose();
     propagateCloseToAlice(closeResult);
-    debugLog("Channel closed", { charlieTotal: closeResult.charlieTotal, aliceTotal: closeResult.aliceTotal });
+    debugLog("Channel closed (cooperative)", { charlieTotal: closeResult.charlieTotal, aliceTotal: closeResult.aliceTotal });
     setCustomPaymentEnabled(false);
     updateAll();
     debugLog("=== Lifecycle Complete ===");
+    debugLog(`Charlie received: ${closeResult.charlieTotal} sat`);
+    debugLog(`Alice refunded: ${closeResult.aliceTotal} sat`);
+    completeAllDots();
+  } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
+  setPhase("done");
+});
+
+document.getElementById("step5-unilateral-btn")?.addEventListener("click", async () => {
+  setPhase("running");
+  try {
+    debugLog("Unilateral close (Charlie initiates alone)...");
+    markStepDot(5);
+    highlightFlowArrow("arrow-vault-mint");
+    highlightFlowNodes(["flow-vault", "flow-mint", "flow-charlie"]);
+    setEducationText(EDU.unilateral);
+    const closeResult = await charlie.unilateralClose();
+    propagateCloseToAlice(closeResult);
+    debugLog("Channel closed (unilateral)", { charlieTotal: closeResult.charlieTotal, aliceTotal: closeResult.aliceTotal });
+    setCustomPaymentEnabled(false);
+    updateAll();
+    debugLog("=== Lifecycle Complete (unilateral) ===");
     debugLog(`Charlie received: ${closeResult.charlieTotal} sat`);
     debugLog(`Alice refunded: ${closeResult.aliceTotal} sat`);
     completeAllDots();

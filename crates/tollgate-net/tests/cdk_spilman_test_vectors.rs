@@ -193,7 +193,7 @@ async fn capture_spilman_test_vectors() {
 
     // ─── Step 5: Compute channel parameters from token ───
     tracing::info!("Computing channel params from token");
-    let expiry = now_secs() + 3600;
+    let expiry = now_secs() + 365 * 24 * 3600; // 1 year — avoid WASM "Locktime in past" errors
     let max_amount_per_output: u64 = 64;
 
     let channel_result_json = compute_channel_from_token(
