@@ -26,20 +26,20 @@ This is the **Amperstrand experimental fork** of [OpenTollGate/tollgate-rs](http
 
 3. **NEVER interact with the upstream repo's GitHub in any way** — no comments, no reactions, no issue creation, no discussions, no wiki edits. Zero. The upstream maintainers should never see activity from this fork.
 
-4. **All work happens on the `private` remote** (`https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git`). Branch from `master`, push to `private`, create PRs against `private`.
+4. **All work happens on the `origin` remote** (`https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git`). Branch from `master`, push to `origin`, create PRs against `origin`.
 
-5. **When syncing from upstream**, always `git fetch origin` and merge/rebase into local branches. Never push those merged changes back to `origin`.
+5. **When syncing from upstream**, always `git fetch upstream` and merge/rebase into local branches. Never push those merged changes back to `upstream`.
 
 ### Git Remote Configuration
 
 ```
-origin  → https://github.com/OpenTollGate/tollgate-rs                 (READ-ONLY upstream, fetch only)
-private → https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git (READ-WRITE, this fork)
+origin   → https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments.git (READ-WRITE, this fork)
+upstream → https://github.com/OpenTollGate/tollgate-rs                 (READ-ONLY upstream, fetch only)
 ```
 
-- `git pull origin master` — OK (sync from upstream)
-- `git push private feature-branch` — OK (work on our fork)
-- `git push origin anything` — **FORBIDDEN**
+- `git pull upstream master` — OK (sync from upstream)
+- `git push origin feature-branch` — OK (work on our fork)
+- `git push upstream anything` — **FORBIDDEN**
 - `gh issue create --repo OpenTollGate/tollgate-rs` — **FORBIDDEN**
 - `gh pr create --repo OpenTollGate/tollgate-rs` — **FORBIDDEN**
 
@@ -147,7 +147,8 @@ Educational demo with real crypto against testnut.cashu.exchange:
 | CI .ipk artifacts | M4/M7 | GitHub Actions config exists but not producing downloadable OpenWrt packages yet |
 | Unilateral / timeout close paths | M3 | Cooperative close only |
 | DLEQ proof verification | M3 Browser | Not implemented |
-| Test vectors stale | M3 Browser | Phase 0 crypto.js test vectors: 73/169 pass (ECDH mismatch @noble/curves vs secp256k1 crate). WASM test vectors: 6/8 pass (create_funding_outputs fails). Demo E2E lifecycle works fine — WASM crypto is correct, test vectors need regeneration |
+| Test vectors stale | M3 Browser | Phase 0 crypto.js test vectors: 73/169 pass (ECDH mismatch @noble/curves vs secp256k1 crate). WASM test vectors: 6/8 pass (create_funding_outputs + verify_channel fail — WASM binary may need rebuild from current cdk-spilman). Demo E2E lifecycle works fine — WASM crypto is correct |
+| DLEQ verification | M3 Browser | ✅ Implemented — `verify_proof_dleq` wired into funding proof intake, 4/4 proofs verified against testnut |
 
 ### Key Files
 
@@ -218,9 +219,9 @@ M2 (bootstrap tokens only, no Spilman) gives a functional TollGate with token-ba
 
 ### Branching
 
-- Branch from `master` on the `private` remote
+- Branch from `master` on the `origin` remote
 - Branch naming: `m{number}/{short-description}` (e.g., `m1/cbor-codec`, `m2/bootstrap-tokens`)
-- Push branches to `private` only
+- Push branches to `origin` only
 
 ### Implementation Notes
 

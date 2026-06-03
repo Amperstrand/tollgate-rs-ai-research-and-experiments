@@ -81,6 +81,7 @@ export function createAliceWallet() {
       this._keysetInfoJson = keysetInfoJson;
       this._keysetId = keysetId;
       this._inputFeePpk = inputFeePpk;
+      this._keysetKeys = keysetKeys;
 
       return { channelId, channelSecret: channelSecretHex, params };
     },
@@ -110,6 +111,22 @@ export function createAliceWallet() {
         this._keysetInfoJson,
       );
       const proofs = JSON.parse(proofsJson);
+
+      // DLEQ verification — proves the mint actually signed these proofs
+      // (not a rogue mint substituting keys). WASM export mirrors
+      // cdk-spilman's verify_proof_dleq.
+      let dleqPassed = 0;
+      let dleqFailed = 0;
+      for (const proof of proofs) {
+        if (!proof.dleq) { dleqFailed++; continue; }
+        const mintPubkey = this._keysetKeys[String(proof.amount)];
+        if (!mintPubkey) { dleqFailed++; continue; }
+        try {
+          const valid = wasm().verify_proof_dleq(JSON.stringify(proof), mintPubkey);
+          if (valid) { dleqPassed++; } else { dleqFailed++; }
+        } catch { dleqFailed++; }
+      }
+      console.log(`[DLEQ] Verified ${dleqPassed}/${proofs.length} proofs${dleqFailed ? ` (${dleqFailed} failed)` : ''}`);
 
       this.proofs = proofs;
       this._fundingProofsJson = JSON.stringify(proofs);
