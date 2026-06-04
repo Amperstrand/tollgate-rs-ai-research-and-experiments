@@ -1,11 +1,3 @@
-/**
- * MeterController — Real-time utility meter for Spilman channel consumption.
- * Model: Alice prepays (tops up) by sending sats to Charlie. The bulb represents
- * resource consumption — when ON, it auto-pays at 5W (5 sat/sec) through the channel.
- * Bulb only turns on if Alice has positive remaining credit (capacity - balanceToReceiver > 0).
- * When credit runs out, bulb turns off. Alice can "Pay" again to top up and restart.
- */
-
 const WATTS = 5;
 const SAT_PER_WATT = 1;
 const SAT_PER_SEC = WATTS * SAT_PER_WATT;
@@ -21,6 +13,7 @@ export class MeterController {
     this._isOn = false;
     this._enabled = false;
     this._totalConsumed = 0;
+    this._totalPaidIn = 0;
     this._accumulated = 0;
     this._dialAngle = 0;
     this._rafId = null;
@@ -30,6 +23,13 @@ export class MeterController {
   get isEnabled() { return this._enabled; }
   get isOn() { return this._isOn; }
   get totalConsumed() { return this._totalConsumed; }
+  get totalPaidIn() { return this._totalPaidIn; }
+  get balance() { return this._totalPaidIn - this._totalConsumed; }
+
+  addPaidIn(amount) {
+    this._totalPaidIn += amount;
+    this._notify();
+  }
 
   enable() {
     this._enabled = true;
@@ -47,9 +47,7 @@ export class MeterController {
     if (this._isOn) {
       this._stop();
     } else {
-      const ch = this._getChannelState();
-      const remaining = ch ? ch.capacity - ch.balanceToReceiver : 0;
-      if (remaining <= 0) {
+      if (this.balance <= 0) {
         this._onDepleted();
         return;
       }
@@ -60,9 +58,7 @@ export class MeterController {
 
   start() {
     if (this._isOn || !this._enabled) return;
-    const ch = this._getChannelState();
-    const remaining = ch ? ch.capacity - ch.balanceToReceiver : 0;
-    if (remaining <= 0) {
+    if (this.balance <= 0) {
       this._onDepleted();
       return;
     }
@@ -81,6 +77,7 @@ export class MeterController {
     this._enabled = false;
     this._isOn = false;
     this._totalConsumed = 0;
+    this._totalPaidIn = 0;
     this._accumulated = 0;
     this._dialAngle = 0;
     this._notify();
@@ -114,14 +111,16 @@ export class MeterController {
 
     if (this._accumulated >= PAY_INTERVAL_SAT) {
       const toPay = Math.floor(this._accumulated);
+      const credit = this.balance;
 
-      const ch = this._getChannelState();
-      const remaining = ch ? ch.capacity - ch.balanceToReceiver : 0;
-
-      if (remaining < toPay) {
-        if (remaining > 0) {
-          this._totalConsumed += remaining;
-          this._onPayment(remaining);
+      if (credit < toPay) {
+        if (credit > 0) {
+          this._totalConsumed += credit;
+          try {
+            this._onPayment(credit);
+          } catch (err) {
+            console.error("[Meter] Final payment failed:", err);
+          }
         }
         this._accumulated = 0;
         this._stop();
@@ -148,16 +147,13 @@ export class MeterController {
   }
 
   _notify() {
-    const ch = this._getChannelState();
-    const remaining = ch ? ch.capacity - ch.balanceToReceiver : 0;
-    const prepaid = ch ? ch.balanceToReceiver : 0;
     this._onStatusChange({
       isOn: this._isOn,
       watts: WATTS,
       satPerSec: SAT_PER_SEC,
-      totalConsumed: this._totalConsumed,
-      creditRemaining: remaining,
-      prepaid: prepaid,
+      paidIn: this._totalPaidIn,
+      spent: this._totalConsumed,
+      balance: this.balance,
       dialAngle: this._dialAngle,
     });
   }

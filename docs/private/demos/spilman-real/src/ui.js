@@ -568,12 +568,16 @@ export function setCustomPaymentEnabled(enabled) {
 }
 
 export function resetMeter() {
-  const readout = document.getElementById("meter-readout");
+  const paidIn = document.getElementById("meter-paid-in");
+  const spent = document.getElementById("meter-spent");
+  const balance = document.getElementById("meter-balance");
   const dial = document.getElementById("meter-dial");
   const bulb = document.getElementById("meter-bulb");
   const section = document.getElementById("meter-section");
 
-  if (readout) readout.textContent = "5W · 0 sat credit";
+  if (paidIn) paidIn.textContent = "0 sat";
+  if (spent) spent.textContent = "0 sat";
+  if (balance) balance.textContent = "0 sat";
   if (dial) dial.style.transform = "translate(-50%, 0) rotate(0deg)";
   if (bulb) bulb.classList.remove("bulb-on");
   if (section) section.classList.remove("meter-enabled");

@@ -100,18 +100,29 @@
                 <div class="step-dots" id="step-dots">
                     <div class="step-dot" data-step="1"><span>Open</span></div>
                     <div class="step-dot" data-step="2"><span>Fund</span></div>
-                    <div class="step-dot" data-step="3"><span>Pay 1</span></div>
-                    <div class="step-dot" data-step="4"><span>Pay 2</span></div>
-                    <div class="step-dot" data-step="5"><span>Close</span></div>
+                    <div class="step-dot" data-step="3"><span>Pay</span></div>
+                    <div class="step-dot" data-step="4"><span>Close</span></div>
                 </div>
 
                 <div class="meter-section" id="meter-section">
-                    <div class="meter-row">
+                    <div class="meter-bulb-row">
                         <div class="meter-bulb" id="meter-bulb" title="Click to toggle"></div>
-                        <div class="meter-info">
-                            <div class="meter-label">Utility Meter</div>
-                            <div class="meter-readout" id="meter-readout">5W · 0 sat credit</div>
+                    </div>
+                    <div class="meter-stats">
+                        <div class="meter-stat">
+                            <div class="meter-stat-label">Paid In</div>
+                            <div class="meter-stat-value" id="meter-paid-in">0 sat</div>
                         </div>
+                        <div class="meter-stat">
+                            <div class="meter-stat-label">Spent</div>
+                            <div class="meter-stat-value" id="meter-spent">0 sat</div>
+                        </div>
+                        <div class="meter-stat">
+                            <div class="meter-stat-label">Balance</div>
+                            <div class="meter-stat-value" id="meter-balance">0 sat</div>
+                        </div>
+                    </div>
+                    <div class="meter-dial-row">
                         <div class="meter-dial-container">
                             <div class="meter-dial" id="meter-dial"></div>
                         </div>
@@ -285,10 +296,9 @@
                 <button id="step1-btn">Step 1: Open Channel</button>
                 <button id="step2-btn">Step 2: Deposit</button>
                 <button id="step3-btn">Step 3: Pay</button>
-                <button id="step4-btn">Step 4: Pay 2</button>
                 <div class="close-buttons">
-                    <button id="step5-btn">Step 5: Cooperative Close</button>
-                    <button id="step5-unilateral-btn" class="btn-secondary">Unilateral Close</button>
+                    <button id="step4-btn">Step 4: Close</button>
+                    <button id="step4-unilateral-btn" class="btn-secondary">Unilateral Close</button>
                 </div>
             </div>
         </section>

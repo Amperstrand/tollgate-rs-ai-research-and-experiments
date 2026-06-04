@@ -1488,13 +1488,14 @@ section h2 {
 
 .meter-section {
     margin: 12px 16px;
-    padding: 12px 16px;
+    padding: 14px 16px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     opacity: 0.4;
     pointer-events: none;
     transition: opacity 0.4s ease, border-color 0.4s ease;
+    text-align: center;
 }
 
 .meter-section.meter-enabled {
@@ -1503,10 +1504,54 @@ section h2 {
     border-color: rgba(210, 153, 34, 0.3);
 }
 
-.meter-row {
+/* ── Bulb Row (centered) ────────────────────────────────────── */
+
+.meter-bulb-row {
     display: flex;
-    align-items: center;
-    gap: 14px;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+/* ── Stats Row (3 values) ───────────────────────────────────── */
+
+.meter-stats {
+    display: flex;
+    justify-content: space-around;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.meter-stat {
+    flex: 1;
+    text-align: center;
+}
+
+.meter-stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+
+.meter-stat-value {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-sec);
+    transition: color 0.3s ease;
+}
+
+.meter-section.meter-enabled .meter-stat:last-child .meter-stat-value {
+    color: #fbbf24;
+}
+
+/* ── Dial Row ───────────────────────────────────────────────── */
+
+.meter-dial-row {
+    display: flex;
+    justify-content: center;
 }
 
 /* ── Light Bulb ──────────────────────────────────────────────── */
@@ -1591,33 +1636,6 @@ section h2 {
     background: rgba(210, 153, 34, 0.2);
     border-color: rgba(210, 153, 34, 0.6);
     box-shadow: 0 0 6px 1px rgba(210, 153, 34, 0.2);
-}
-
-/* ── Meter Info ──────────────────────────────────────────────── */
-
-.meter-info {
-    flex: 1;
-    min-width: 0;
-}
-
-.meter-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-sec);
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    margin-bottom: 2px;
-}
-
-.meter-readout {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--muted);
-    transition: color 0.3s ease;
-}
-
-.meter-section.meter-enabled .meter-bulb.bulb-on ~ .meter-info .meter-readout {
-    color: #fbbf24;
 }
 
 /* ── Spinning Dial ───────────────────────────────────────────── */

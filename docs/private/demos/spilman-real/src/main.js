@@ -28,9 +28,8 @@ const EDU = {
   initial: "Alice will lock ecash in a 2-of-2 multisig with Charlie. The spending condition is: (Alice AND Charlie) OR (Alice after timeout). Each payment is a commitment swap — Alice signs a full split of the funding token with SIG_ALL so the outputs are fixed. No proofs are created during payments — only signatures. The proofs only get split at settlement. Click a step to begin.",
   open: "Step 1 — ECDH Key Exchange. Alice and Charlie each generate a private key, share public keys, and compute a shared secret via ECDH on secp256k1. This secret is hashed into a channel secret that seeds all deterministic derivations. Both parties will independently derive the same blinded outputs for any balance split — no round trips needed.",
   fund: "Step 2 — Funding. Alice mints 100 sat from the mint using deterministic blinded outputs (P2BK). The resulting proofs [64, 32, 4] are the channel's funding token — locked under a 2-of-2 condition. Why these three? Cashu uses binary denominations: 100 = 64 + 32 + 4. The mint holds keys for all powers of 2, so any amount can be represented at settlement. During the channel, no proofs are split — payments are just signatures.",
-  pay1: "Step 3 — First Commitment Swap. Alice constructs a swap that spends the funding token: 10 sat to Charlie, 90 sat back to Alice. She signs with SIG_ALL, which commits to the exact inputs AND outputs. No mint interaction needed — this is just a Schnorr signature on the full swap specification. Charlie can verify the signature by reconstructing the same swap from the channel secret. This is the atomic guarantee that prevents over-claiming.",
-  pay2: "Step 4 — Second Commitment Swap. Alice constructs a new swap: 30 sat to Charlie, 70 sat to Alice. The SIG_ALL signature again commits to exact outputs. The previous 10-sat swap is now SUPERSEDED — only the latest signed swap is valid. Charlie stores this and discards the old one. This is how Spilman channels achieve streaming: each signature replaces the previous one, moving value incrementally — no mint contact needed.",
-  close: "Step 5 — Cooperative Close. Charlie submits the latest commitment swap to the mint. NOW the proofs get split: the mint takes the funding token [64, 32, 4] as inputs and creates fresh proofs in whatever denominations are needed — Charlie gets 30 sat, Alice gets 69 sat (100 − 30 − 1 sat mint fee). The funding token is spent atomically — both sides get their proofs in a single mint transaction. Channel settled.",
+  pay: "Step 3 — Commitment Swap (Top-Up). Alice constructs a swap that spends the funding token: some sat to Charlie, the rest back to Alice. She signs with SIG_ALL, which commits to the exact inputs AND outputs. No mint interaction needed — this is just a Schnorr signature on the full swap specification. Each new swap SUPERSEDES the previous one — only the latest signed swap is valid. The Pay button also tops up the utility meter, adding to your prepaid balance. Click the lightbulb to start consuming.",
+  close: "Step 4 — Cooperative Close. Charlie submits the latest commitment swap to the mint. NOW the proofs get split: the mint takes the funding token [64, 32, 4] as inputs and creates fresh proofs in whatever denominations are needed — Charlie gets his share, Alice gets the refund (minus any mint fee). The funding token is spent atomically — both sides get their proofs in a single mint transaction. Channel settled.",
   unilateral: "Unilateral Close. Charlie closes the channel WITHOUT Alice's cooperation. In the Rust bridge (bridge.rs:1681-1689), unilateral close calls prepare_close_data with validate_due=false — the same swap request as cooperative close, but initiated by the receiver alone using Alice's last signed balance update as proof of the current balance. In production, this lets Charlie settle even if Alice disappears. In this demo, both keys are in memory so the swap mechanics are identical — the difference is who initiates.",
 };
 
@@ -101,15 +100,16 @@ function init() {
       setEducationText("Credit exhausted! The meter consumed all prepaid sats via auto-payments. Use the Pay button to top up — send more sats to Charlie — then click the bulb to resume consumption. This is the TollGate model: pay-as-you-go resource delivery via streaming micropayments.");
     },
     onStatusChange(data) {
-      const readout = document.getElementById("meter-readout");
+      const paidInEl = document.getElementById("meter-paid-in");
+      const spentEl = document.getElementById("meter-spent");
+      const balanceEl = document.getElementById("meter-balance");
       const dial = document.getElementById("meter-dial");
       const bulb = document.getElementById("meter-bulb");
       const section = document.getElementById("meter-section");
 
-      if (readout) {
-        const credit = data.creditRemaining;
-        readout.textContent = `${data.watts}W · ${data.satPerSec} sat/sec · ${credit} sat credit · ${data.totalConsumed} sat consumed`;
-      }
+      if (paidInEl) paidInEl.textContent = `${data.paidIn} sat`;
+      if (spentEl) spentEl.textContent = `${data.spent} sat`;
+      if (balanceEl) balanceEl.textContent = `${data.balance} sat`;
       if (dial) {
         dial.style.transform = `translate(-50%, 0) rotate(${data.dialAngle}deg)`;
       }
@@ -130,14 +130,13 @@ document.getElementById("meter-bulb")?.addEventListener("click", () => {
   if (!meter) return;
   const ch = alice?.channel;
   if (!ch || ch.status !== "FUNDED") return;
-  const credit = ch.capacity - ch.balanceToReceiver;
-  if (credit <= 0 && !meter.isOn) {
-    setEducationText("No credit remaining. Use the Pay button to top up — send sats to Charlie as prepaid credit. Then click the bulb to start consuming.");
+  if (meter.balance <= 0 && !meter.isOn) {
+    setEducationText("No balance remaining. Use the Pay button to top up — send sats to Charlie as prepaid credit. Then click the bulb to start consuming.");
     return;
   }
   meter.toggle();
   if (meter.isOn) {
-    setEducationText("Meter ON: Charlie sells electricity at 5 watts for 1 sat per watt-second. The bulb auto-pays at 5 sat/sec through commitment swaps — the same mechanism as manual payments. Alice's credit ticks down in real-time. When it hits zero, the bulb turns off. Click Pay to top up again.");
+    setEducationText("Meter ON: Charlie sells electricity at 5 watts for 1 sat per watt-second. The bulb auto-pays at 5 sat/sec through commitment swaps — the same mechanism as manual payments. Your balance ticks down in real-time. When it hits zero, the bulb turns off. Click Pay to top up again.");
   }
 });
 
@@ -164,27 +163,28 @@ async function runFullLifecycle() {
     const fundingProofs = await alice.fundChannel();
     charlie.acceptFunding(fundingProofs, alice.privKeyHex);
     debugLog("Channel funded", { proofCount: fundingProofs.length });
+    debugLog("Phase 3: Payment (10 sat)...");
     markStepDot(3);
     highlightFlowArrow("arrow-alice-vault");
     highlightFlowNodes(["flow-alice", "flow-vault"]);
-    setEducationText(EDU.pay1);
+    setEducationText(EDU.pay);
     const payment1 = alice.createPayment(10);
     charlie.acceptPayment(10, payment1);
+    if (meter) meter.addPaidIn(10);
     animateTokenFlow(10);
     updateAll();
     updateSignaturePanel(alice);
 
-    debugLog("Phase 4: Payment 2 (20 sat)...");
-    markStepDot(4);
-    setEducationText(EDU.pay2);
+    debugLog("Phase 3b: Payment (20 sat)...");
     const payment2 = alice.createPayment(20);
     charlie.acceptPayment(20, payment2);
+    if (meter) meter.addPaidIn(20);
     animateTokenFlow(20);
     updateAll();
     updateSignaturePanel(alice);
 
-    debugLog("Phase 5: Cooperative close...");
-    markStepDot(5);
+    debugLog("Phase 4: Cooperative close...");
+    markStepDot(4);
     highlightFlowArrow("arrow-vault-mint");
     highlightFlowNodes(["flow-vault", "flow-mint", "flow-charlie"]);
     setEducationText(EDU.close);
@@ -270,50 +270,28 @@ document.getElementById("step3-btn")?.addEventListener("click", () => {
   try {
     const slider = document.getElementById("payment-slider");
     const amount = slider ? parseInt(slider.value) : 10;
-    debugLog(`Phase 3: Payment 1 (${amount} sat)...`);
+    debugLog(`Phase 3: Payment (${amount} sat)...`);
     markStepDot(3);
     highlightFlowArrow("arrow-alice-vault");
     highlightFlowNodes(["flow-alice", "flow-vault"]);
-    setEducationText(EDU.pay1);
+    setEducationText(EDU.pay);
     const payment1 = alice.createPayment(amount);
     charlie.acceptPayment(amount, payment1);
-    animateTokenFlow(amount);
-    updateAll();
-    updateSignaturePanel(alice);
-
-    if (slider) {
-      slider.value = "20";
-      slider.dispatchEvent(new Event("input"));
-    }
-  } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
-});
-
-document.getElementById("step4-btn")?.addEventListener("click", () => {
-  if (!alice?.channel || alice.channel.status !== "FUNDED") {
-    debugLog("Payment requires a funded channel — complete Steps 1-2 first"); return;
-  }
-  try {
-    const slider = document.getElementById("payment-slider");
-    const amount = slider ? parseInt(slider.value) : 20;
-    debugLog(`Phase 4: Payment 2 (${amount} sat)...`);
-    markStepDot(4);
-    setEducationText(EDU.pay2);
-    const payment2 = alice.createPayment(amount);
-    charlie.acceptPayment(amount, payment2);
+    if (meter) meter.addPaidIn(amount);
     animateTokenFlow(amount);
     updateAll();
     updateSignaturePanel(alice);
   } catch (e) { debugLog(`ERROR: ${e.message}`); console.error(e); }
 });
 
-document.getElementById("step5-btn")?.addEventListener("click", async () => {
+document.getElementById("step4-btn")?.addEventListener("click", async () => {
   if (!charlie?.channel || charlie.channel.status !== "FUNDED") {
     debugLog("Close requires a funded channel — complete Steps 1-2 first"); return;
   }
   setPhase("running");
   try {
-    debugLog("Phase 5: Cooperative close...");
-    markStepDot(5);
+    debugLog("Phase 4: Cooperative close...");
+    markStepDot(4);
     highlightFlowArrow("arrow-vault-mint");
     highlightFlowNodes(["flow-vault", "flow-mint", "flow-charlie"]);
     setEducationText(EDU.close);
@@ -330,14 +308,14 @@ document.getElementById("step5-btn")?.addEventListener("click", async () => {
   setPhase("done");
 });
 
-document.getElementById("step5-unilateral-btn")?.addEventListener("click", async () => {
+document.getElementById("step4-unilateral-btn")?.addEventListener("click", async () => {
   if (!charlie?.channel || charlie.channel.status !== "FUNDED") {
     debugLog("Close requires a funded channel — complete Steps 1-2 first"); return;
   }
   setPhase("running");
   try {
     debugLog("Unilateral close (Charlie initiates alone)...");
-    markStepDot(5);
+    markStepDot(4);
     highlightFlowArrow("arrow-vault-mint");
     highlightFlowNodes(["flow-vault", "flow-mint", "flow-charlie"]);
     setEducationText(EDU.unilateral);
@@ -375,6 +353,7 @@ document.getElementById("send-custom-payment-btn")?.addEventListener("click", ()
 
     const payment = alice.createPayment(amount);
     charlie.acceptPayment(amount, payment);
+    if (meter) meter.addPaidIn(amount);
     animateTokenFlow(amount);
     updateAll();
     updateSignaturePanel(alice);
