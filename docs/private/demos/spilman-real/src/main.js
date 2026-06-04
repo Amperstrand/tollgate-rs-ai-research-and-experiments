@@ -175,7 +175,7 @@ async function runFullLifecycle() {
     updateAll();
     updateSignaturePanel(alice);
 
-    debugLog("Phase 3b: Payment (20 sat)...");
+    debugLog("Payment 2 (20 sat)...");
     const payment2 = alice.createPayment(20);
     charlie.acceptPayment(20, payment2);
     if (meter) meter.addPaidIn(20);
@@ -275,8 +275,8 @@ document.getElementById("step3-btn")?.addEventListener("click", () => {
     highlightFlowArrow("arrow-alice-vault");
     highlightFlowNodes(["flow-alice", "flow-vault"]);
     setEducationText(EDU.pay);
-    const payment1 = alice.createPayment(amount);
-    charlie.acceptPayment(amount, payment1);
+    const payment = alice.createPayment(amount);
+    charlie.acceptPayment(amount, payment);
     if (meter) meter.addPaidIn(amount);
     animateTokenFlow(amount);
     updateAll();

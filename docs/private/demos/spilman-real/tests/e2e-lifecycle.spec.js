@@ -234,7 +234,7 @@ test.describe("Spilman Real Crypto Demo — Full Lifecycle E2E", () => {
       expect(proof.id).toBeTruthy();
     }
 
-    // ─── Phase 3 & 4: Payments ───
+    // ─── Step 3 & 3b: Payments ───
     expect(displayed.debug).toContain("Payment 2");
 
     // Balance to receiver is 30 sat (10 + 20) — proves both payments executed
@@ -246,7 +246,7 @@ test.describe("Spilman Real Crypto Demo — Full Lifecycle E2E", () => {
     expect(alicePhases).toContain("FUNDED");
     expect(alicePhases.filter((p) => p === "PAYMENT").length).toBe(2);
 
-    // ─── Phase 5: Cooperative Close ───
+    // ─── Step 4: Cooperative Close ───
     expect(displayed.debug).toContain("Cooperative close");
     expect(displayed.debug).toContain("Channel closed");
 
@@ -327,7 +327,7 @@ test.describe("Spilman Real Crypto Demo — Full Lifecycle E2E", () => {
     await page.waitForFunction(
       () =>
         document.getElementById("debug-dump")?.textContent?.includes(
-          "Payment 1"
+          "Payment (10"
         ),
       { timeout: 10_000 }
     );
@@ -336,22 +336,8 @@ test.describe("Spilman Real Crypto Demo — Full Lifecycle E2E", () => {
 
     expect(state.alice.channel.balanceToReceiver).toBe(10);
 
-    // ─── Step 4: Meter (second payment) ───
-    await page.getByRole("button", { name: "Step 4: Meter" }).click();
-    await page.waitForFunction(
-      () =>
-        document.getElementById("debug-dump")?.textContent?.includes(
-          "Payment 2"
-        ),
-      { timeout: 10_000 }
-    );
-
-    ({ state, displayed } = await screenshotWithState(page, "05-step4-meter"));
-
-    expect(state.alice.channel.balanceToReceiver).toBe(30);
-
-    // ─── Step 5: Close ───
-    await page.getByRole("button", { name: "Step 5: Close" }).click();
+    // ─── Step 4: Close ───
+    await page.getByRole("button", { name: "Step 4: Close" }).click();
     await page.waitForFunction(
       () =>
         document.getElementById("debug-dump")?.textContent?.includes(
@@ -360,10 +346,10 @@ test.describe("Spilman Real Crypto Demo — Full Lifecycle E2E", () => {
       { timeout: 30_000 }
     );
 
-    ({ state, displayed } = await screenshotWithState(page, "06-step5-close"));
+    ({ state, displayed } = await screenshotWithState(page, "05-step4-close"));
 
     expect(state.charlie.channel.status).toBe("CLOSED");
-    expect(state.charlie.proofsTotal).toBe(30);
+    expect(state.charlie.proofsTotal).toBe(10);
   });
 
   test("reset clears state and generates new wallets", async ({ page }) => {
