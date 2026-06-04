@@ -111,7 +111,7 @@ export async function pollMintQuote(
   while (true) {
     const state = await getMintQuoteState(quoteId, mintUrl);
 
-    if (state.paid || state.state === "PAID") {
+    if (state.paid || state.state === "PAID" || state.state === "ISSUED") {
       return state;
     }
 

@@ -244,6 +244,9 @@ document.getElementById("step1-btn")?.addEventListener("click", async () => {
 });
 
 document.getElementById("step2-btn")?.addEventListener("click", async () => {
+  if (!alice?.channel || alice.channel.status === "FUNDED" || alice.channel.status === "CLOSED") {
+    debugLog("Step 2 requires an open (INIT) channel — complete Step 1 first"); return;
+  }
   setPhase("running");
   try {
     debugLog("Phase 2: Funding channel...");
@@ -260,6 +263,9 @@ document.getElementById("step2-btn")?.addEventListener("click", async () => {
 });
 
 document.getElementById("step3-btn")?.addEventListener("click", () => {
+  if (!alice?.channel || alice.channel.status !== "FUNDED") {
+    debugLog("Payment requires a funded channel — complete Steps 1-2 first"); return;
+  }
   try {
     const slider = document.getElementById("payment-slider");
     const amount = slider ? parseInt(slider.value) : 10;
@@ -282,6 +288,9 @@ document.getElementById("step3-btn")?.addEventListener("click", () => {
 });
 
 document.getElementById("step4-btn")?.addEventListener("click", () => {
+  if (!alice?.channel || alice.channel.status !== "FUNDED") {
+    debugLog("Payment requires a funded channel — complete Steps 1-2 first"); return;
+  }
   try {
     const slider = document.getElementById("payment-slider");
     const amount = slider ? parseInt(slider.value) : 20;
@@ -297,6 +306,9 @@ document.getElementById("step4-btn")?.addEventListener("click", () => {
 });
 
 document.getElementById("step5-btn")?.addEventListener("click", async () => {
+  if (!charlie?.channel || charlie.channel.status !== "FUNDED") {
+    debugLog("Close requires a funded channel — complete Steps 1-2 first"); return;
+  }
   setPhase("running");
   try {
     debugLog("Phase 5: Cooperative close...");
@@ -318,6 +330,9 @@ document.getElementById("step5-btn")?.addEventListener("click", async () => {
 });
 
 document.getElementById("step5-unilateral-btn")?.addEventListener("click", async () => {
+  if (!charlie?.channel || charlie.channel.status !== "FUNDED") {
+    debugLog("Close requires a funded channel — complete Steps 1-2 first"); return;
+  }
   setPhase("running");
   try {
     debugLog("Unilateral close (Charlie initiates alone)...");

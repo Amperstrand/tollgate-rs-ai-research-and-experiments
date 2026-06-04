@@ -132,7 +132,15 @@ export class MeterController {
 
       this._totalConsumed += toPay;
       this._accumulated -= toPay;
-      this._onPayment(toPay);
+      try {
+        this._onPayment(toPay);
+      } catch (err) {
+        console.error("[Meter] Payment callback failed:", err);
+        this._stop();
+        this._onDepleted();
+        this._notify();
+        return;
+      }
     }
 
     this._notify();

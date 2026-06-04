@@ -127,6 +127,12 @@ export function createAliceWallet() {
         } catch { dleqFailed++; }
       }
       console.log(`[DLEQ] Verified ${dleqPassed}/${proofs.length} proofs${dleqFailed ? ` (${dleqFailed} failed)` : ''}`);
+      if (dleqFailed > 0 && dleqPassed === 0) {
+        throw new Error(`DLEQ verification failed for all ${proofs.length} proofs — mint may be malicious`);
+      }
+      if (dleqFailed > 0) {
+        console.warn(`[DLEQ] ${dleqFailed} proof(s) failed verification — proceeding with caution`);
+      }
 
       this.proofs = proofs;
       this._fundingProofsJson = JSON.stringify(proofs);
@@ -150,10 +156,11 @@ export function createAliceWallet() {
       );
       const result = JSON.parse(resultJson);
 
+      const displayMsgBytes = new TextEncoder().encode(`${result.channel_id}|${balance}`);
       const signedUpdate = {
-        messageHex: result.channel_id,
+        messageHex: crypto.bytesToHex(crypto.sha256(displayMsgBytes)),
         signatureHex: result.signature,
-        tweakedPubHex: "",
+        tweakedPubHex: result.tweaked_public_key || "",
       };
 
       applyPayment(this.channel, amountSat, signedUpdate);
@@ -242,8 +249,6 @@ export function createCharlieWallet() {
         throw new Error("Channel not funded");
       }
 
-      transitionToClosing(this.channel);
-
       const balanceToCharlie = this.channel.balanceToReceiver;
       const inputTotal = this.channel.fundingProofs.reduce((s, p) => s + p.amount, 0);
       const fee = Math.ceil(inputTotal * (this.channel.params.inputFeePpk || 0) / 1000);
@@ -319,10 +324,18 @@ export function createCharlieWallet() {
         witness,
       }));
 
-      const swapResp = await mint.postSwap({
-        inputs: inputsWithWitness,
-        outputs: allOutputs,
-      });
+      let swapResp;
+      transitionToClosing(this.channel);
+      try {
+        swapResp = await mint.postSwap({
+          inputs: inputsWithWitness,
+          outputs: allOutputs,
+        });
+      } catch (swapErr) {
+        // Revert to FUNDED so the close can be retried
+        this.channel.status = STATUS.FUNDED;
+        throw swapErr;
+      }
 
       const charlieSigs = swapResp.signatures.slice(0, charlieOutputs.length);
       const aliceSigs = swapResp.signatures.slice(charlieOutputs.length);

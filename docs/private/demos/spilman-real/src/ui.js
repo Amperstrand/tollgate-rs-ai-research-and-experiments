@@ -74,10 +74,10 @@ export function updateAlicePanel(aliceWallet) {
 
   if (!aliceWallet) return;
 
-  if (pubkeyEl) pubkeyEl.textContent = aliceWallet.pubKeyHex?.slice(0, 32) + "..." || "...";
+  if (pubkeyEl) pubkeyEl.textContent = truncateHex(aliceWallet.pubKeyHex, 16) || "...";
 
   const bal = aliceWallet.getBalance();
-  if (channelIdEl) channelIdEl.textContent = aliceWallet.channel?.id?.slice(0, 16) + "..." || "...";
+  if (channelIdEl) channelIdEl.textContent = truncateHex(aliceWallet.channel?.id, 8) || "...";
 
   let balanceText;
   if (aliceWallet.channel?.status === "CLOSED" && aliceWallet.channel.aliceRefundProofs) {
@@ -108,10 +108,10 @@ export function updateCharliePanel(charlieWallet) {
 
   if (!charlieWallet) return;
 
-  if (pubkeyEl) pubkeyEl.textContent = charlieWallet.pubKeyHex?.slice(0, 32) + "..." || "...";
+  if (pubkeyEl) pubkeyEl.textContent = truncateHex(charlieWallet.pubKeyHex, 16) || "...";
 
   const bal = charlieWallet.getBalance();
-  if (channelIdEl) channelIdEl.textContent = charlieWallet.channel?.id?.slice(0, 16) + "..." || "...";
+  if (channelIdEl) channelIdEl.textContent = truncateHex(charlieWallet.channel?.id, 8) || "...";
   if (balanceEl) balanceEl.textContent = `${bal.received} sat (${bal.status})`;
   if (proofCountEl) proofCountEl.textContent = String(charlieWallet.proofs?.length || 0);
   if (proofTotalEl) proofTotalEl.textContent = `${(charlieWallet.proofs || []).reduce((s, p) => s + p.amount, 0)} sat`;
