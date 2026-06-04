@@ -20,6 +20,12 @@ function truncateHex(hex, chars = 8) {
   return hex.slice(0, chars) + "..." + hex.slice(-chars);
 }
 
+function esc(str) {
+  const d = document.createElement("div");
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+
 function denomClass(amount) {
   return DENOM_COLORS[amount] || "denom-1";
 }
@@ -60,7 +66,7 @@ function renderProofTokens(containerId, proofs) {
     return;
   }
   el.innerHTML = proofs.map(p =>
-    `<div class="proof-token ${denomClass(p.amount)}" title="${p.amount} sat | secret: ${truncateHex(p.secret, 6)} | C: ${truncateHex(p.C, 6)}">${p.amount}</div>`
+    `<div class="proof-token ${denomClass(p.amount)}" title="${esc(p.amount)} sat | secret: ${esc(truncateHex(p.secret, 6))} | C: ${esc(truncateHex(p.C, 6))}">${esc(p.amount)}</div>`
   ).join("");
 }
 
@@ -338,7 +344,7 @@ function updateLockTokens(ch) {
     html += `<div class="lock-chip-group lock-group-charlie">
       <div class="lock-group-label">Charlie's claim</div>
       <div class="lock-group-chips">${charlieProofs.map(p =>
-        `<div class="lock-chip ${lockChipClass(p.amount)} lock-chip-claimed-charlie" title="${p.amount} sat">${p.amount}</div>`
+        `<div class="lock-chip ${lockChipClass(p.amount)} lock-chip-claimed-charlie" title="${esc(p.amount)} sat">${esc(p.amount)}</div>`
       ).join("")}</div>
     </div>`;
   }
@@ -347,7 +353,7 @@ function updateLockTokens(ch) {
     html += `<div class="lock-chip-group lock-group-alice">
       <div class="lock-group-label">Alice's claim</div>
       <div class="lock-group-chips">${aliceProofs.map(p =>
-        `<div class="lock-chip ${lockChipClass(p.amount)} lock-chip-claimed-alice" title="${p.amount} sat">${p.amount}</div>`
+        `<div class="lock-chip ${lockChipClass(p.amount)} lock-chip-claimed-alice" title="${esc(p.amount)} sat">${esc(p.amount)}</div>`
       ).join("")}</div>
     </div>`;
   }

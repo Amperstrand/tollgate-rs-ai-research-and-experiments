@@ -1,5 +1,6 @@
 import { createAliceWallet, createCharlieWallet } from "./wallet.js";
 import { initCdkWasm } from "./cdk-wasm-bridge.js";
+import { transitionToClosing, transitionToClosed } from "./channel.js";
 import {
   updateAlicePanel, updateCharliePanel, debugLog, setPhase, resetUI,
   updateChannelBar, animateTokenFlow, updateSignaturePanel,
@@ -18,8 +19,8 @@ let meter;
 
 function propagateCloseToAlice(closeResult) {
   if (!alice.channel) return;
-  alice.channel.status = "CLOSED";
-  alice.channel.aliceRefundProofs = closeResult.aliceRefundProofs;
+  transitionToClosing(alice.channel);
+  transitionToClosed(alice.channel, closeResult.charlieProofs, closeResult.aliceRefundProofs);
   alice.proofs = closeResult.aliceRefundProofs;
 }
 

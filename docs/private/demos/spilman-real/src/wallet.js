@@ -239,7 +239,9 @@ export function createCharlieWallet() {
      * Shared close logic for both cooperative and unilateral close.
      * Both produce the same swap request — the difference is conceptual:
      * - Cooperative: Alice actively participates (both parties cooperate)
-     * - Unilateral: Charlie closes alone, using Alice's existing signed balance update
+     * - Unilateral: Charlie closes alone. In production, Charlie would use
+     *   Alice's stored balance update signature. In this demo, both keys are
+     *   in memory so both paths sign fresh with sign_with_tweaked_key.
      * In the Rust bridge (bridge.rs:1522-1631), both paths call prepare_close_data_impl
      * which constructs identical CommitmentOutputs and swap requests. The only
      * difference is validate_due=false for unilateral (doesn't check amount_due).

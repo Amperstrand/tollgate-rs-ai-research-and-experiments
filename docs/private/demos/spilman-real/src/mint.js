@@ -40,7 +40,11 @@ async function mintFetch(mintUrl, path, options = {}) {
     throw new Error(`mint ${method} ${path} failed: ${response.status} ${text}`);
   }
 
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch (parseErr) {
+    throw new Error(`mint ${method} ${path} returned non-JSON (status ${response.status}): ${text.slice(0, 200)}`);
+  }
 }
 
 export async function getKeysets(mintUrl = MINT_URL) {
