@@ -6,28 +6,47 @@
 )]
 
 pub mod config;
+pub mod data_monitor;
+pub mod degraded_wallet;
 pub mod handlers;
+pub mod install_config;
 pub mod janitor;
 pub mod lightning_quotes;
 pub mod logging;
 pub mod mac_resolver;
 pub mod merchant;
+pub mod merchant_provider;
+pub mod mint_health_tracker;
 pub mod mint_quote_wallet;
 pub mod payout;
 pub mod session_store;
+pub mod ubus_client;
+pub mod uci_ops;
 pub mod upstream_detector;
+pub mod upstream_manager;
 pub mod valve;
+pub mod wifi_connector;
+pub mod wifi_scanner;
+
+#[cfg(all(target_os = "linux", feature = "netlink"))]
+mod network_monitor;
+
+#[cfg(not(all(target_os = "linux", feature = "netlink")))]
+#[path = "network_monitor_stub.rs"]
+mod network_monitor;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use nostr::prelude::*;
-use tollgate_core::wallet::Wallet;
 
 pub use config::{
     load_or_generate_keys, ConfigError, Identities, KeyError, MintConfig as FileMintConfig,
     OwnedIdentity, ProfitShareConfig, PublicIdentity, ServerConfig, CONFIG_SCHEMA_VERSION,
 };
+pub use data_monitor::spawn_data_monitor;
+pub use degraded_wallet::DegradedWallet;
+pub use install_config::InstallConfig;
 pub use janitor::spawn_janitor;
 pub use lightning_quotes::{
     spawn_quote_janitor, InMemoryLightningQuoteStore, LightningQuoteRecord, LightningQuoteStore,
@@ -39,6 +58,8 @@ pub use merchant::{
     build_advertisement, build_notice_event, build_session_event, calculate_allotment,
     AllotmentError,
 };
+pub use merchant_provider::MerchantProvider;
+pub use mint_health_tracker::MintHealthTracker;
 pub use mint_quote_wallet::{
     MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult, MockMintQuoteWallet, QuoteState,
 };
@@ -49,7 +70,25 @@ pub use upstream_detector::{
     parse_advertisement, probe_gateway, probe_url, DiscoveredUpstream, UpstreamDetectError,
     UpstreamDetectorConfig, UpstreamMint,
 };
+pub use ubus_client::{UbusClient, UbusError, RadioInfo};
+pub use uci_ops::{
+    execute_shell as execute_uci_shell, render_shell as render_uci_shell,
+    sh_quote, validate_identifier, UciOp, UciOpBuilder, UciOpError, OpValue, ServiceAction,
+};
+pub use upstream_manager::{
+    Blacklist, CircuitBreaker, ManagerState, ScanCycleResult, ScanReason, SwitchCandidate,
+    UpstreamManager, UpstreamManagerConfig, UpstreamError,
+};
 pub use valve::{ClientStats, StubValve, Valve, ValveError};
+pub use wifi_connector::{WifiConnectError, WifiConnector};
+pub use wifi_scanner::{
+    CommandExecutor, CommandOutput, EncryptionType, ScanResult, SystemCommandExecutor,
+    WifiScanError, WifiScanner,
+};
+
+pub use network_monitor::{
+    InterfaceInfo, NetworkEvent, NetworkMonitor, NetworkMonitorConfig, NetworkMonitorError,
+};
 
 #[cfg(feature = "nds")]
 pub use valve::NdsValve;
@@ -77,8 +116,8 @@ pub struct CustomerSession {
     pub allotment: u64,
 }
 
-pub struct ServerState<W: Wallet> {
-    pub wallet: Arc<W>,
+pub struct ServerState {
+    pub merchant: Arc<MerchantProvider>,
     pub config: V1ServerConfig,
     pub sessions: Arc<dyn SessionStore>,
     pub mac_resolver: Arc<dyn MacResolver + Send + Sync>,
@@ -128,7 +167,7 @@ impl V1Server {
         self
     }
 
-    pub async fn run<W: Wallet + 'static>(self, wallet: Arc<W>, valve: Arc<dyn Valve + Send + Sync>) {
+    pub async fn run(self, merchant: Arc<MerchantProvider>, valve: Arc<dyn Valve + Send + Sync>) {
         let port = self.config.port;
         let advertisement =
             merchant::build_advertisement(&self.config).expect("failed to build advertisement");
@@ -141,7 +180,7 @@ impl V1Server {
             .unwrap_or_else(|| Arc::new(StubMacResolver::default()));
 
         let state = Arc::new(ServerState {
-            wallet,
+            merchant,
             config: self.config,
             sessions,
             mac_resolver,
@@ -155,6 +194,12 @@ impl V1Server {
             state.sessions.clone(),
             state.valve.clone(),
             Duration::from_secs(5),
+        );
+
+        let data_monitor = data_monitor::spawn_data_monitor(
+            state.sessions.clone(),
+            state.valve.clone(),
+            Duration::from_secs(2),
         );
 
         let quote_janitor = lightning_quotes::spawn_quote_janitor(
@@ -184,6 +229,9 @@ impl V1Server {
             }
             _ = janitor => {
                 tracing::warn!("janitor task finished unexpectedly");
+            }
+            _ = data_monitor => {
+                tracing::warn!("data monitor task finished unexpectedly");
             }
             _ = quote_janitor => {
                 tracing::warn!("quote janitor task finished unexpectedly");

@@ -14,7 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tollgate_core::wallet::Wallet;
 
 use super::merchant;
 use super::mint_quote_wallet::QuoteState;
@@ -181,9 +180,9 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
 /// The task exits when: the quote is granted, the quote is removed from the
 /// store, or 30 minutes have elapsed.
 #[allow(clippy::too_many_lines, clippy::cast_possible_wrap)]
-pub fn spawn_quote_monitor<W: Wallet + 'static>(
+pub fn spawn_quote_monitor(
     quote_id: String,
-    state: Arc<ServerState<W>>,
+    state: Arc<ServerState>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let poll_interval = Duration::from_secs(2);

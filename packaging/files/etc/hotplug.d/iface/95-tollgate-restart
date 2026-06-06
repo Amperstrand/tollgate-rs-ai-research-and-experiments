@@ -1,34 +1,89 @@
 #!/bin/sh
+# ============================================================================
+# 95-tollgate-restart — Restart TollGate when WAN comes up with connectivity
+# ============================================================================
+#
+# WHAT: OpenWrt hotplug script that restarts the tollgate-wrt service when
+#       the WAN interface comes up AND has actual internet connectivity.
+#       Prevents restart loops with a flag file.
+#
+# Go v1 REFERENCE: /packaging/files/etc/hotplug.d/iface/95-tollgate-restart
+#   - 75 lines, uses ubus for connectivity check (not ping)
+#   - Checks network.interface status for "up": true + "route" presence
+#   - 5-second poll loop with up to 12 attempts
+#   - Flag file at /tmp/tollgate_initial_restart_done to prevent repeats
+#
+# Rust DIFFERENCE: Nearly identical to Go v1. Uses ubus-based connectivity
+#   check (more reliable than ping — no dependency on external hosts).
+#   The only change is logging tag to distinguish from Go v1.
+#
+# WHY UBUS OVER PING: The old Rust version used `ping -c 1 8.8.8.8` which
+#   depends on external host availability and can fail due to ICMP blocking.
+#   Go v1's ubus approach is better — it checks if the interface has a route,
+#   which is a local determination that doesn't depend on external hosts.
+# ============================================================================
 
+# Only trigger on interface-up events
 [ "$ACTION" = "ifup" ] || exit 0
 
-WAN_DEVICE=$(uci get network.wan.device 2>/dev/null)
+# Only trigger for WAN interfaces
+WAN_DEVICE="$(uci -q get network.wan.device 2>/dev/null)"
 
 if [ -n "$WAN_DEVICE" ] && [ "$DEVICE" = "$WAN_DEVICE" ]; then
-    :
+    : # matches WAN device
 elif [ "$INTERFACE" = "wan" ] || [ "$INTERFACE" = "wwan" ]; then
-    :
+    : # matches WAN/WWAN interface name
 else
-    exit 0
+    exit 0  # not a WAN interface
 fi
 
+# Prevent multiple restarts (flag file)
 FLAG_FILE="/tmp/tollgate_initial_restart_done"
 
 if [ -f "$FLAG_FILE" ]; then
     exit 0
 fi
 
-check_connectivity() {
-    ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1
-    return $?
+# ---------------------------------------------------------------------------
+# Connectivity check via ubus — Go v1's approach
+# Checks network.interface.wan status for "up": true and presence of "route"
+# ---------------------------------------------------------------------------
+check_connectivity_ubus() {
+    # Query ubus for interface status
+    STATUS="$(ubus call network.interface."$INTERFACE" status 2>/dev/null)" || return 1
+
+    # Check "up" field
+    UP="$(echo "$STATUS" | jsonfilter -e '@.up' 2>/dev/null)" || return 1
+    [ "$UP" = "true" ] || return 1
+
+    # Check that at least one route exists
+    echo "$STATUS" | jsonfilter -e '@.route[0].target' >/dev/null 2>&1 || return 1
+
+    return 0
 }
 
-sleep 5
+# ---------------------------------------------------------------------------
+# Poll loop: wait for connectivity with 5-second intervals
+# Go v1: 12 attempts × 5 seconds = 60 seconds max wait
+# ---------------------------------------------------------------------------
+MAX_ATTEMPTS=12
+POLL_INTERVAL=5
+ATTEMPT=0
 
-if check_connectivity; then
-    /etc/init.d/tollgate-wrt restart
-    touch "$FLAG_FILE"
-    logger "tollgate-wrt: Restarted service after WAN up and connectivity check."
-else
-    logger "tollgate-wrt: WAN up but no connectivity, skipping restart."
-fi
+logger -t tollgate-hotplug "WAN ($INTERFACE) came up, checking connectivity..."
+
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+
+    if check_connectivity_ubus; then
+        logger -t tollgate-hotplug "Connectivity confirmed (attempt $ATTEMPT/$MAX_ATTEMPTS), restarting tollgate-wrt"
+        /etc/init.d/tollgate-wrt restart 2>/dev/null || true
+        touch "$FLAG_FILE"
+        exit 0
+    fi
+
+    sleep $POLL_INTERVAL
+done
+
+logger -t tollgate-hotplug "No connectivity after $MAX_ATTEMPTS attempts, skipping tollgate-wrt restart"
+exit 0

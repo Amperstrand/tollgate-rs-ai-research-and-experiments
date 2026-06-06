@@ -48,6 +48,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       ipk_matrix: ${{ steps.set-matrix.outputs.ipk_matrix }}
+      apk_matrix: ${{ steps.set-matrix.outputs.apk_matrix }}
     steps:
       - id: set-matrix
         run: |
@@ -86,6 +87,7 @@ jobs:
           fi
 
           echo "ipk_matrix=$(jq -c '{include: [.include[] | . + {format: "ipk"}]}' matrix.json)" >> $GITHUB_OUTPUT
+          echo "apk_matrix=$(jq -c '{include: [.include[] | select(has("compression") | not)] | .[] | . + {format: "apk"}}' matrix.json | jq -c '{include: .}')" >> $GITHUB_OUTPUT
           echo "matrix=$(jq -c '{include: [.include[] | . + {format: "ipk"}]}' matrix.json)" >> $GITHUB_OUTPUT
 
   determine-versioning:
@@ -293,4 +295,95 @@ jobs:
           echo "| Architecture | \`${{ matrix.architecture }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Compression | \`${{ matrix.compression || 'none' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Version | \`${{ needs.determine-versioning.outputs.package_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Format | \`.ipk\` (opkg, OpenWrt ≤24.10) |" >> $GITHUB_STEP_SUMMARY
+          ls -lh artifacts/
+
+  # Build .apk packages for OpenWrt 25.x+ (apk-tools v3).
+  # Only non-compression variants — UPX .apk is rarely needed on modern targets.
+  package-apk:
+    needs: [define-package-matrix, determine-versioning, compile-binaries]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.define-package-matrix.outputs.apk_matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Download prebuilt binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: binaries-${{ matrix.compile_key }}
+          path: bin/
+
+      - name: Fetch pre-built captive portal site
+        run: |
+          set -euo pipefail
+          PORTAL_DIR=$(mktemp -d)
+          curl -sL "https://api.github.com/repos/OpenTollGate/tollgate-module-basic-go/git/trees/main?recursive=1" \
+            | python3 -c "
+          import json, sys, urllib.request
+          data = json.load(sys.stdin)
+          for item in data.get('tree', []):
+              p = item['path']
+              if p.startswith('packaging/files/tollgate-captive-portal-site/') and item['type'] == 'blob':
+                  rel = p.removeprefix('packaging/files/tollgate-captive-portal-site/')
+                  print(rel)
+          " | while read -r rel; do
+              url="https://raw.githubusercontent.com/OpenTollGate/tollgate-module-basic-go/main/packaging/files/tollgate-captive-portal-site/$rel"
+              dest="$PORTAL_DIR/$rel"
+              mkdir -p "$(dirname "$dest")"
+              curl -sL "$url" -o "$dest"
+          done
+          echo "PORTAL_DIR=$PORTAL_DIR" >> $GITHUB_ENV
+
+      - name: Build .apk
+        run: |
+          set -euo pipefail
+          PACKAGE_FILENAME=${PACKAGE_NAME}_${{ needs.determine-versioning.outputs.package_version }}_${{ matrix.architecture }}.apk
+          echo "PACKAGE_FILENAME=$PACKAGE_FILENAME" >> $GITHUB_ENV
+
+          PAYLOAD=$(mktemp -d)
+          install -D -m 0755 bin/${{ env.BINARY_NAME }} "$PAYLOAD/usr/bin/tollgate-wrt"
+
+          install -D -m 0755 packaging/files/etc/init.d/tollgate-wrt                          "$PAYLOAD/etc/init.d/tollgate-wrt"
+          install -D -m 0644 packaging/files/etc/config/firewall-tollgate                      "$PAYLOAD/etc/config/firewall-tollgate"
+          install -D -m 0755 packaging/files/etc/hotplug.d/iface/95-tollgate-restart           "$PAYLOAD/etc/hotplug.d/iface/95-tollgate-restart"
+          install -D -m 0644 packaging/files/lib/upgrade/keep.d/tollgate                       "$PAYLOAD/lib/upgrade/keep.d/tollgate"
+          install -D -m 0755 packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink "$PAYLOAD/etc/uci-defaults/90-tollgate-captive-portal-symlink"
+          install -D -m 0755 packaging/files/etc/uci-defaults/99-tollgate-setup                "$PAYLOAD/etc/uci-defaults/99-tollgate-setup"
+          install -D -m 0755 packaging/files/usr/sbin/tollgate-setup-ssl                      "$PAYLOAD/usr/sbin/tollgate-setup-ssl"
+          mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/crontabs"
+          install -D -m 0644 LICENSE "$PAYLOAD/usr/share/doc/tollgate-wrt/LICENSE"
+
+          cp -a "$PORTAL_DIR/." "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site/"
+
+          mkdir -p artifacts
+          env \
+            PKG_NAME="$PACKAGE_NAME" \
+            PKG_VERSION="${{ needs.determine-versioning.outputs.package_version }}" \
+            ARCH="${{ matrix.architecture }}" \
+            MAINTAINER="Amperstrand" \
+            LICENSE="MIT" \
+            DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt" \
+            DEPENDS="nodogsplash" \
+            packaging/build-apk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PACKAGE_FILENAME }}
+          path: artifacts/${{ env.PACKAGE_FILENAME }}
+          retention-days: 5
+
+      - name: Summary
+        run: |
+          echo "### Built: \`${{ env.PACKAGE_FILENAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Architecture | \`${{ matrix.architecture }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ needs.determine-versioning.outputs.package_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Format | \`.apk\` (apk-tools v3, OpenWrt 25.x+) |" >> $GITHUB_STEP_SUMMARY
           ls -lh artifacts/

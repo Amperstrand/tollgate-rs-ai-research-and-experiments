@@ -18,12 +18,13 @@ use std::sync::Arc;
 use nostr::event::tag::{Tag, TagKind};
 use nostr::prelude::*;
 use reqwest::Client;
+use tollgate_core::wallet::Wallet;
 use tollgate_net::mock::MockWallet;
 
 use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
     build_advertisement, AcceptedMint, InMemoryLightningQuoteStore, InMemorySessionStore,
-    LightningQuoteRecord, MockMintQuoteWallet, QuoteState, ServerState, StubMacResolver, StubValve,
+    LightningQuoteRecord, MerchantProvider, MockMintQuoteWallet, QuoteState, ServerState, StubMacResolver, StubValve,
     V1ServerConfig,
 };
 
@@ -88,13 +89,14 @@ async fn start_server(
 ) -> (
     String,
     tokio::task::JoinHandle<()>,
-    Arc<ServerState<MockWallet>>,
+    Arc<ServerState>,
 ) {
-    let wallet = Arc::new(MockWallet::new(0));
+    let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
+    let merchant = Arc::new(MerchantProvider::new(wallet));
     let advertisement = build_advertisement(&config).unwrap();
 
     let state = Arc::new(ServerState {
-        wallet: wallet.clone(),
+        merchant,
         config,
         sessions: Arc::new(InMemorySessionStore::new()),
         mac_resolver: Arc::new(StubMacResolver::default()),
@@ -1764,16 +1766,17 @@ async fn start_server_with_ln(
 ) -> (
     String,
     tokio::task::JoinHandle<()>,
-    Arc<ServerState<MockWallet>>,
+    Arc<ServerState>,
     Arc<MockMintQuoteWallet>,
 ) {
-    let wallet = Arc::new(MockWallet::new(0));
+    let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
+    let merchant = Arc::new(MerchantProvider::new(wallet));
     let advertisement = build_advertisement(&config).unwrap();
     let mint_quote_wallet = Arc::new(MockMintQuoteWallet::new());
     let lightning_quotes = Arc::new(InMemoryLightningQuoteStore::new());
 
     let state = Arc::new(ServerState {
-        wallet: wallet.clone(),
+        merchant,
         config,
         sessions: Arc::new(InMemorySessionStore::new()),
         mac_resolver: Arc::new(StubMacResolver::default()),

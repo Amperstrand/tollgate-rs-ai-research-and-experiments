@@ -1,2 +1,45 @@
+# ============================================================================
+# tollgate — Files preserved across sysupgrade
+# ============================================================================
+#
+# WHAT: List of paths that OpenWrt's sysupgrade will preserve when the
+#       firmware is upgraded. Without this list, all configuration files
+#       would be wiped during an upgrade.
+#
+# Go v1 REFERENCE: /packaging/files/lib/upgrade/keep.d/tollgate
+#   - Preserves: /etc/config/firewall-tollgate, /etc/config/network,
+#     /etc/config/wireless, /etc/tollgate
+#
+# Rust DIFFERENCE: Expanded list. Go v1 preserves 4 paths.
+#   Rust adds: /etc/config/tollgate_wrt (Rust UCI config),
+#   /etc/config/uhttpd (HTTPS cert config from tollgate-setup-ssl),
+#   /etc/config/nodogsplash (captive portal config).
+#   These additional configs are needed because Rust's 99-tollgate-setup
+#   configures more services than Go v1's version.
+#
+# OLD RUST: Only preserved /etc/tollgate and /etc/config/tollgate_wrt.
+#   This was insufficient — network, firewall, and wireless configs would
+#   be lost on sysupgrade, requiring full re-provisioning.
+# ============================================================================
+
+# TollGate application data
 /etc/tollgate
+
+# TollGate Rust UCI config
 /etc/config/tollgate_wrt
+
+# Network configuration (preserved to keep WAN/LAN/private network settings)
+/etc/config/network
+
+# Firewall configuration (preserved to keep TollGate rules and includes)
+/etc/config/firewall
+/etc/config/firewall-tollgate
+
+# Wireless configuration (preserved to keep public/private WiFi APs)
+/etc/config/wireless
+
+# uhttpd configuration (preserved to keep HTTPS cert paths)
+/etc/config/uhttpd
+
+# NoDogSplash configuration (preserved to keep captive portal settings)
+/etc/config/nodogsplash

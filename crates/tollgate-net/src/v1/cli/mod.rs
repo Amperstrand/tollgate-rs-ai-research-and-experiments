@@ -6,6 +6,7 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 pub mod commands;
+pub mod file_config;
 pub mod types;
 
 use std::path::Path;
@@ -15,8 +16,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
 
-use self::commands::CliWallet;
+use self::commands::{CliConfig, CliWallet};
 use self::types::{CLIMessage, CLIResponse, SessionStatus};
+
+pub use commands::CliConfig as CliConfigTrait;
+pub use file_config::FileConfig;
 
 const DEFAULT_SOCKET_PATH: &str = "/var/run/tollgate.sock";
 const SOCKET_PERMISSIONS: u32 = 0o666;
@@ -37,6 +41,7 @@ pub enum CliError {
 pub struct CliServer {
     socket_path: String,
     wallet: Arc<dyn CliWallet>,
+    config: Option<Arc<dyn CliConfig>>,
     start_time: std::time::Instant,
     cancel: CancellationToken,
 }
@@ -46,9 +51,15 @@ impl CliServer {
         Self {
             socket_path: socket_path.unwrap_or_else(|| DEFAULT_SOCKET_PATH.to_owned()),
             wallet,
+            config: None,
             start_time: std::time::Instant::now(),
             cancel: CancellationToken::new(),
         }
+    }
+
+    pub fn with_config(mut self, config: Arc<dyn CliConfig>) -> Self {
+        self.config = Some(config);
+        self
     }
 
     pub fn start(&self) -> Result<(), CliError> {
@@ -72,11 +83,12 @@ impl CliServer {
         tracing::info!(socket_path = %self.socket_path, "CLI server started");
 
         let wallet = self.wallet.clone();
+        let config = self.config.clone();
         let start_time = self.start_time;
         let cancel = self.cancel.clone();
 
         tokio::spawn(async move {
-            accept_loop(listener, &wallet, start_time, cancel).await;
+            accept_loop(listener, &wallet, config.as_ref(), start_time, cancel).await;
         });
 
         Ok(())
@@ -98,6 +110,7 @@ impl CliServer {
 async fn accept_loop(
     listener: UnixListener,
     wallet: &Arc<dyn CliWallet>,
+    config: Option<&Arc<dyn CliConfig>>,
     start_time: std::time::Instant,
     cancel: CancellationToken,
 ) {
@@ -111,7 +124,8 @@ async fn accept_loop(
                 match result {
                     Ok((stream, _addr)) => {
                         let wallet = wallet.clone();
-                        tokio::spawn(handle_connection(stream, wallet, start_time));
+                        let config = config.cloned();
+                        tokio::spawn(handle_connection(stream, wallet, config, start_time));
                     }
                     Err(e) => {
                         if !cancel.is_cancelled() {
@@ -127,6 +141,7 @@ async fn accept_loop(
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     wallet: Arc<dyn CliWallet>,
+    config: Option<Arc<dyn CliConfig>>,
     start_time: std::time::Instant,
 ) {
     let (reader, mut writer) = stream.into_split();
@@ -146,7 +161,7 @@ async fn handle_connection(
     tracing::debug!(len = trimmed.len(), "Received CLI message");
 
     let response = match serde_json::from_str::<CLIMessage>(trimmed) {
-        Ok(msg) => dispatch(&msg, &wallet, start_time).await,
+        Ok(msg) => dispatch(&msg, &wallet, &config, start_time).await,
         Err(e) => CLIResponse::error(format!("Invalid JSON: {e}")),
     };
 
@@ -165,6 +180,7 @@ async fn handle_connection(
 async fn dispatch(
     msg: &CLIMessage,
     wallet: &Arc<dyn CliWallet>,
+    config: &Option<Arc<dyn CliConfig>>,
     start_time: std::time::Instant,
 ) -> CLIResponse {
     tracing::debug!(command = %msg.command, args = ?msg.args, "Dispatching CLI command");
@@ -177,6 +193,12 @@ async fn dispatch(
             commands::handle_status(wallet.as_ref(), start_time, &sessions).await
         }
         "version" => commands::handle_version(),
+        "health" => {
+            let wallet_ok = wallet.balance().await.is_ok();
+            let uptime_secs = start_time.elapsed().as_secs();
+            commands::handle_health(wallet_ok, true, uptime_secs)
+        }
+        "config" => dispatch_config(&msg.args, config),
         _ => CLIResponse::error(format!("Unknown command: {}", msg.command)),
     }
 }
@@ -244,6 +266,38 @@ fn dispatch_upstream(args: &[String]) -> CLIResponse {
     }
 }
 
+fn dispatch_config(args: &[String], config: &Option<Arc<dyn CliConfig>>) -> CLIResponse {
+    let Some(subcommand) = args.first() else {
+        return CLIResponse::error("Config command requires a subcommand (get, set, save)");
+    };
+
+    let Some(cfg) = config else {
+        return CLIResponse::error("Config manager not available");
+    };
+
+    match subcommand.as_str() {
+        "get" => commands::handle_config_get(cfg.as_ref()),
+        "set" => {
+            let key = args.get(1).map_or("", String::as_str);
+            let value = args.get(2).map_or("", String::as_str);
+            if key.is_empty() || value.is_empty() {
+                return CLIResponse::error("config set requires <key> <value>");
+            }
+            commands::handle_config_set(cfg.as_ref(), key, value)
+        }
+        "save" => {
+            let json_str = args.get(1).map_or("", String::as_str);
+            if json_str.is_empty() {
+                return CLIResponse::error("config save requires <json-string>");
+            }
+            commands::handle_config_save(cfg.as_ref(), json_str)
+        }
+        other => CLIResponse::error(format!(
+            "Unknown config subcommand: {other} (supported: get, set, save)"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,7 +353,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("Unknown command: foobar"));
     }
@@ -313,7 +367,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["balance"], 500);
@@ -328,7 +382,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("requires an action"));
     }
@@ -342,7 +396,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
         assert!(resp.success);
         assert!(resp.message.unwrap().contains("tollgate-net"));
     }
@@ -356,7 +410,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["wallet_ok"], true);
@@ -372,7 +426,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("M4"));
     }
@@ -452,5 +506,146 @@ mod tests {
 
         server.stop().unwrap();
         assert!(!socket_path.exists());
+    }
+
+    #[test]
+    fn dispatch_health() {
+        let wallet = make_wallet(100);
+        let msg = CLIMessage {
+            command: "health".to_owned(),
+            args: vec![],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        assert_eq!(data["wallet_ok"], true);
+        assert_eq!(data["config_ok"], true);
+        assert_eq!(data["status"], "healthy");
+    }
+
+    #[test]
+    fn dispatch_health_degraded_when_wallet_fails() {
+        struct FailingWallet;
+        #[async_trait::async_trait]
+        impl CliWallet for FailingWallet {
+            async fn balance(&self) -> Result<u64, String> {
+                Err("wallet error".to_owned())
+            }
+            async fn receive_token(&self, _token: &str) -> Result<u64, String> {
+                Ok(0)
+            }
+            async fn create_token(&self, _amount: u64, _mint_url: &str) -> Result<String, String> {
+                Ok(String::new())
+            }
+            async fn get_mint_balances(&self) -> HashMap<String, u64> {
+                HashMap::new()
+            }
+        }
+        let wallet: Arc<dyn CliWallet> = Arc::new(FailingWallet);
+        let msg = CLIMessage {
+            command: "health".to_owned(),
+            args: vec![],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        assert_eq!(data["wallet_ok"], false);
+        assert_eq!(data["status"], "degraded");
+    }
+
+    #[test]
+    fn dispatch_config_no_subcommand() {
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec![],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("requires a subcommand"));
+    }
+
+    #[test]
+    fn dispatch_config_get_no_manager() {
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec!["get".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("not available"));
+    }
+
+    #[test]
+    fn dispatch_config_set_no_manager() {
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec!["set".to_owned(), "metric".to_owned(), "bytes".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(!resp.success);
+    }
+
+    #[test]
+    fn dispatch_config_unknown_subcommand() {
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec!["bogus".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("not available"));
+    }
+
+    #[test]
+    fn dispatch_config_set_missing_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"metric":"ms"}"#).unwrap();
+        let config: Arc<dyn CliConfig> = Arc::new(FileConfig::new(path));
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec!["set".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("requires"));
+    }
+
+    #[test]
+    fn dispatch_config_get_with_file_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"metric":"milliseconds","step_size":60000}"#).unwrap();
+        let config: Arc<dyn CliConfig> = Arc::new(FileConfig::new(path));
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec!["get".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        assert_eq!(data["metric"], "milliseconds");
     }
 }

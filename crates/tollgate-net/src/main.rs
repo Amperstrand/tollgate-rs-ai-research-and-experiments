@@ -94,6 +94,13 @@ enum Commands {
         /// Path to ndsctl binary (only used with --valve nds, default: auto-detect)
         #[arg(long)]
         ndsctl_path: Option<String>,
+        /// Enable network interface monitoring via netlink (Linux) or stub (other OS).
+        /// Logs link/address/route changes. Required for upstream WiFi management.
+        #[arg(long, default_value = "false")]
+        monitor: bool,
+        /// Interfaces to monitor (comma-separated, empty = all except lo)
+        #[arg(long, value_delimiter = ',')]
+        monitor_interfaces: Vec<String>,
     },
     /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
     V1Client {
@@ -268,10 +275,13 @@ async fn main() {
             keys: keys_path,
             valve,
             ndsctl_path,
+            monitor: enable_monitor,
+            monitor_interfaces,
         } => {
             use std::time::Duration;
             use v1::server::payout::{PayoutConfig, PayoutTarget};
             use v1::server::Valve;
+            use v1::server::NetworkMonitor;
 
             let nostr_keys = match keys_path {
                 Some(path) => v1::server::load_or_generate_keys(&path).unwrap_or_else(|e| {
@@ -349,23 +359,65 @@ async fn main() {
                 }
             };
 
+            // Spawn network monitor if requested. The monitor emits NetworkEvent
+            // (interface up/down, address changes) which the upcoming upstream
+            // WiFi manager will consume. For now we log events for observability.
+            let monitor_cancel = if enable_monitor {
+                let mon_config = v1::server::NetworkMonitorConfig {
+                    only_interfaces: if monitor_interfaces.is_empty() {
+                        vec![]
+                    } else {
+                        monitor_interfaces
+                    },
+                    ..v1::server::NetworkMonitorConfig::default()
+                };
+                let monitor = NetworkMonitor::new(mon_config);
+                let cancel = monitor.cancel_token();
+                let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
+
+                tokio::spawn(async move {
+                    if let Err(e) = monitor.start(event_tx).await {
+                        tracing::error!(%e, "NetworkMonitor exited with error");
+                    }
+                });
+
+                tokio::spawn(async move {
+                    while let Some(event) = event_rx.recv().await {
+                        match &event {
+                            v1::server::NetworkEvent::InterfaceUp { name, gateway_ip, .. } => {
+                                tracing::info!(interface = %name, ?gateway_ip, "NetworkEvent: InterfaceUp");
+                            }
+                            v1::server::NetworkEvent::InterfaceDown { name } => {
+                                tracing::info!(interface = %name, "NetworkEvent: InterfaceDown");
+                            }
+                            v1::server::NetworkEvent::AddressAdded { interface, address, .. } => {
+                                tracing::info!(interface = %interface, %address, "NetworkEvent: AddressAdded");
+                            }
+                            v1::server::NetworkEvent::AddressDeleted { interface, address } => {
+                                tracing::info!(interface = %interface, %address, "NetworkEvent: AddressDeleted");
+                            }
+                        }
+                    }
+                });
+
+                tracing::info!("Network monitor enabled");
+                Some(cancel)
+            } else {
+                None
+            };
+
             match wt {
                 WalletType::Mock => {
-                    let wallet = Arc::new(mock::MockWallet::new(0));
-                    server.run(wallet, valve).await;
+                    let wallet: Arc<dyn tollgate_core::wallet::Wallet> = Arc::new(mock::MockWallet::new(0));
+                    let merchant = Arc::new(v1::server::MerchantProvider::new(wallet));
+                    server.run(merchant, valve).await;
                 }
                 WalletType::Cdk => {
-                    // Connect the wallet to the first configured accepted mint so
-                    // it matches what we advertise; fall back to the CLI --mint-url.
                     let wallet_mint_url = server_config
                         .accepted_mints
                         .first()
                         .map_or_else(|| mint_url.clone(), |m| m.url.clone());
-                    let wallet = Arc::new(
-                        cdk_wallet::CdkWallet::new(&wallet_mint_url, [4u8; 64])
-                            .await
-                            .expect("failed to create CDK wallet"),
-                    );
+
                     let mint_cfg = &server_config.accepted_mints[0];
                     let profit_share = server_config.profit_share.clone();
                     let payout_cfg = PayoutConfig {
@@ -382,17 +434,61 @@ async fn main() {
                             })
                             .collect(),
                     };
-                    let payout = v1::server::payout::spawn_payout_task(wallet.clone(), payout_cfg);
-                    // Real deployments: resolve client MACs from OpenWrt DHCP
-                    // leases and enable Lightning invoice endpoints (CdkWallet
-                    // implements MintQuoteWallet).
-                    let server = server
-                        .with_mac_resolver(Arc::new(v1::server::DhcpLeasesResolver))
-                        .with_mint_quote_wallet(wallet.clone());
-                    tokio::select! {
-                        () = async { server.run(wallet, valve).await } => {}
-                        _ = payout => {
-                            tracing::warn!("payout task finished");
+
+                    let wallet_result = cdk_wallet::CdkWallet::new(&wallet_mint_url, [4u8; 64]).await;
+
+                    match wallet_result {
+                        Ok(cdk_wallet) => {
+                            let wallet = Arc::new(cdk_wallet);
+                            let payout = v1::server::payout::spawn_payout_task(wallet.clone(), payout_cfg);
+                            let server = server
+                                .with_mac_resolver(Arc::new(v1::server::DhcpLeasesResolver))
+                                .with_mint_quote_wallet(wallet.clone());
+                            let wallet_dyn: Arc<dyn tollgate_core::wallet::Wallet> = wallet;
+                            let merchant = Arc::new(v1::server::MerchantProvider::new(wallet_dyn));
+
+                            tokio::select! {
+                                () = async { server.run(merchant, valve).await } => {}
+                                _ = payout => {
+                                    tracing::warn!("payout task finished");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Wallet init failed (mints may be unreachable): {e}");
+                            tracing::warn!("Falling back to degraded mode");
+
+                            let wallet: Arc<dyn tollgate_core::wallet::Wallet> = Arc::new(v1::server::DegradedWallet);
+                            let merchant = Arc::new(v1::server::MerchantProvider::new(wallet));
+
+                            let mint_urls: Vec<String> = server_config.accepted_mints.iter().map(|m| m.url.clone()).collect();
+                            let tracker = Arc::new(v1::server::MintHealthTracker::new(mint_urls));
+                            tracker.run_initial_probe();
+
+                            let tracker_cb = tracker.clone();
+                            let merchant_cb = merchant.clone();
+                            let mint_url_cb = wallet_mint_url.clone();
+                            tracker.set_on_first_reachable(Box::new(move || {
+                                let merchant_cb = merchant_cb.clone();
+                                let tracker_cb = tracker_cb.clone();
+                                let mint_url_cb = mint_url_cb.clone();
+                                tokio::spawn(async move {
+                                    tracing::info!("Mint became reachable — attempting to upgrade from degraded mode");
+                                    match cdk_wallet::CdkWallet::new(&mint_url_cb, [4u8; 64]).await {
+                                        Ok(new_wallet) => {
+                                            let new_wallet: Arc<dyn tollgate_core::wallet::Wallet> = Arc::new(new_wallet);
+                                            merchant_cb.swap(new_wallet);
+                                            tracing::info!("Upgraded from degraded to full merchant");
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Failed to create wallet during recovery: {e}");
+                                            tracker_cb.reset_first_reachable();
+                                        }
+                                    }
+                                });
+                            }));
+
+                            server.run(merchant, valve).await;
                         }
                     }
                 }
@@ -403,8 +499,14 @@ async fn main() {
                             .await
                             .expect("failed to create CDK wallet"),
                     );
-                    server.run(wallet, valve).await;
+                    let wallet_dyn: Arc<dyn tollgate_core::wallet::Wallet> = wallet;
+                    let merchant = Arc::new(v1::server::MerchantProvider::new(wallet_dyn));
+                    server.run(merchant, valve).await;
                 }
+            }
+
+            if let Some(cancel) = monitor_cancel {
+                cancel.cancel();
             }
         }
         Commands::V1Client {

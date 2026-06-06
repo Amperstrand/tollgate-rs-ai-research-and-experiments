@@ -179,3 +179,59 @@ pub fn handle_upstream_list() -> CLIResponse {
 pub fn handle_upstream_remove(_ssid: &str) -> CLIResponse {
     CLIResponse::error("Upstream remove not implemented (requires M4)")
 }
+
+/// Dyn-compatible config operations for the CLI.
+pub trait CliConfig: Send + Sync {
+    /// Get the full config as a JSON value.
+    fn get_config(&self) -> Result<serde_json::Value, String>;
+    /// Set a single config value by dot-path key (e.g. "metric", "step_size").
+    fn set_value(&self, key: &str, value: &str) -> Result<(), String>;
+    /// Save entire config from a JSON string, with validation.
+    fn save_config(&self, json: &str) -> Result<(), String>;
+}
+
+/// Health check — lighter than status, matches Go's health endpoint.
+pub fn handle_health(wallet_ok: bool, config_ok: bool, uptime_secs: u64) -> CLIResponse {
+    let status = if wallet_ok && config_ok {
+        "healthy"
+    } else {
+        "degraded"
+    };
+    CLIResponse::ok_with_data(
+        format!("Service health: {status}"),
+        serde_json::json!({
+            "status": status,
+            "version": format!("tollgate-net v{}", env!("CARGO_PKG_VERSION")),
+            "config_ok": config_ok,
+            "wallet_ok": wallet_ok,
+            "uptime_secs": uptime_secs,
+        }),
+    )
+}
+
+/// Retrieve the current configuration as JSON.
+pub fn handle_config_get(config: &dyn CliConfig) -> CLIResponse {
+    match config.get_config() {
+        Ok(cfg) => CLIResponse::ok_with_data("Configuration retrieved", cfg),
+        Err(e) => CLIResponse::error(format!("Failed to get config: {e}")),
+    }
+}
+
+/// Set a single config value by key.
+pub fn handle_config_set(config: &dyn CliConfig, key: &str, value: &str) -> CLIResponse {
+    match config.set_value(key, value) {
+        Ok(()) => CLIResponse::ok_with_data(
+            format!("Set {key} = {value} (restart tollgate-wrt to apply)"),
+            serde_json::json!({"key": key, "value": value}),
+        ),
+        Err(e) => CLIResponse::error(format!("Failed to set {key}: {e}")),
+    }
+}
+
+/// Replace the entire config file from a validated JSON string.
+pub fn handle_config_save(config: &dyn CliConfig, json: &str) -> CLIResponse {
+    match config.save_config(json) {
+        Ok(()) => CLIResponse::ok("Configuration saved (restart tollgate-wrt to apply)"),
+        Err(e) => CLIResponse::error(format!("Failed to save config: {e}")),
+    }
+}

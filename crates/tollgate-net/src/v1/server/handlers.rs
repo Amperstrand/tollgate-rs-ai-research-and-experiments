@@ -17,27 +17,26 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use nostr::prelude::*;
-use tollgate_core::wallet::Wallet;
 
 use super::merchant;
 use super::{extract_client_ip, CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig};
 
-pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
+pub fn build_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route(
             "/",
-            get(handle_get_details::<W>).post(handle_post_payment::<W>),
+            get(handle_get_details).post(handle_post_payment),
         )
         // `/pay` mirrors the Go captive-portal entry point. For the Cashu
         // token gate it returns the same kind:10021 advertisement (pricing)
         // the client pays against; the LN 402 + payment_request path is M-later.
-        .route("/pay", get(handle_get_details::<W>))
-        .route("/usage", get(handle_usage::<W>))
-        .route("/whoami", get(handle_whoami::<W>))
-        .route("/balance", get(handle_balance::<W>))
+        .route("/pay", get(handle_get_details))
+        .route("/usage", get(handle_usage))
+        .route("/whoami", get(handle_whoami))
+        .route("/balance", get(handle_balance))
         .route(
             "/ln-invoice",
-            get(handle_get_ln_invoice::<W>).post(handle_post_ln_invoice::<W>),
+            get(handle_get_ln_invoice).post(handle_post_ln_invoice),
         )
         .with_state(state)
 }
@@ -94,15 +93,34 @@ fn notice_response(
     }
 }
 
-async fn handle_get_details<W: Wallet>(State(state): State<Arc<ServerState<W>>>) -> Response {
+async fn handle_get_details(State(state): State<Arc<ServerState>>) -> Response {
     cors_response(json_response(StatusCode::OK, state.advertisement.clone()))
 }
 
 #[allow(clippy::too_many_lines)]
-async fn handle_post_payment<W: Wallet>(
+/// Metric-aware valve open: uses `open_gate_until` for milliseconds, `open_gate`
+/// for bytes/other. Mirrors Go's `openGateForSession`.
+async fn open_gate_for_session(
+    valve: &dyn super::Valve,
+    mac: &str,
+    metric: &str,
+    start_time: i64,
+    allotment: u64,
+) {
+    if metric == "milliseconds" {
+        let until_ts = start_time + (allotment as i64 / 1000);
+        if let Err(e) = valve.open_gate_until(mac, until_ts).await {
+            tracing::warn!("Failed to open valve (until {until_ts}) for {mac}: {e}");
+        }
+    } else if let Err(e) = valve.open_gate(mac).await {
+        tracing::warn!("Failed to open valve for {mac}: {e}");
+    }
+}
+
+async fn handle_post_payment(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<Arc<ServerState<W>>>,
+    State(state): State<Arc<ServerState>>,
     body: String,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
@@ -123,7 +141,7 @@ async fn handle_post_payment<W: Wallet>(
 
     let token = extract_payment_token(&body);
 
-    let amount = match state.wallet.receive_token(token.as_bytes()).await {
+    let amount = match state.merchant.get().receive_token(token.as_bytes()).await {
         Ok(amount) => amount,
         Err(e) => {
             tracing::warn!("Token rejected: {e}");
@@ -183,9 +201,14 @@ async fn handle_post_payment<W: Wallet>(
         cloned
     };
 
-    if let Err(e) = state.valve.open_gate(&mac).await {
-        tracing::warn!("Failed to open valve for {mac}: {e}");
-    }
+    open_gate_for_session(
+        &*state.valve,
+        &mac,
+        &session.metric,
+        session.start_time,
+        session.allotment,
+    )
+    .await;
 
     match merchant::build_session_event(&session, &state.config, &mac) {
         Ok(json) => cors_response(json_response(StatusCode::OK, json)),
@@ -199,10 +222,10 @@ async fn handle_post_payment<W: Wallet>(
     }
 }
 
-async fn handle_usage<W: Wallet>(
+async fn handle_usage(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<Arc<ServerState<W>>>,
+    State(state): State<Arc<ServerState>>,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let mac = match state.mac_resolver.resolve(&ip) {
@@ -235,17 +258,25 @@ async fn handle_usage<W: Wallet>(
             format!("{elapsed_ms}/{}", session.allotment),
         ))
     } else {
+        let usage = state.valve.get_client_usage_since_baseline(&mac).await.unwrap_or(0);
+        if usage >= session.allotment {
+            let _ = state.sessions.remove(&mac).await;
+            if let Err(e) = state.valve.close_gate(&mac).await {
+                tracing::warn!("Failed to close valve for {mac}: {e}");
+            }
+            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()));
+        }
         cors_response(text_response(
             StatusCode::OK,
-            format!("0/{}", session.allotment),
+            format!("{usage}/{}", session.allotment),
         ))
     }
 }
 
-async fn handle_whoami<W: Wallet>(
+async fn handle_whoami(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<Arc<ServerState<W>>>,
+    State(state): State<Arc<ServerState>>,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     match state.mac_resolver.resolve(&ip) {
@@ -256,10 +287,10 @@ async fn handle_whoami<W: Wallet>(
     }
 }
 
-async fn handle_balance<W: Wallet>(
+async fn handle_balance(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<Arc<ServerState<W>>>,
+    State(state): State<Arc<ServerState>>,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let mac = match state.mac_resolver.resolve(&ip) {
@@ -303,7 +334,19 @@ async fn handle_balance<W: Wallet>(
         let rem = session.allotment as i64 - elapsed_ms;
         (elapsed_ms as u64, rem.max(0) as u64)
     } else {
-        (0, session.allotment)
+        let usage = state.valve.get_client_usage_since_baseline(&mac).await.unwrap_or(0);
+        if usage >= session.allotment {
+            let _ = state.sessions.remove(&mac).await;
+            if let Err(e) = state.valve.close_gate(&mac).await {
+                tracing::warn!("Failed to close valve for {mac}: {e}");
+            }
+            return cors_response(json_response(
+                StatusCode::OK,
+                r#"{"status":1,"session_active":false}"#.to_owned(),
+            ));
+        }
+        let rem = session.allotment.saturating_sub(usage);
+        (usage, rem)
     };
 
     let json = serde_json::json!({
@@ -416,10 +459,10 @@ fn ln_error_response(http_status: StatusCode, error: &str) -> Response {
 }
 
 #[allow(clippy::too_many_lines)]
-async fn handle_post_ln_invoice<W: Wallet>(
+async fn handle_post_ln_invoice(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<Arc<ServerState<W>>>,
+    State(state): State<Arc<ServerState>>,
     body: String,
 ) -> Response {
     let req: LnInvoiceRequest = match serde_json::from_str(&body) {
@@ -536,10 +579,10 @@ async fn handle_post_ln_invoice<W: Wallet>(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn handle_get_ln_invoice<W: Wallet>(
+async fn handle_get_ln_invoice(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(state): State<Arc<ServerState<W>>>,
+    State(state): State<Arc<ServerState>>,
     Query(params): Query<LnInvoiceQuery>,
 ) -> Response {
     let quote_id = match params.quote {
@@ -645,10 +688,12 @@ async fn handle_get_ln_invoice<W: Wallet>(
             };
 
         let existing = state.sessions.get(&mac).await.ok().flatten();
-        if let Some(mut s) = existing {
+        let effective_allotment = if let Some(mut s) = existing {
             s.allotment += allotment;
             s.start_time = now;
+            let total = s.allotment;
             let _ = state.sessions.update(&mac, s).await;
+            total
         } else {
             let s = CustomerSession {
                 mac_address: mac.clone(),
@@ -657,11 +702,17 @@ async fn handle_get_ln_invoice<W: Wallet>(
                 allotment,
             };
             let _ = state.sessions.insert(s).await;
-        }
+            allotment
+        };
 
-        if let Err(e) = state.valve.open_gate(&mac).await {
-            tracing::warn!("Failed to open valve for {mac}: {e}");
-        }
+        open_gate_for_session(
+            &*state.valve,
+            &mac,
+            &state.config.metric,
+            now,
+            effective_allotment,
+        )
+        .await;
 
         record.session_granted = true;
         record.completed_at = Some(now);

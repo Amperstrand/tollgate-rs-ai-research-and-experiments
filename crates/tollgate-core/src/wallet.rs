@@ -11,6 +11,7 @@ use crate::error::WalletError;
 use crate::types::Amount;
 
 use std::future::Future;
+use std::pin::Pin;
 
 /// Wallet trait — abstracts Cashu wallet operations for bootstrap token payments.
 ///
@@ -28,21 +29,21 @@ pub trait Wallet: Send + Sync {
     fn receive_token(
         &self,
         token: &[u8],
-    ) -> impl Future<Output = Result<Amount, WalletError>> + Send;
+    ) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>>;
 
     /// Create a Cashu token of the given amount (for paying bootstrap).
     fn create_token(
         &self,
         amount: Amount,
         mint_url: &str,
-    ) -> impl Future<Output = Result<Vec<u8>, WalletError>> + Send;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, WalletError>> + Send + '_>>;
 
     /// Check if a mint is reachable and trusted.
     fn mint_reachable(
         &self,
         mint_url: &str,
-    ) -> impl Future<Output = Result<bool, WalletError>> + Send;
+    ) -> Pin<Box<dyn Future<Output = Result<bool, WalletError>> + Send + '_>>;
 
     /// Get current wallet balance.
-    fn balance(&self) -> impl Future<Output = Result<Amount, WalletError>> + Send;
+    fn balance(&self) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>>;
 }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Mutex;
 
 use tollgate_core::access::AccessLevel;
@@ -26,7 +27,7 @@ impl Wallet for MockWallet {
     fn receive_token(
         &self,
         token: &[u8],
-    ) -> impl Future<Output = Result<Amount, WalletError>> + Send {
+    ) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
         let result = if token.len() < 8 {
             Err(WalletError::TokenRejected("token too short".to_owned()))
         } else {
@@ -39,14 +40,14 @@ impl Wallet for MockWallet {
                 Ok(Amount(amount))
             }
         };
-        async move { result }
+        Box::pin(async move { result })
     }
 
     fn create_token(
         &self,
         amount: Amount,
         _mint_url: &str,
-    ) -> impl Future<Output = Result<Vec<u8>, WalletError>> + Send {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, WalletError>> + Send + '_>> {
         let result = {
             let mut balance = self.balance.lock().expect("lock not poisoned");
             if *balance < amount.0 {
@@ -56,16 +57,16 @@ impl Wallet for MockWallet {
                 Ok(amount.0.to_be_bytes().to_vec())
             }
         };
-        async move { result }
+        Box::pin(async move { result })
     }
 
-    fn mint_reachable(&self, _: &str) -> impl Future<Output = Result<bool, WalletError>> + Send {
-        async { Ok(true) }
+    fn mint_reachable(&self, _: &str) -> Pin<Box<dyn Future<Output = Result<bool, WalletError>> + Send + '_>> {
+        Box::pin(async { Ok(true) })
     }
 
-    fn balance(&self) -> impl Future<Output = Result<Amount, WalletError>> + Send {
+    fn balance(&self) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
         let amount = *self.balance.lock().expect("lock not poisoned");
-        async move { Ok(Amount(amount)) }
+        Box::pin(async move { Ok(Amount(amount)) })
     }
 }
 

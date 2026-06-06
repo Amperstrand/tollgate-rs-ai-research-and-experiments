@@ -53,6 +53,27 @@ impl ClientStats {
 }
 
 // ---------------------------------------------------------------------------
+// MAC validation (Go parity: isValidMAC)
+// ---------------------------------------------------------------------------
+
+fn validate_mac(mac: &str) -> Result<(), ValveError> {
+    let parts: Vec<&str> = mac.split(':').collect();
+    if parts.len() != 6 {
+        return Err(ValveError::Other(format!(
+            "invalid MAC address format: {mac}"
+        )));
+    }
+    for part in &parts {
+        if part.len() != 2 || !part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(ValveError::Other(format!(
+                "invalid MAC address format: {mac}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Valve trait
 // ---------------------------------------------------------------------------
 
@@ -364,15 +385,17 @@ mod nds {
 
             let mut gates = self.gates.lock().await;
 
+            // Always stop existing timer + re-auth (Go parity: openGateForSession
+            // always calls ndsctl auth regardless of existing gate state).
             let existing = gates.remove(mac);
-            match existing {
-                None => {
-                    self.authorize(mac).await?;
-                }
-                Some(GateEntry::Timed(handle)) => {
-                    handle.abort();
-                }
-                Some(GateEntry::Indefinite) => {}
+            if let Some(GateEntry::Timed(handle)) = existing {
+                handle.abort();
+            }
+
+            self.authorize(mac).await?;
+
+            if let Err(e) = self.set_data_baseline_inner(mac).await {
+                tracing::warn!(mac, "Failed to set data baseline, continuing anyway: {e}");
             }
 
             let gates_clone = self.gates.clone();
@@ -448,10 +471,12 @@ mod nds {
     #[async_trait]
     impl Valve for NdsValve {
         async fn open_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+            validate_mac(mac_address)?;
             self.open_gate_inner(mac_address).await
         }
 
         async fn close_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+            validate_mac(mac_address)?;
             self.close_gate_inner(mac_address).await
         }
 
@@ -460,10 +485,12 @@ mod nds {
             mac_address: &str,
             until_timestamp: i64,
         ) -> Result<(), ValveError> {
+            validate_mac(mac_address)?;
             self.open_gate_until_inner(mac_address, until_timestamp).await
         }
 
         async fn get_client_stats(&self, mac_address: &str) -> Result<ClientStats, ValveError> {
+            validate_mac(mac_address)?;
             self.fetch_client_stats(mac_address).await
         }
 
@@ -471,14 +498,17 @@ mod nds {
             &self,
             mac_address: &str,
         ) -> Result<u64, ValveError> {
+            validate_mac(mac_address)?;
             self.get_client_usage_since_baseline_inner(mac_address).await
         }
 
         async fn set_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
+            validate_mac(mac_address)?;
             self.set_data_baseline_inner(mac_address).await
         }
 
         async fn clear_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
+            validate_mac(mac_address)?;
             self.clear_data_baseline_inner(mac_address).await;
             Ok(())
         }

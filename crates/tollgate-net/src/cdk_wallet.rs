@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use cdk::nuts::{CurrencyUnit, MintQuoteState, PaymentMethod};
@@ -252,11 +253,11 @@ impl Wallet for CdkWallet {
     fn receive_token(
         &self,
         token: &[u8],
-    ) -> impl Future<Output = Result<Amount, WalletError>> + Send {
+    ) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
         // Per NUT-00: Token is a cashuA (V3) or cashuB (V4) encoded string.
         // Our protocol transmits it as raw bytes (UTF-8 string).
         let token_str = String::from_utf8_lossy(token).to_string();
-        async move {
+        Box::pin(async move {
             tracing::info!(
                 "[NUT-00] Receiving Cashu token ({} bytes, first 20 chars: {:?})",
                 token_str.len(),
@@ -309,16 +310,16 @@ impl Wallet for CdkWallet {
             Err(WalletError::TokenRejected(format!(
                 "CDK receive: {last_err}"
             )))
-        }
+        })
     }
 
     fn create_token(
         &self,
         amount: Amount,
         _mint_url: &str,
-    ) -> impl Future<Output = Result<Vec<u8>, WalletError>> + Send {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, WalletError>> + Send + '_>> {
         let cdk_amount: cdk::Amount = cdk::Amount::from(amount.0);
-        async move {
+        Box::pin(async move {
             tracing::info!("[NUT-00] Creating Cashu token for {} sat", amount.0);
             let prepared = self
                 .wallet
@@ -336,28 +337,29 @@ impl Wallet for CdkWallet {
                 encoded.len()
             );
             Ok(encoded.into_bytes())
-        }
+        })
     }
 
     fn mint_reachable(
         &self,
         mint_url: &str,
-    ) -> impl Future<Output = Result<bool, WalletError>> + Send {
-        async move {
+    ) -> Pin<Box<dyn Future<Output = Result<bool, WalletError>> + Send + '_>> {
+        let mint_url = mint_url.to_owned();
+        Box::pin(async move {
             tracing::info!("[NUT-06] Checking mint reachability: {mint_url}");
             Ok(true)
-        }
+        })
     }
 
-    fn balance(&self) -> impl Future<Output = Result<Amount, WalletError>> + Send {
-        async move {
+    fn balance(&self) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
+        Box::pin(async move {
             let bal = self
                 .wallet
                 .total_balance()
                 .await
                 .map_err(|e| WalletError::Internal(format!("balance: {e}")))?;
             Ok(Amount(u64::from(bal)))
-        }
+        })
     }
 }
 

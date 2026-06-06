@@ -26,10 +26,16 @@ serde_json = "1"
 nostr = "0.44"
 thiserror = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
+tokio-stream = "0.1"
+futures = "0.3"
+ipnetwork = "0.20"
+rtnetlink = { version = "0.21", optional = true }
+netlink-packet-route = { version = "0.30", optional = true }
 
 [features]
 default = []
 nds = []
+netlink = ["dep:rtnetlink", "dep:netlink-packet-route"]
 spilman = [
     "dep:cdk-spilman",
     "dep:cashu",
@@ -41,6 +47,8 @@ spilman = [
 rand = "0.9"
 async-trait = "0.1"
 tempfile = "3"
+mockito = "1"
+mockall = "0.13"
 
 [lints]
 workspace = true
