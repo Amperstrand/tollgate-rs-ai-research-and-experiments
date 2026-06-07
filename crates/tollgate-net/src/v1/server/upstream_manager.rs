@@ -28,6 +28,67 @@ use thiserror::Error;
 use super::wifi_connector::WifiConnector;
 use super::wifi_scanner::{EncryptionType, ScanResult, WifiScanner};
 
+/// Vendor element processor for WiFi network scoring (Go v1 parity).
+///
+/// Go v1: `vendor_element_manager.go` — `VendorElementProcessor` with
+/// `ExtractAndScore`, `calculateScore`, `SetLocalAPVendorElements`,
+/// `GetLocalAPVendorElements`. Vendor element parsing is commented out
+/// in Go; scoring only checks SSID prefix.
+///
+/// Rust: Same stubs, same scoring formula — signal strength + 100 for
+/// TollGate-prefixed SSIDs. Vendor element parsing remains stubbed.
+pub struct VendorElementProcessor;
+
+impl VendorElementProcessor {
+    /// Create a new vendor element processor.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Score a scanned network for upstream selection priority.
+    ///
+    /// Mirrors Go v1's `VendorElementProcessor.ExtractAndScore`.
+    /// Currently: signal strength + 100 for TollGate- prefixed SSIDs.
+    pub fn extract_and_score(&self, network: &ScanResult) -> (serde_json::Value, i32) {
+        let vendor_elements = serde_json::json!({});
+        let score = self.calculate_score(network, &vendor_elements);
+        (vendor_elements, score)
+    }
+
+    fn calculate_score(
+        &self,
+        network: &ScanResult,
+        _vendor_elements: &serde_json::Value,
+    ) -> i32 {
+        let mut score = network.signal_dbm;
+        if network.ssid.starts_with("TollGate-") {
+            score += 100;
+        }
+        score
+    }
+
+    /// Set vendor elements on local AP (stubbed — matches Go v1).
+    pub fn set_local_ap_vendor_elements(
+        &self,
+        _elements: &HashMap<String, String>,
+    ) -> Result<(), String> {
+        tracing::debug!("SetLocalAPVendorElements called (stubbed — matches Go v1)");
+        Ok(())
+    }
+
+    /// Get vendor elements from local AP (stubbed — matches Go v1).
+    pub fn get_local_ap_vendor_elements(&self) -> Result<HashMap<String, String>, String> {
+        tracing::debug!("GetLocalAPVendorElements called (stubbed — matches Go v1)");
+        Ok(HashMap::new())
+    }
+}
+
+impl Default for VendorElementProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Errors from upstream manager operations.
 #[derive(Debug, Error)]
 pub enum UpstreamError {
@@ -288,6 +349,7 @@ pub struct UpstreamManager {
     connector: WifiConnector,
     blacklist: Blacklist,
     circuit_breaker: CircuitBreaker,
+    pub vendor_processor: VendorElementProcessor,
 }
 
 impl UpstreamManager {
@@ -304,6 +366,7 @@ impl UpstreamManager {
             connector: WifiConnector::new(),
             blacklist,
             circuit_breaker,
+            vendor_processor: VendorElementProcessor::new(),
             config,
         }
     }
@@ -500,11 +563,11 @@ impl UpstreamManager {
 
         if self.config.reseller_mode {
             candidates.sort_by(|a, b| {
-                let a_priority = if a.is_tollgate { 0 } else { 1 };
-                let b_priority = if b.is_tollgate { 0 } else { 1 };
-                a_priority
-                    .cmp(&b_priority)
-                    .then_with(|| b.signal_dbm.cmp(&a.signal_dbm))
+                let score_a =
+                    a.signal_dbm + i32::from(a.ssid.starts_with("TollGate-")) * 100;
+                let score_b =
+                    b.signal_dbm + i32::from(b.ssid.starts_with("TollGate-")) * 100;
+                score_b.cmp(&score_a)
             });
         } else {
             candidates.sort_by(|a, b| b.signal_dbm.cmp(&a.signal_dbm));
@@ -827,5 +890,76 @@ mod tests {
         assert_eq!(config.cooldown_duration, Duration::from_secs(600));
         assert_eq!(config.startup_grace_period, Duration::from_secs(90));
         assert!(!config.reseller_mode);
+    }
+
+    #[test]
+    fn test_vendor_element_score_tollgate_ssid() {
+        let processor = VendorElementProcessor::new();
+        let scan = ScanResult {
+            bssid: "AA:BB:CC:DD:EE:FF".to_owned(),
+            ssid: "TollGate-ABCD".to_owned(),
+            signal_dbm: -60,
+            encryption: EncryptionType::Psk2,
+            channel: 36,
+            radio: "radio0".to_owned(),
+        };
+        let (_, score) = processor.extract_and_score(&scan);
+        assert_eq!(score, 40); // -60 + 100
+    }
+
+    #[test]
+    fn test_vendor_element_score_regular_ssid() {
+        let processor = VendorElementProcessor::new();
+        let scan = ScanResult {
+            bssid: "AA:BB:CC:DD:EE:FF".to_owned(),
+            ssid: "MyNetwork".to_owned(),
+            signal_dbm: -55,
+            encryption: EncryptionType::Psk2,
+            channel: 36,
+            radio: "radio0".to_owned(),
+        };
+        let (_, score) = processor.extract_and_score(&scan);
+        assert_eq!(score, -55);
+    }
+
+    #[test]
+    fn test_vendor_element_score_negative_signal() {
+        let processor = VendorElementProcessor::new();
+
+        let weak_tollgate = ScanResult {
+            bssid: "AA:BB:CC:DD:EE:01".to_owned(),
+            ssid: "TollGate-Weak".to_owned(),
+            signal_dbm: -90,
+            encryption: EncryptionType::Psk2,
+            channel: 1,
+            radio: "radio0".to_owned(),
+        };
+        let (_, score) = processor.extract_and_score(&weak_tollgate);
+        assert_eq!(score, 10); // -90 + 100
+
+        let weak_regular = ScanResult {
+            bssid: "AA:BB:CC:DD:EE:02".to_owned(),
+            ssid: "WeakNet".to_owned(),
+            signal_dbm: -90,
+            encryption: EncryptionType::Psk2,
+            channel: 1,
+            radio: "radio0".to_owned(),
+        };
+        let (_, score) = processor.extract_and_score(&weak_regular);
+        assert_eq!(score, -90);
+    }
+
+    #[test]
+    fn test_set_get_vendor_elements_stubbed() {
+        let processor = VendorElementProcessor::new();
+
+        let mut elements = HashMap::new();
+        elements.insert("test_key".to_owned(), "test_value".to_owned());
+
+        assert!(processor.set_local_ap_vendor_elements(&elements).is_ok());
+
+        let result = processor.get_local_ap_vendor_elements();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 }

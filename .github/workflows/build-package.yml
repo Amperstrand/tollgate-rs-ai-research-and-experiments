@@ -253,6 +253,8 @@ jobs:
           install -D -m 0755 packaging/files/etc/hotplug.d/iface/95-tollgate-restart           "$PAYLOAD/etc/hotplug.d/iface/95-tollgate-restart"
           install -D -m 0644 packaging/files/lib/upgrade/keep.d/tollgate                       "$PAYLOAD/lib/upgrade/keep.d/tollgate"
           install -D -m 0755 packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink "$PAYLOAD/etc/uci-defaults/90-tollgate-captive-portal-symlink"
+          install -D -m 0755 packaging/files/etc/uci-defaults/99-tollgate-setup                "$PAYLOAD/etc/uci-defaults/99-tollgate-setup"
+          install -D -m 0755 packaging/files/usr/sbin/tollgate-setup-ssl                      "$PAYLOAD/usr/sbin/tollgate-setup-ssl"
           mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/crontabs"
           install -D -m 0644 LICENSE "$PAYLOAD/usr/share/doc/tollgate-wrt/LICENSE"
 

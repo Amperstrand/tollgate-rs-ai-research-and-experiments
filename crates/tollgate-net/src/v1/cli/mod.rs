@@ -6,7 +6,9 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 pub mod commands;
+pub mod config_schema;
 pub mod file_config;
+pub mod network;
 pub mod types;
 
 use std::path::Path;
@@ -187,7 +189,7 @@ async fn dispatch(
 
     match msg.command.as_str() {
         "wallet" => dispatch_wallet(&msg.args, wallet).await,
-        "upstream" => dispatch_upstream(&msg.args),
+        "upstream" => dispatch_upstream(&msg.args).await,
         "status" => {
             let sessions: Vec<SessionStatus> = Vec::new();
             commands::handle_status(wallet.as_ref(), start_time, &sessions).await
@@ -199,6 +201,7 @@ async fn dispatch(
             commands::handle_health(wallet_ok, true, uptime_secs)
         }
         "config" => dispatch_config(&msg.args, config),
+        "network" => network::handle_network_command(&msg.args),
         _ => CLIResponse::error(format!("Unknown command: {}", msg.command)),
     }
 }
@@ -235,7 +238,7 @@ async fn dispatch_wallet(args: &[String], wallet: &Arc<dyn CliWallet>) -> CLIRes
     }
 }
 
-fn dispatch_upstream(args: &[String]) -> CLIResponse {
+async fn dispatch_upstream(args: &[String]) -> CLIResponse {
     let Some(subcommand) = args.first() else {
         return CLIResponse::error(
             "Upstream command requires a subcommand (scan, connect, list-upstream, remove-upstream)",
@@ -249,8 +252,34 @@ fn dispatch_upstream(args: &[String]) -> CLIResponse {
             if ssid.is_empty() {
                 return CLIResponse::error("connect requires an SSID argument");
             }
-            let passphrase = args.get(2).map(String::as_str);
-            commands::handle_upstream_connect(ssid, passphrase)
+            let passphrase = args.get(2).cloned();
+            let mut progress_log: Vec<String> = Vec::new();
+            let result = commands::handle_upstream_connect_streaming(
+                ssid,
+                passphrase.as_deref(),
+                |step, msg| progress_log.push(format!("{step} {msg}")),
+            )
+            .await;
+            if !progress_log.is_empty() {
+                let mut enriched = result;
+                let existing_data = enriched.data.unwrap_or(serde_json::json!({}));
+                let merged = match existing_data {
+                    serde_json::Value::Object(mut map) => {
+                        map.insert(
+                            "progress_log".to_owned(),
+                            serde_json::Value::Array(
+                                progress_log.into_iter().map(serde_json::Value::String).collect(),
+                            ),
+                        );
+                        serde_json::Value::Object(map)
+                    }
+                    other => other,
+                };
+                enriched.data = Some(merged);
+                enriched
+            } else {
+                result
+            }
         }
         "list-upstream" => commands::handle_upstream_list(),
         "remove-upstream" => {
@@ -268,8 +297,13 @@ fn dispatch_upstream(args: &[String]) -> CLIResponse {
 
 fn dispatch_config(args: &[String], config: &Option<Arc<dyn CliConfig>>) -> CLIResponse {
     let Some(subcommand) = args.first() else {
-        return CLIResponse::error("Config command requires a subcommand (get, set, save)");
+        return CLIResponse::error("Config command requires a subcommand (get, set, save, schema)");
     };
+
+    // `schema` is static metadata — does not require a running config manager.
+    if subcommand.as_str() == "schema" {
+        return config_schema::handle_config_schema();
+    }
 
     let Some(cfg) = config else {
         return CLIResponse::error("Config manager not available");
@@ -293,7 +327,7 @@ fn dispatch_config(args: &[String], config: &Option<Arc<dyn CliConfig>>) -> CLIR
             commands::handle_config_save(cfg.as_ref(), json_str)
         }
         other => CLIResponse::error(format!(
-            "Unknown config subcommand: {other} (supported: get, set, save)"
+            "Unknown config subcommand: {other} (supported: get, set, save, schema)"
         )),
     }
 }
@@ -429,6 +463,41 @@ mod tests {
         let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("M4"));
+    }
+
+    #[test]
+    fn dispatch_upstream_connect_streaming() {
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "upstream".to_owned(),
+            args: vec!["connect".to_owned(), "TestNet".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(!resp.success);
+        let error = resp.error.unwrap();
+        assert!(error.contains("TestNet"));
+        assert!(error.contains("M4"));
+        let data = resp.data.unwrap();
+        let log = data["progress_log"].as_array().unwrap();
+        assert_eq!(log.len(), 6);
+        assert!(log[0].as_str().unwrap().contains("[1/7]"));
+        assert!(log[0].as_str().unwrap().contains("Enabling radios"));
+    }
+
+    #[test]
+    fn dispatch_upstream_connect_no_ssid() {
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "upstream".to_owned(),
+            args: vec!["connect".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("SSID"));
     }
 
     #[tokio::test]

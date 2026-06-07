@@ -168,8 +168,80 @@ pub fn handle_upstream_scan() -> CLIResponse {
     CLIResponse::error("WiFi scanning not implemented (requires M4)")
 }
 
-pub fn handle_upstream_connect(_ssid: &str, _passphrase: Option<&str>) -> CLIResponse {
-    CLIResponse::error("WiFi connect not implemented (requires M4)")
+/// Streaming upstream WiFi connect.
+///
+/// Sends progress updates through `send_progress` callback, matching Go v1's
+/// `handleUpstreamConnectStreaming` 7-step flow. Actual WiFi operations are
+/// stubs pending M4 (hardware); the step structure and streaming protocol
+/// match Go exactly.
+pub async fn handle_upstream_connect_streaming<F>(
+    ssid: &str,
+    passphrase: Option<&str>,
+    mut send_progress: F,
+) -> CLIResponse
+where
+    F: FnMut(&str, &str), // (step, message)
+{
+    let _passphrase = passphrase; // used by M4 implementation
+
+    // Step 1: Enable radios
+    send_progress("[1/7]", "Enabling radios...");
+    // TODO: M4 - s.connector.EnsureRadiosEnabled()
+
+    // Step 2: Scan
+    send_progress("[2/7]", &format!("Scanning for '{}'...", ssid));
+    // TODO: M4 - s.scanner.ScanAllRadios()
+
+    // Step 3: Found
+    // Go: "Found '{ssid}' (signal dBm on radio) encryption=..."
+    send_progress(
+        "[3/7]",
+        &format!("Found '{}' (signal TBD) encryption=TBD", ssid),
+    );
+
+    // Step 4: Setup wwan
+    send_progress("[4/7]", "Setting up wwan interface...");
+    // TODO: M4 - s.connector.EnsureWWANSetup()
+
+    // Step 5: Create STA
+    let iface_name = sanitize_iface_name(ssid);
+    // Go uses bestRadio; placeholder until M4
+    send_progress(
+        "[5/7]",
+        &format!("Creating STA {} on TBD...", iface_name),
+    );
+    // TODO: M4 - s.connector.FindOrCreateSTAForSSID()
+
+    // Step 6: Switch upstream
+    send_progress("[6/7]", "Switching upstream... waiting for DHCP");
+    // TODO: M4 - s.connector.SwitchUpstream()
+
+    // Step 7: Final result
+    // For now, return not-implemented since actual WiFi ops require M4
+    CLIResponse::error(format!(
+        "Streaming connect to '{}' not yet functional — WiFi operations require M4 (hardware)",
+        ssid
+    ))
+}
+
+/// Generate a deterministic interface name from an SSID, matching Go v1's logic:
+/// `upstream_` + lowercase + replace special chars with `_` + truncate to 40 chars.
+pub fn sanitize_iface_name(ssid: &str) -> String {
+    let mut name = format!("upstream_{}", ssid.to_lowercase());
+    name = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.len() > 40 {
+        name.truncate(40);
+    }
+    name
 }
 
 pub fn handle_upstream_list() -> CLIResponse {
@@ -233,5 +305,58 @@ pub fn handle_config_save(config: &dyn CliConfig, json: &str) -> CLIResponse {
     match config.save_config(json) {
         Ok(()) => CLIResponse::ok("Configuration saved (restart tollgate-wrt to apply)"),
         Err(e) => CLIResponse::error(format!("Failed to save config: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_iface_name_basic() {
+        assert_eq!(sanitize_iface_name("MyWiFi"), "upstream_mywifi");
+        assert_eq!(sanitize_iface_name("homelan"), "upstream_homelan");
+    }
+
+    #[test]
+    fn sanitize_iface_name_special_chars() {
+        assert_eq!(sanitize_iface_name("Café-5G!"), "upstream_caf__5g_");
+        assert_eq!(sanitize_iface_name("Net@Work"), "upstream_net_work");
+        assert_eq!(
+            sanitize_iface_name("UPPER CASE"),
+            "upstream_upper_case"
+        );
+    }
+
+    #[test]
+    fn sanitize_iface_name_truncation() {
+        let long_ssid = "a".repeat(50);
+        let result = sanitize_iface_name(&long_ssid);
+        assert_eq!(result.len(), 40);
+        assert!(result.starts_with("upstream_"));
+    }
+
+    #[tokio::test]
+    async fn streaming_connect_progress_steps() {
+        let mut progress_log: Vec<(String, String)> = Vec::new();
+        let result = handle_upstream_connect_streaming(
+            "TestNet",
+            None,
+            |step, msg| progress_log.push((step.to_owned(), msg.to_owned())),
+        )
+        .await;
+
+        assert!(!result.success);
+        let error = result.error.unwrap();
+        assert!(error.contains("TestNet"));
+        assert!(error.contains("M4"));
+
+        assert_eq!(progress_log.len(), 6);
+        assert_eq!(progress_log[0], ("[1/7]".to_owned(), "Enabling radios...".to_owned()));
+        assert_eq!(progress_log[1], ("[2/7]".to_owned(), "Scanning for 'TestNet'...".to_owned()));
+        assert!(progress_log[2].1.contains("Found 'TestNet'"));
+        assert_eq!(progress_log[3], ("[4/7]".to_owned(), "Setting up wwan interface...".to_owned()));
+        assert!(progress_log[4].1.contains("Creating STA upstream_testnet"));
+        assert_eq!(progress_log[5], ("[6/7]".to_owned(), "Switching upstream... waiting for DHCP".to_owned()));
     }
 }

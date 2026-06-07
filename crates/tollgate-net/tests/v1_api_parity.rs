@@ -10,7 +10,7 @@
 //! - GET /usage   → plain text "{elapsed}/{allotment}" or "-1/-1"
 //! - GET /whoami  → plain text "mac={address}" or "mac=unknown"
 //! - GET /balance → JSON {"status":1,"session_active":bool,...}
-//! - All responses have CORS headers: Access-Control-Allow-Origin: *
+//! - All responses have CORS headers: Access-Control-Allow-Origin only for local/private origins
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -151,7 +151,7 @@ async fn parity_get_advertisement_returns_kind_10021() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -167,7 +167,7 @@ async fn parity_get_advertisement_valid_signature() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
     assert!(
@@ -184,7 +184,7 @@ async fn parity_get_advertisement_has_metric_tag() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -207,7 +207,7 @@ async fn parity_get_advertisement_has_step_size_tag() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -230,7 +230,7 @@ async fn parity_get_advertisement_has_price_per_step_tags() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -257,18 +257,18 @@ async fn parity_get_advertisement_has_price_per_step_tags() {
     stop_server(server).await;
 }
 
-// Go v1 reference: GET / has CORS header Access-Control-Allow-Origin: *
+// Go v1 reference: GET / has CORS header Access-Control-Allow-Origin only for local/private origins
 #[tokio::test]
 async fn parity_get_advertisement_has_cors_headers() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     assert_eq!(
         resp.headers()
             .get("access-control-allow-origin")
             .map(|v| v.to_str().unwrap()),
-        Some("*")
+        Some("http://192.168.1.1:8080")
     );
 
     stop_server(server).await;
@@ -280,7 +280,7 @@ async fn parity_get_advertisement_json_content_type() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let ct = resp
         .headers()
         .get("content-type")
@@ -303,7 +303,7 @@ async fn parity_get_advertisement_pubkey_matches_config() {
     let (base_url, server, _state) = start_server(config).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
     assert_eq!(event.pubkey, expected_pubkey);
@@ -337,7 +337,7 @@ async fn parity_get_advertisement_multiple_mints() {
     let (base_url, server, _state) = start_server(config).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).send().await.unwrap();
+    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -362,7 +362,7 @@ async fn parity_post_payment_returns_kind_1022() {
     let client = Client::new();
 
     let token = mock_token(10);
-    let resp = client.post(&base_url).body(token).send().await.unwrap();
+    let resp = client.post(&base_url).header("Origin", "http://192.168.1.1:8080").body(token).send().await.unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -638,7 +638,7 @@ async fn parity_post_payment_raw_token() {
 
     // Send raw bytes — not a JSON event, just the mock token
     let token = mock_token(10);
-    let resp = client.post(&base_url).body(token).send().await.unwrap();
+    let resp = client.post(&base_url).header("Origin", "http://192.168.1.1:8080").body(token).send().await.unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -726,12 +726,12 @@ async fn parity_post_payment_has_cors_headers() {
     let client = Client::new();
 
     let token = mock_token(10);
-    let resp = client.post(&base_url).body(token).send().await.unwrap();
+    let resp = client.post(&base_url).header("Origin", "http://192.168.1.1:8080").body(token).send().await.unwrap();
     assert_eq!(
         resp.headers()
             .get("access-control-allow-origin")
             .map(|v| v.to_str().unwrap()),
-        Some("*")
+        Some("http://192.168.1.1:8080")
     );
 
     stop_server(server).await;
@@ -843,6 +843,7 @@ async fn parity_usage_active_session_text_format() {
 
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -873,6 +874,7 @@ async fn parity_usage_no_session_returns_negative() {
 
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -912,6 +914,7 @@ async fn parity_usage_expired_session_returns_negative() {
 
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -947,6 +950,7 @@ async fn parity_usage_expired_session_cleaned_up() {
     // /usage triggers cleanup
     client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -969,6 +973,7 @@ async fn parity_usage_has_cors_headers() {
 
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -976,7 +981,7 @@ async fn parity_usage_has_cors_headers() {
         resp.headers()
             .get("access-control-allow-origin")
             .map(|v| v.to_str().unwrap()),
-        Some("*")
+        Some("http://192.168.1.1:8080")
     );
 
     stop_server(server).await;
@@ -992,6 +997,7 @@ async fn parity_usage_bytes_metric_shows_zero_usage() {
 
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1016,6 +1022,7 @@ async fn parity_whoami_returns_mac_text_format() {
 
     let resp = client
         .get(format!("{base_url}/whoami"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1043,6 +1050,7 @@ async fn parity_whoami_has_cors_headers() {
 
     let resp = client
         .get(format!("{base_url}/whoami"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1050,7 +1058,7 @@ async fn parity_whoami_has_cors_headers() {
         resp.headers()
             .get("access-control-allow-origin")
             .map(|v| v.to_str().unwrap()),
-        Some("*")
+        Some("http://192.168.1.1:8080")
     );
 
     stop_server(server).await;
@@ -1070,6 +1078,7 @@ async fn parity_balance_active_session_has_all_fields() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1103,6 +1112,7 @@ async fn parity_balance_active_session_values() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1138,6 +1148,7 @@ async fn parity_balance_no_session() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1176,6 +1187,7 @@ async fn parity_balance_expired_session_returns_inactive() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1213,6 +1225,7 @@ async fn parity_balance_expired_session_cleaned_up() {
     // /balance triggers cleanup
     client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1234,6 +1247,7 @@ async fn parity_balance_has_cors_headers() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1241,7 +1255,7 @@ async fn parity_balance_has_cors_headers() {
         resp.headers()
             .get("access-control-allow-origin")
             .map(|v| v.to_str().unwrap()),
-        Some("*")
+        Some("http://192.168.1.1:8080")
     );
 
     stop_server(server).await;
@@ -1255,6 +1269,7 @@ async fn parity_balance_json_content_type() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1287,6 +1302,7 @@ async fn parity_edge_payment_then_usage_check() {
 
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1308,6 +1324,7 @@ async fn parity_edge_payment_then_balance_check() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1345,6 +1362,7 @@ async fn parity_edge_multiple_payments_accumulate() {
     // Verify /usage shows accumulated total
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1448,6 +1466,7 @@ async fn parity_edge_balance_remaining_calculation() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1473,10 +1492,10 @@ async fn parity_edge_advertisement_consistent() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp1 = client.get(&base_url).send().await.unwrap();
+    let resp1 = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body1 = resp1.text().await.unwrap();
 
-    let resp2 = client.get(&base_url).send().await.unwrap();
+    let resp2 = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
     let body2 = resp2.text().await.unwrap();
 
     assert_eq!(
@@ -1580,6 +1599,7 @@ async fn parity_edge_balance_no_session_is_json() {
 
     let resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -1613,6 +1633,7 @@ async fn parity_edge_bytes_metric_no_expiry_on_usage() {
 
     let resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -2241,6 +2262,7 @@ async fn parity_ln_invoice_full_lifecycle() {
     // Step 6: GET /balance → shows active session
     let balance_resp = client
         .get(format!("{base_url}/balance"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();
@@ -2252,6 +2274,7 @@ async fn parity_ln_invoice_full_lifecycle() {
     // Step 7: GET /usage → shows active session
     let usage_resp = client
         .get(format!("{base_url}/usage"))
+        .header("Origin", "http://192.168.1.1:8080")
         .send()
         .await
         .unwrap();

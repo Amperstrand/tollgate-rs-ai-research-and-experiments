@@ -29,6 +29,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tokio-stream = "0.1"
 futures = "0.3"
 ipnetwork = "0.20"
+rand = "0.9"
 rtnetlink = { version = "0.21", optional = true }
 netlink-packet-route = { version = "0.30", optional = true }
 

@@ -7,11 +7,11 @@
     clippy::manual_let_else
 )]
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{ConnectInfo, Query, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -19,26 +19,29 @@ use axum::Router;
 use nostr::prelude::*;
 
 use super::merchant;
-use super::{extract_client_ip, CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig};
+use super::{extract_client_ip, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig};
 
 pub fn build_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route(
             "/",
-            get(handle_get_details).post(handle_post_payment),
+            get(handle_get_details)
+                .post(handle_post_payment)
+                .options(handle_options),
         )
-        // `/pay` mirrors the Go captive-portal entry point. For the Cashu
-        // token gate it returns the same kind:10021 advertisement (pricing)
-        // the client pays against; the LN 402 + payment_request path is M-later.
-        .route("/pay", get(handle_get_details))
-        .route("/usage", get(handle_usage))
-        .route("/whoami", get(handle_whoami))
-        .route("/balance", get(handle_balance))
+        .route("/pay", get(handle_get_details).options(handle_options))
+        .route("/usage", get(handle_usage).options(handle_options))
+        .route("/whoami", get(handle_whoami).options(handle_options))
+        .route("/balance", get(handle_balance).options(handle_options))
         .route(
             "/ln-invoice",
-            get(handle_get_ln_invoice).post(handle_post_ln_invoice),
+            get(handle_get_ln_invoice)
+                .post(handle_post_ln_invoice)
+                .options(handle_options),
         )
         .with_state(state)
+        // Go v1 parity: cap request body at 1MB via http.MaxBytesReader(w, r.Body, 1<<20)
+        .layer(DefaultBodyLimit::max(1_048_576))
 }
 
 fn json_response(status: StatusCode, body: String) -> Response {
@@ -57,19 +60,69 @@ fn text_response(status: StatusCode, body: String) -> Response {
     (status, body).into_response()
 }
 
-fn cors_response(mut response: Response) -> Response {
+fn get_origin(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_owned())
+}
+
+/// Check whether the given Origin URL refers to a local/private origin.
+/// Mirrors Go v1's `isLocalOrigin`: checks IP against private/loopback
+/// ranges, "localhost" hostname, and DNS-resolved IPs.
+async fn is_local_origin(origin: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(origin) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return match ip {
+            IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
+            IpAddr::V6(v6) => v6.is_loopback() || matches!(v6.octets(), [0xfd, ..]),
+        };
+    }
+
+    if host == "localhost" {
+        return true;
+    }
+
+    let lookup_target = format!("{host}:0");
+    if let Ok(addrs) = tokio::net::lookup_host(&lookup_target).await {
+        for addr in addrs {
+            let ip = addr.ip();
+            let private = match ip {
+                IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
+                IpAddr::V6(v6) => v6.is_loopback() || matches!(v6.octets(), [0xfd, ..]),
+            };
+            if private {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn cors_response(mut response: Response, origin: Option<&str>, is_local: bool) -> Response {
     let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
+    if let Some(origin_val) = origin {
+        if is_local && !origin_val.is_empty() {
+            if let Ok(hv) = HeaderValue::from_str(origin_val) {
+                headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, hv);
+            }
+        }
+    }
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
         HeaderValue::from_static("GET, POST, OPTIONS"),
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Content-Type"),
+        HeaderValue::from_static("Content-Type, Authorization"),
     );
     response
 }
@@ -80,26 +133,45 @@ fn notice_response(
     message: &str,
     status: StatusCode,
     config: &V1ServerConfig,
+    origin: Option<&str>,
+    is_local: bool,
 ) -> Response {
     match merchant::build_notice_event(level, code, message, config) {
-        Ok(json) => cors_response(json_response(status, json)),
+        Ok(json) => cors_response(json_response(status, json), origin, is_local),
         Err(e) => {
             tracing::error!("Failed to build notice event: {e}");
-            cors_response(text_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("internal error: {e}"),
-            ))
+            cors_response(
+                text_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("internal error: {e}"),
+                ),
+                origin,
+                is_local,
+            )
         }
     }
 }
 
-async fn handle_get_details(State(state): State<Arc<ServerState>>) -> Response {
-    cors_response(json_response(StatusCode::OK, state.advertisement.clone()))
+async fn resolve_origin(headers: &HeaderMap) -> (Option<String>, bool) {
+    let origin = get_origin(headers);
+    let is_local = match origin.as_deref() {
+        Some(o) => is_local_origin(o).await,
+        None => false,
+    };
+    (origin, is_local)
+}
+
+async fn handle_get_details(headers: HeaderMap, State(state): State<Arc<ServerState>>) -> Response {
+    let (origin, is_local) = resolve_origin(&headers).await;
+    cors_response(json_response(StatusCode::OK, state.advertisement.clone()), origin.as_deref(), is_local)
+}
+
+async fn handle_options(headers: HeaderMap) -> Response {
+    let (origin, is_local) = resolve_origin(&headers).await;
+    cors_response(StatusCode::OK.into_response(), origin.as_deref(), is_local)
 }
 
 #[allow(clippy::too_many_lines)]
-/// Metric-aware valve open: uses `open_gate_until` for milliseconds, `open_gate`
-/// for bytes/other. Mirrors Go's `openGateForSession`.
 async fn open_gate_for_session(
     valve: &dyn super::Valve,
     mac: &str,
@@ -117,6 +189,7 @@ async fn open_gate_for_session(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn handle_post_payment(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -124,6 +197,7 @@ async fn handle_post_payment(
     body: String,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
+    let (origin, is_local) = resolve_origin(&headers).await;
 
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
@@ -135,6 +209,8 @@ async fn handle_post_payment(
                 &format!("cannot resolve MAC for {ip}"),
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &state.config,
+                origin.as_deref(),
+                is_local,
             );
         }
     };
@@ -152,6 +228,8 @@ async fn handle_post_payment(
                 &format!("payment rejected: {e}"),
                 StatusCode::BAD_REQUEST,
                 &state.config,
+                origin.as_deref(),
+                is_local,
             );
         }
     };
@@ -173,32 +251,33 @@ async fn handle_post_payment(
                 &format!("{e}"),
                 StatusCode::BAD_REQUEST,
                 &state.config,
+                origin.as_deref(),
+                is_local,
             );
         }
     };
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-
-    let existing = state.sessions.get(&mac).await.ok().flatten();
-    let session = if let Some(mut s) = existing {
-        s.allotment += allotment;
-        s.start_time = now;
-        let updated = s.clone();
-        let _ = state.sessions.update(&mac, s).await;
-        updated
-    } else {
-        let s = CustomerSession {
-            mac_address: mac.clone(),
-            start_time: now,
-            metric: state.config.metric.clone(),
-            allotment,
-        };
-        let cloned = s.clone();
-        let _ = state.sessions.insert(s).await;
-        cloned
+    let session = match super::merchant_provider::add_allotment(
+        &*state.sessions,
+        &mac,
+        &state.config.metric,
+        allotment,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Session upsert failed: {e}");
+            return notice_response(
+                "error",
+                "session-error",
+                &format!("failed to update session: {e}"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &state.config,
+                origin.as_deref(),
+                is_local,
+            );
+        }
     };
 
     open_gate_for_session(
@@ -211,13 +290,17 @@ async fn handle_post_payment(
     .await;
 
     match merchant::build_session_event(&session, &state.config, &mac) {
-        Ok(json) => cors_response(json_response(StatusCode::OK, json)),
+        Ok(json) => cors_response(json_response(StatusCode::OK, json), origin.as_deref(), is_local),
         Err(e) => {
             tracing::error!("Failed to build session event: {e}");
-            cors_response(text_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("internal error: {e}"),
-            ))
+            cors_response(
+                text_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("internal error: {e}"),
+                ),
+                origin.as_deref(),
+                is_local,
+            )
         }
     }
 }
@@ -228,14 +311,16 @@ async fn handle_usage(
     State(state): State<Arc<ServerState>>,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
+    let (origin, is_local) = resolve_origin(&headers).await;
+
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
-        Err(_) => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned())),
+        Err(_) => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local),
     };
 
     let session = match state.sessions.get(&mac).await.ok().flatten() {
         Some(s) => s,
-        None => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned())),
+        None => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local),
     };
 
     if session.metric == "milliseconds" {
@@ -250,13 +335,13 @@ async fn handle_usage(
             if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
-            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()));
+            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local);
         }
 
         cors_response(text_response(
             StatusCode::OK,
             format!("{elapsed_ms}/{}", session.allotment),
-        ))
+        ), origin.as_deref(), is_local)
     } else {
         let usage = state.valve.get_client_usage_since_baseline(&mac).await.unwrap_or(0);
         if usage >= session.allotment {
@@ -264,12 +349,12 @@ async fn handle_usage(
             if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
-            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()));
+            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local);
         }
         cors_response(text_response(
             StatusCode::OK,
             format!("{usage}/{}", session.allotment),
-        ))
+        ), origin.as_deref(), is_local)
     }
 }
 
@@ -279,11 +364,10 @@ async fn handle_whoami(
     State(state): State<Arc<ServerState>>,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
+    let (origin, is_local) = resolve_origin(&headers).await;
     match state.mac_resolver.resolve(&ip) {
-        Ok(mac) => cors_response(text_response(StatusCode::OK, format!("mac={mac}"))),
-        // Unknown source IP (e.g. request not from a DHCP client): return an
-        // empty value rather than a bogus MAC so callers can detect "unknown".
-        Err(_) => cors_response(text_response(StatusCode::OK, "mac=".to_owned())),
+        Ok(mac) => cors_response(text_response(StatusCode::OK, format!("mac={mac}")), origin.as_deref(), is_local),
+        Err(_) => cors_response(text_response(StatusCode::OK, "mac=".to_owned()), origin.as_deref(), is_local),
     }
 }
 
@@ -293,13 +377,14 @@ async fn handle_balance(
     State(state): State<Arc<ServerState>>,
 ) -> Response {
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
+    let (origin, is_local) = resolve_origin(&headers).await;
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
         Err(_) => {
             return cors_response(json_response(
                 StatusCode::OK,
                 r#"{"status":1,"session_active":false}"#.to_owned(),
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
@@ -309,7 +394,7 @@ async fn handle_balance(
             return cors_response(json_response(
                 StatusCode::OK,
                 r#"{"status":1,"session_active":false}"#.to_owned(),
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
@@ -328,7 +413,7 @@ async fn handle_balance(
             return cors_response(json_response(
                 StatusCode::OK,
                 r#"{"status":1,"session_active":false}"#.to_owned(),
-            ));
+            ), origin.as_deref(), is_local);
         }
 
         let rem = session.allotment as i64 - elapsed_ms;
@@ -343,7 +428,7 @@ async fn handle_balance(
             return cors_response(json_response(
                 StatusCode::OK,
                 r#"{"status":1,"session_active":false}"#.to_owned(),
-            ));
+            ), origin.as_deref(), is_local);
         }
         let rem = session.allotment.saturating_sub(usage);
         (usage, rem)
@@ -362,7 +447,7 @@ async fn handle_balance(
     cors_response(json_response(
         StatusCode::OK,
         serde_json::to_string(&json).unwrap_or_default(),
-    ))
+    ), origin.as_deref(), is_local)
 }
 
 fn extract_payment_token(body: &str) -> String {
@@ -384,9 +469,9 @@ fn extract_payment_token(body: &str) -> String {
 /// Classify a wallet error into a Go v1-compatible error code string.
 ///
 /// Go v1 uses specific error codes:
-/// - `payment-error-token-spent` — token already redeemed
-/// - `payment-error-invalid-token` — malformed or unparseable token
-/// - `payment-processing-failed` — generic payment failure
+/// - `payment-error-token-spent` -- token already redeemed
+/// - `payment-error-invalid-token` -- malformed or unparseable token
+/// - `payment-processing-failed` -- generic payment failure
 fn classify_payment_error(err_str: &str) -> &'static str {
     let lower = err_str.to_ascii_lowercase();
     if lower.contains("already spent") || lower.contains("token already") {
@@ -465,13 +550,15 @@ async fn handle_post_ln_invoice(
     State(state): State<Arc<ServerState>>,
     body: String,
 ) -> Response {
+    let (origin, is_local) = resolve_origin(&headers).await;
+
     let req: LnInvoiceRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => {
             return cors_response(ln_error_response(
                 StatusCode::BAD_REQUEST,
                 "amount and mint_url are required",
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
@@ -481,7 +568,7 @@ async fn handle_post_ln_invoice(
         return cors_response(ln_error_response(
             StatusCode::BAD_REQUEST,
             "amount and mint_url are required",
-        ));
+        ), origin.as_deref(), is_local);
     }
 
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
@@ -492,7 +579,7 @@ async fn handle_post_ln_invoice(
             return cors_response(ln_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "cannot resolve MAC address",
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
@@ -505,7 +592,7 @@ async fn handle_post_ln_invoice(
         return cors_response(ln_error_response(
             StatusCode::BAD_REQUEST,
             "mint not accepted",
-        ));
+        ), origin.as_deref(), is_local);
     }
 
     let wallet = match &state.mint_quote_wallet {
@@ -514,7 +601,7 @@ async fn handle_post_ln_invoice(
             return cors_response(ln_error_response(
                 StatusCode::BAD_REQUEST,
                 "lightning payments not available",
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
@@ -525,7 +612,7 @@ async fn handle_post_ln_invoice(
             return cors_response(ln_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("quote request failed: {e}"),
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
@@ -555,7 +642,7 @@ async fn handle_post_ln_invoice(
         return cors_response(ln_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal error",
-        ));
+        ), origin.as_deref(), is_local);
     }
 
     let resp = LnInvoiceResponse {
@@ -575,7 +662,7 @@ async fn handle_post_ln_invoice(
     cors_response(json_response(
         StatusCode::OK,
         serde_json::to_string(&resp).unwrap_or_default(),
-    ))
+    ), origin.as_deref(), is_local)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -585,13 +672,15 @@ async fn handle_get_ln_invoice(
     State(state): State<Arc<ServerState>>,
     Query(params): Query<LnInvoiceQuery>,
 ) -> Response {
+    let (origin, is_local) = resolve_origin(&headers).await;
+
     let quote_id = match params.quote {
         Some(q) if !q.is_empty() => q,
         _ => {
             return cors_response(ln_error_response(
                 StatusCode::BAD_REQUEST,
                 "quote is required",
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
@@ -600,19 +689,17 @@ async fn handle_get_ln_invoice(
         Ok(mac) => mac,
         Err(e) => {
             tracing::warn!("MAC resolution failed for {ip}: {e}");
-            // Return 200 with an error body: busybox wget (used by clients and
-            // the test harness) discards the body on non-2xx responses.
             return cors_response(ln_error_response(
                 StatusCode::OK,
                 "cannot resolve MAC address",
-            ));
+            ), origin.as_deref(), is_local);
         }
     };
 
     let mut record = match state.lightning_quotes.get_for_mac(&quote_id, &mac).await {
         Ok(Some(r)) => r,
         Ok(None) | Err(_) => {
-            return cors_response(ln_error_response(StatusCode::OK, "quote not found"));
+            return cors_response(ln_error_response(StatusCode::OK, "quote not found"), origin.as_deref(), is_local);
         }
     };
 
@@ -665,7 +752,7 @@ async fn handle_get_ln_invoice(
                     return cors_response(ln_error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "mint tokens failed",
-                    ));
+                    ), origin.as_deref(), is_local);
                 }
             }
         }
@@ -683,27 +770,34 @@ async fn handle_get_ln_invoice(
                     return cors_response(ln_error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "allotment calculation failed",
-                    ));
+                    ), origin.as_deref(), is_local);
                 }
             };
 
-        let existing = state.sessions.get(&mac).await.ok().flatten();
-        let effective_allotment = if let Some(mut s) = existing {
-            s.allotment += allotment;
-            s.start_time = now;
-            let total = s.allotment;
-            let _ = state.sessions.update(&mac, s).await;
-            total
-        } else {
-            let s = CustomerSession {
-                mac_address: mac.clone(),
-                start_time: now,
-                metric: state.config.metric.clone(),
-                allotment,
-            };
-            let _ = state.sessions.insert(s).await;
-            allotment
+        let session = match super::merchant_provider::add_allotment(
+            &*state.sessions,
+            &mac,
+            &state.config.metric,
+            allotment,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Session upsert failed for LN invoice: {e}");
+                record.processing = false;
+                let _ = state
+                    .lightning_quotes
+                    .update(&quote_id, record.clone())
+                    .await;
+                return cors_response(ln_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to update session",
+                ), origin.as_deref(), is_local);
+            }
         };
+
+        let effective_allotment = session.allotment;
 
         open_gate_for_session(
             &*state.valve,
@@ -762,5 +856,95 @@ async fn handle_get_ln_invoice(
     cors_response(json_response(
         StatusCode::OK,
         serde_json::to_string(&resp).unwrap_or_default(),
-    ))
+    ), origin.as_deref(), is_local)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_is_local_origin_private_ipv4() {
+        assert!(is_local_origin("http://192.168.1.1").await);
+        assert!(is_local_origin("http://192.168.1.1/path").await);
+        assert!(is_local_origin("http://10.0.0.1").await);
+        assert!(is_local_origin("http://10.255.255.255").await);
+        assert!(is_local_origin("http://172.16.0.1").await);
+        assert!(is_local_origin("http://172.31.255.255").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_local_origin_loopback() {
+        assert!(is_local_origin("http://127.0.0.1:8080").await);
+        assert!(is_local_origin("http://127.0.0.1").await);
+        assert!(is_local_origin("http://127.255.255.255").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_local_origin_localhost() {
+        assert!(is_local_origin("http://localhost:8080").await);
+        assert!(is_local_origin("http://localhost").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_local_origin_ipv6_loopback() {
+        assert!(is_local_origin("http://[::1]:8080").await);
+        assert!(is_local_origin("http://[::1]").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_local_origin_public_ips() {
+        assert!(!is_local_origin("http://8.8.8.8").await);
+        assert!(!is_local_origin("http://1.1.1.1").await);
+        assert!(!is_local_origin("http://203.0.113.1").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_local_origin_public_hostnames() {
+        assert!(!is_local_origin("http://example.com").await);
+        assert!(!is_local_origin("https://example.com").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_local_origin_invalid() {
+        assert!(!is_local_origin("").await);
+        assert!(!is_local_origin("not-a-url").await);
+        assert!(!is_local_origin("://missing-scheme").await);
+    }
+
+    #[tokio::test]
+    async fn test_cors_response_with_local_origin() {
+        let resp = text_response(StatusCode::OK, "test".to_owned());
+        let resp = cors_response(resp, Some("http://192.168.1.1:8080"), true);
+        assert_eq!(
+            resp.headers().get("access-control-allow-origin").map(|v| v.to_str().unwrap()),
+            Some("http://192.168.1.1:8080")
+        );
+        assert_eq!(
+            resp.headers().get("access-control-allow-methods").map(|v| v.to_str().unwrap()),
+            Some("GET, POST, OPTIONS")
+        );
+        assert_eq!(
+            resp.headers().get("access-control-allow-headers").map(|v| v.to_str().unwrap()),
+            Some("Content-Type, Authorization")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_response_with_public_origin() {
+        let resp = text_response(StatusCode::OK, "test".to_owned());
+        let resp = cors_response(resp, Some("http://example.com"), false);
+        assert!(resp.headers().get("access-control-allow-origin").is_none());
+        assert!(resp.headers().get("access-control-allow-methods").is_some());
+        assert!(resp.headers().get("access-control-allow-headers").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_cors_response_no_origin() {
+        let resp = text_response(StatusCode::OK, "test".to_owned());
+        let resp = cors_response(resp, None, false);
+        assert!(resp.headers().get("access-control-allow-origin").is_none());
+        assert!(resp.headers().get("access-control-allow-methods").is_some());
+        assert!(resp.headers().get("access-control-allow-headers").is_some());
+    }
 }

@@ -157,7 +157,7 @@ impl Valve for StubValve {
 
 #[cfg(feature = "nds")]
 mod nds {
-    use super::{ClientStats, Valve, ValveError};
+    use super::{validate_mac, ClientStats, Valve, ValveError};
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::path::PathBuf;
