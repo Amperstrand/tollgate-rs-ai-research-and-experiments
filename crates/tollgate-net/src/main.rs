@@ -290,7 +290,7 @@ async fn main() {
                 }),
                 None => nostr::prelude::Keys::generate(),
             };
-            let server_config = if let Some(path) = config_path {
+            let server_config = if let Some(ref path) = config_path {
                 // Load from config file, then apply CLI overrides for
                 // port/metric/step_size (UCI may provide different values
                 // than what's in the config file).
@@ -420,6 +420,24 @@ async fn main() {
 
                     let mint_cfg = &server_config.accepted_mints[0];
                     let profit_share = server_config.profit_share.clone();
+
+                    // Resolve lightning_address from identities.json for payout targets
+                    let identities_path = config_path.as_ref().map_or_else(
+                        || "/etc/tollgate/identities.json".to_owned(),
+                        |p| {
+                            std::path::Path::new(p)
+                                .parent()
+                                .map_or_else(|| "/etc/tollgate/identities.json".to_owned(), |dir| {
+                                    dir.join("identities.json").to_string_lossy().into_owned()
+                                })
+                        },
+                    );
+                    let identities = v1::server::config::Identities::load_or_generate(&identities_path)
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("Failed to load identities from {identities_path}: {e}");
+                            v1::server::config::Identities::default()
+                        });
+
                     let payout_cfg = PayoutConfig {
                         min_balance: mint_cfg.min_balance,
                         min_payout_amount: mint_cfg.min_payout_amount,
@@ -427,10 +445,22 @@ async fn main() {
                         payout_interval: Duration::from_secs(mint_cfg.payout_interval_seconds),
                         targets: profit_share
                             .into_iter()
-                            .map(|ps| PayoutTarget {
-                                identity: ps.identity,
-                                factor: ps.factor,
-                                lightning_address: String::new(),
+                            .filter_map(|ps| {
+                                let addr = identities
+                                    .lightning_address(&ps.identity)
+                                    .unwrap_or_default();
+                                if addr.is_empty() {
+                                    tracing::warn!(
+                                        identity = %ps.identity,
+                                        "No lightning_address configured for payout target, skipping"
+                                    );
+                                    return None;
+                                }
+                                Some(PayoutTarget {
+                                    identity: ps.identity,
+                                    factor: ps.factor,
+                                    lightning_address: addr,
+                                })
                             })
                             .collect(),
                     };

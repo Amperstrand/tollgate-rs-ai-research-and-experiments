@@ -41,6 +41,10 @@ pub enum V1ClientError {
     Wallet(#[from] tollgate_core::error::WalletError),
     #[error("no active session")]
     NoSession,
+    #[error("Lightning payment timeout: invoice not paid within {0}s")]
+    LnPaymentTimeout(u64),
+    #[error("unexpected error: {0}")]
+    Unexpected(String),
 }
 
 #[derive(Clone)]
@@ -204,6 +208,11 @@ impl<W: Wallet> V1Client<W> {
             "Creating payment"
         );
 
+        if max_affordable == 0 || balance_sats == 0 {
+            tracing::info!("No Cashu balance, attempting Lightning payment");
+            return self.connect_via_lightning(&ad, &pricing, steps).await;
+        }
+
         // Step 6: Create token and send
         let token_bytes = wallet
             .create_token(
@@ -224,8 +233,9 @@ impl<W: Wallet> V1Client<W> {
             "Session established"
         );
 
+        let ad_clone = ad.clone();
         self.session = Some(V1Session {
-            advertisement: ad,
+            advertisement: ad_clone,
             selected_pricing: pricing.clone(),
             session_event: Some(session_event),
             total_allotment: allotment,
@@ -234,6 +244,72 @@ impl<W: Wallet> V1Client<W> {
         });
 
         Ok(())
+    }
+
+    async fn connect_via_lightning(
+        &mut self,
+        ad: &TollGateAdvertisement,
+        pricing: &PricingOption,
+        steps: u64,
+    ) -> Result<(), V1ClientError> {
+        let amount = steps * pricing.price_per_step;
+        let mint_url = pricing.mint_url.clone();
+
+        tracing::info!(
+            steps,
+            amount,
+            "Requesting Lightning invoice"
+        );
+
+        let resp = self.http.request_ln_invoice(amount, &mint_url).await?;
+        let quote = resp
+            .quote
+            .as_deref()
+            .ok_or_else(|| V1ClientError::Unexpected("No quote ID in response".to_string()))?;
+
+        println!("BOLT11 Invoice:");
+        println!("{}", resp.invoice.as_ref().unwrap_or(&String::new()));
+        println!("\nPlease pay this invoice using your Lightning wallet and wait for the server to grant access.");
+        println!("Quote ID: {}", quote);
+        println!("Expires in: {} seconds", resp.expiry.unwrap_or(0));
+
+        let timeout = tokio::time::Duration::from_secs(300); // 5 minutes
+        let poll_interval = tokio::time::Duration::from_secs(3);
+
+        let start = tokio::time::Instant::now();
+        loop {
+            tokio::time::sleep(poll_interval).await;
+
+            if start.elapsed() > timeout {
+                return Err(V1ClientError::LnPaymentTimeout(300));
+            }
+
+            let status = self.http.check_ln_invoice_status(quote).await?;
+
+            if status.state == "ISSUED" {
+                if let Some(allotment) = status.allotment {
+                    let ad_clone = ad.clone();
+                    let metric = ad_clone.metric().unwrap_or_else(|| "milliseconds".into());
+                    let step_size = ad_clone.step_size().unwrap_or(60_000);
+
+                    self.session = Some(V1Session {
+                        advertisement: ad_clone,
+                        selected_pricing: pricing.clone(),
+                        session_event: None,
+                        total_allotment: allotment,
+                        metric: metric.clone(),
+                        step_size,
+                    });
+
+                    tracing::info!(
+                        allotment,
+                        %metric,
+                        "Lightning payment succeeded, session established"
+                    );
+                    return Ok(());
+                }
+            }
+        }
     }
 
     /// Poll usage and return (usage, allotment, needs_renewal).

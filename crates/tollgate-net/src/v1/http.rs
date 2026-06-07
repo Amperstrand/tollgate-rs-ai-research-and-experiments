@@ -10,6 +10,36 @@ use std::time::Duration;
 
 use super::nostr_events::{NoticeEvent, SessionEvent, TollGateAdvertisement, V1NostrError};
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct LnInvoiceRequest {
+    pub amount: u64,
+    pub mint_url: Option<String>,
+    pub mint: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LnInvoiceResponse {
+    pub status: u8,
+    pub quote: Option<String>,
+    pub invoice: Option<String>,
+    pub mint_url: Option<String>,
+    pub amount: Option<u64>,
+    pub expiry: Option<u64>,
+    pub state: String,
+    pub access_granted: bool,
+    pub allotment: Option<u64>,
+    pub metric: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LnInvoiceStatus {
+    pub quote: Option<String>,
+    pub state: String,
+    pub access_granted: bool,
+    pub allotment: Option<u64>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum V1HttpError {
     #[error("HTTP request failed: {0}")]
@@ -18,6 +48,8 @@ pub enum V1HttpError {
     Nostr(#[from] V1NostrError),
     #[error("upstream rejected payment: {code} - {message}")]
     PaymentRejected { code: String, message: String },
+    #[error("JSON parse error: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("unexpected response: {0}")]
     Unexpected(String),
 }
@@ -143,6 +175,54 @@ impl TollGateHttpClient {
         let (usage, allotment) = parse_usage_response(&body);
         tracing::debug!(usage, allotment, "Fetched usage");
         Ok((usage, allotment))
+    }
+
+    /// Request a Lightning invoice from the upstream TollGate (`POST /ln-invoice`).
+    ///
+    /// The server creates a NUT-04 mint quote and returns a BOLT11 invoice
+    /// that the client must pay externally. Once paid, the server mints
+    /// tokens and grants access.
+    pub async fn request_ln_invoice(&self, amount: u64, mint_url: &str) -> Result<LnInvoiceResponse, V1HttpError> {
+        let request = LnInvoiceRequest {
+            amount,
+            mint_url: Some(mint_url.to_owned()),
+            mint: None,
+        };
+        let response = self
+            .client
+            .post(&format!("{}/ln-invoice", self.base_url))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let body = response.text().await?;
+        let resp: LnInvoiceResponse = serde_json::from_str(&body)?;
+        tracing::debug!(
+            quote = ?resp.quote,
+            state = %resp.state,
+            "Received Lightning invoice"
+        );
+        Ok(resp)
+    }
+
+    /// Poll Lightning invoice status (`GET /ln-invoice?quote=xxx`).
+    ///
+    /// Returns the current quote state (UNPAID/PAID/ISSUED) and whether
+    /// access has been granted.
+    pub async fn check_ln_invoice_status(&self, quote: &str) -> Result<LnInvoiceStatus, V1HttpError> {
+        let url = format!("{}/ln-invoice?quote={}", self.base_url, quote);
+        let response = self.client.get(&url).send().await?.error_for_status()?;
+        let body = response.text().await?;
+
+        let status: LnInvoiceStatus = serde_json::from_str(&body)?;
+        tracing::debug!(
+            state = %status.state,
+            access_granted = status.access_granted,
+            "Checked Lightning invoice status"
+        );
+        Ok(status)
     }
 }
 
