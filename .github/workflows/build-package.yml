@@ -141,6 +141,7 @@ jobs:
     needs: [define-compile-matrix, determine-versioning]
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix: ${{ fromJson(needs.define-compile-matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6

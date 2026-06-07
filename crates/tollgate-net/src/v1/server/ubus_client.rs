@@ -37,7 +37,7 @@
 //! `result[0]` is the status code (0 = success). `result[1]` is the
 //! response payload.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -119,7 +119,7 @@ pub struct UbusClient {
     /// HTTP request timeout.
     timeout: Duration,
     /// JSON-RPC request ID counter.
-    id_counter: AtomicU64,
+    id_counter: AtomicUsize,
     /// HTTP client.
     client: reqwest::Client,
 }
@@ -135,7 +135,7 @@ impl UbusClient {
             url,
             token: None,
             timeout: DEFAULT_TIMEOUT,
-            id_counter: AtomicU64::new(0),
+            id_counter: AtomicUsize::new(0),
             client: reqwest::Client::builder()
                 .timeout(DEFAULT_TIMEOUT)
                 .build()
@@ -378,7 +378,7 @@ impl UbusClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, UbusError> {
-        let id = self.id_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let id = self.id_counter.fetch_add(1, Ordering::Relaxed) as u64 + 1;
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
             id,
