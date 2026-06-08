@@ -73,9 +73,7 @@ impl CdkWallet {
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| {
-            WalletError::Internal("all mints failed".to_owned())
-        }))
+        Err(last_err.unwrap_or_else(|| WalletError::Internal("all mints failed".to_owned())))
     }
 
     /// Mint test tokens from a Cashu mint with FakeWallet (e.g., testnut.cashu.space).

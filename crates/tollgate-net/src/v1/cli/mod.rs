@@ -297,7 +297,9 @@ async fn dispatch_upstream(args: &[String]) -> CLIResponse {
 
 fn dispatch_config(args: &[String], config: &Option<Arc<dyn CliConfig>>) -> CLIResponse {
     let Some(subcommand) = args.first() else {
-        return CLIResponse::error("Config command requires a subcommand (get, set, save, schema, save-identities)");
+        return CLIResponse::error(
+            "Config command requires a subcommand (get, set, save, schema, save-identities)",
+        );
     };
 
     // `schema` is static metadata — does not require a running config manager.
@@ -701,7 +703,12 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(
+            &msg,
+            &wallet,
+            &Some(config),
+            std::time::Instant::now(),
+        ));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("requires"));
     }
@@ -719,7 +726,12 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(
+            &msg,
+            &wallet,
+            &Some(config),
+            std::time::Instant::now(),
+        ));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["config"]["metric"], "milliseconds");
@@ -747,7 +759,12 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(
+            &msg,
+            &wallet,
+            &Some(config),
+            std::time::Instant::now(),
+        ));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["config"]["metric"], "bytes");
@@ -774,7 +791,12 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(
+            &msg,
+            &wallet,
+            &Some(config),
+            std::time::Instant::now(),
+        ));
         assert!(resp.success);
         assert!(resp.message.unwrap().contains("Identities saved"));
 
@@ -799,7 +821,12 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(
+            &msg,
+            &wallet,
+            &Some(config),
+            std::time::Instant::now(),
+        ));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("save-identities requires"));
     }
@@ -820,7 +847,12 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(
+            &msg,
+            &wallet,
+            &Some(config),
+            std::time::Instant::now(),
+        ));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("profit_share"));
     }

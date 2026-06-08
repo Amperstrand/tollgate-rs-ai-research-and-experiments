@@ -53,7 +53,9 @@ pub use lightning_quotes::{
     QuoteStoreError,
 };
 pub use logging::init_logging;
-pub use mac_resolver::{extract_client_ip, DhcpLeasesResolver, MacResolveError, MacResolver, StubMacResolver};
+pub use mac_resolver::{
+    extract_client_ip, DhcpLeasesResolver, MacResolveError, MacResolver, StubMacResolver,
+};
 pub use merchant::{
     build_advertisement, build_notice_event, build_session_event, calculate_allotment,
     AllotmentError,
@@ -66,18 +68,18 @@ pub use mint_quote_wallet::{
 pub use session_store::{
     InMemorySessionStore, SessionStore, SessionStoreError, SqliteSessionStore,
 };
+pub use ubus_client::{RadioInfo, UbusClient, UbusError};
+pub use uci_ops::{
+    execute_shell as execute_uci_shell, render_shell as render_uci_shell, sh_quote,
+    validate_identifier, OpValue, ServiceAction, UciOp, UciOpBuilder, UciOpError,
+};
 pub use upstream_detector::{
     parse_advertisement, probe_gateway, probe_url, DiscoveredUpstream, UpstreamDetectError,
     UpstreamDetectorConfig, UpstreamMint,
 };
-pub use ubus_client::{UbusClient, UbusError, RadioInfo};
-pub use uci_ops::{
-    execute_shell as execute_uci_shell, render_shell as render_uci_shell,
-    sh_quote, validate_identifier, UciOp, UciOpBuilder, UciOpError, OpValue, ServiceAction,
-};
 pub use upstream_manager::{
     Blacklist, CircuitBreaker, ManagerState, ScanCycleResult, ScanReason, SwitchCandidate,
-    UpstreamManager, UpstreamManagerConfig, UpstreamError,
+    UpstreamError, UpstreamManager, UpstreamManagerConfig,
 };
 pub use valve::{ClientStats, StubValve, Valve, ValveError};
 pub use wifi_connector::{WifiConnectError, WifiConnector};

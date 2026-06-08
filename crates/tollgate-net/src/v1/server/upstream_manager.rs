@@ -55,11 +55,7 @@ impl VendorElementProcessor {
         (vendor_elements, score)
     }
 
-    fn calculate_score(
-        &self,
-        network: &ScanResult,
-        _vendor_elements: &serde_json::Value,
-    ) -> i32 {
+    fn calculate_score(&self, network: &ScanResult, _vendor_elements: &serde_json::Value) -> i32 {
         let mut score = network.signal_dbm;
         if network.ssid.starts_with("TollGate-") {
             score += 100;
@@ -120,14 +116,9 @@ pub enum ManagerState {
         radio: String,
     },
     /// In the process of switching from one AP to another.
-    Switching {
-        from_ssid: String,
-        to_ssid: String,
-    },
+    Switching { from_ssid: String, to_ssid: String },
     /// Cooling down after too many failures.
-    Cooldown {
-        until: Instant,
-    },
+    Cooldown { until: Instant },
 }
 
 /// Configuration for [`UpstreamManager`].
@@ -249,7 +240,8 @@ impl Blacklist {
     }
 
     pub fn add(&mut self, ssid: &str) {
-        self.entries.insert(ssid.to_owned(), Instant::now() + self.ttl);
+        self.entries
+            .insert(ssid.to_owned(), Instant::now() + self.ttl);
         tracing::debug!(ssid = %ssid, ttl = ?self.ttl, "SSID blacklisted");
     }
 
@@ -355,10 +347,8 @@ pub struct UpstreamManager {
 impl UpstreamManager {
     pub fn new(config: UpstreamManagerConfig) -> Self {
         let blacklist = Blacklist::new(config.blacklist_ttl);
-        let circuit_breaker = CircuitBreaker::new(
-            config.max_consecutive_failures,
-            config.cooldown_duration,
-        );
+        let circuit_breaker =
+            CircuitBreaker::new(config.max_consecutive_failures, config.cooldown_duration);
 
         Self {
             state: ManagerState::Disconnected,
@@ -491,12 +481,7 @@ impl UpstreamManager {
                 let from_radio = radio.clone();
 
                 match self
-                    .try_switch(
-                        &from_radio,
-                        &from_ssid,
-                        best,
-                        password,
-                    )
+                    .try_switch(&from_radio, &from_ssid, best, password)
                     .await
                 {
                     Ok(()) => {
@@ -531,9 +516,7 @@ impl UpstreamManager {
                     current_signal_dbm: 0,
                 })
             }
-            ManagerState::Cooldown { until } => {
-                Ok(ScanCycleResult::InCooldown { until: *until })
-            }
+            ManagerState::Cooldown { until } => Ok(ScanCycleResult::InCooldown { until: *until }),
         }
     }
 
@@ -563,10 +546,8 @@ impl UpstreamManager {
 
         if self.config.reseller_mode {
             candidates.sort_by(|a, b| {
-                let score_a =
-                    a.signal_dbm + i32::from(a.ssid.starts_with("TollGate-")) * 100;
-                let score_b =
-                    b.signal_dbm + i32::from(b.ssid.starts_with("TollGate-")) * 100;
+                let score_a = a.signal_dbm + i32::from(a.ssid.starts_with("TollGate-")) * 100;
+                let score_b = b.signal_dbm + i32::from(b.ssid.starts_with("TollGate-")) * 100;
                 score_b.cmp(&score_a)
             });
         } else {
@@ -580,11 +561,7 @@ impl UpstreamManager {
     ///
     /// Go v1: `shouldSwitch()` — checks hysteresis and signal floor.
     /// Rust: Same logic but as a pure function.
-    pub fn should_switch(
-        &self,
-        current_signal_dbm: i32,
-        candidate: &SwitchCandidate,
-    ) -> bool {
+    pub fn should_switch(&self, current_signal_dbm: i32, candidate: &SwitchCandidate) -> bool {
         if current_signal_dbm < self.config.signal_floor_dbm {
             tracing::debug!(
                 current = current_signal_dbm,

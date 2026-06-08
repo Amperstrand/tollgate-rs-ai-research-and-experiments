@@ -46,11 +46,7 @@ fn mock_token(amount_sats: u64) -> Vec<u8> {
 
 async fn start_server(
     config: V1ServerConfig,
-) -> (
-    String,
-    tokio::task::JoinHandle<()>,
-    Arc<ServerState>,
-) {
+) -> (String, tokio::task::JoinHandle<()>, Arc<ServerState>) {
     let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
     let merchant = Arc::new(MerchantProvider::new(wallet));
     let advertisement = build_advertisement(&config).unwrap();
@@ -276,11 +272,7 @@ async fn v1_server_usage_no_session() {
 async fn start_server_with_valve(
     config: V1ServerConfig,
     valve: Arc<dyn Valve>,
-) -> (
-    String,
-    tokio::task::JoinHandle<()>,
-    Arc<ServerState>,
-) {
+) -> (String, tokio::task::JoinHandle<()>, Arc<ServerState>) {
     let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
     let merchant = Arc::new(MerchantProvider::new(wallet));
     let advertisement = build_advertisement(&config).unwrap();
@@ -319,19 +311,14 @@ async fn start_server_with_valve(
 #[tokio::test]
 async fn v1_server_rollback_session_on_valve_failure() {
     let valve: Arc<dyn Valve> = Arc::new(FailingValve);
-    let (base_url, server, state) =
-        start_server_with_valve(test_config(), valve).await;
+    let (base_url, server, state) = start_server_with_valve(test_config(), valve).await;
     let client = Client::new();
 
     let token = mock_token(10);
     let resp = client.post(&base_url).body(token).send().await.unwrap();
     assert_eq!(resp.status(), 500);
 
-    let stored = state
-        .sessions
-        .get("00:11:22:33:44:55")
-        .await
-        .unwrap();
+    let stored = state.sessions.get("00:11:22:33:44:55").await.unwrap();
     assert!(
         stored.is_none(),
         "session should be rolled back (removed) when valve fails, but found: {stored:?}"
@@ -344,8 +331,7 @@ async fn v1_server_rollback_session_on_valve_failure() {
 #[tokio::test]
 async fn v1_server_restores_prior_session_on_valve_failure() {
     let valve: Arc<dyn Valve> = Arc::new(FailingValve);
-    let (base_url, server, state) =
-        start_server_with_valve(test_config(), valve).await;
+    let (base_url, server, state) = start_server_with_valve(test_config(), valve).await;
 
     let sessions = state.sessions.clone();
     let prior = tollgate_net::v1::server::CustomerSession {

@@ -329,8 +329,7 @@ impl WifiScanner {
     /// Go v1: `scanRadio()` retries 3x with no backoff.
     /// Rust: Retries with exponential backoff (1s, 2s, 4s).
     pub async fn scan_radio(&self, radio: &str) -> Result<Vec<ScanResult>, WifiScanError> {
-        validate_identifier(radio)
-            .map_err(|e| WifiScanError::InvalidRadio(e.to_string()))?;
+        validate_identifier(radio).map_err(|e| WifiScanError::InvalidRadio(e.to_string()))?;
 
         let mut last_error = String::new();
         for attempt in 0..self.max_retries {
@@ -359,11 +358,8 @@ impl WifiScanner {
                     return Ok(results);
                 }
                 Ok(output) => {
-                    last_error = format!(
-                        "exit code {}: {}",
-                        output.exit_code,
-                        output.stderr.trim()
-                    );
+                    last_error =
+                        format!("exit code {}: {}", output.exit_code, output.stderr.trim());
                     tracing::debug!(
                         "scan attempt {}/{} for radio {radio} failed: {last_error}",
                         attempt + 1,
@@ -558,7 +554,9 @@ impl WifiScanner {
         }
 
         // WPA3 SAE mixed (must check before plain SAE)
-        if lower.contains("sae") && (lower.contains("mixed") || lower.contains("wpa2") || lower.contains("wpa3")) {
+        if lower.contains("sae")
+            && (lower.contains("mixed") || lower.contains("wpa2") || lower.contains("wpa3"))
+        {
             return EncryptionType::SaeMixed;
         }
 
@@ -728,10 +726,7 @@ Cell 04 - Address: AA:BB:CC:DD:EE:04
         );
 
         // WPA2-PSK without CCMP
-        assert_eq!(
-            scanner.detect_encryption("WPA2 PSK"),
-            EncryptionType::Psk2
-        );
+        assert_eq!(scanner.detect_encryption("WPA2 PSK"), EncryptionType::Psk2);
 
         // SAE mixed (WPA2/WPA3)
         assert_eq!(
@@ -740,10 +735,7 @@ Cell 04 - Address: AA:BB:CC:DD:EE:04
         );
 
         // SAE (WPA3 only)
-        assert_eq!(
-            scanner.detect_encryption("SAE (CCMP)"),
-            EncryptionType::Sae
-        );
+        assert_eq!(scanner.detect_encryption("SAE (CCMP)"), EncryptionType::Sae);
 
         // WPA2-EAP (Enterprise)
         assert_eq!(
@@ -862,7 +854,10 @@ Cell 04 - Address: AA:BB:CC:DD:EE:04
     async fn test_scan_radio_success() {
         let mut mock = MockCommandExecutor::new();
         mock.expect_execute()
-            .withf(|program, args| program == "iwinfo" && args.iter().map(String::as_str).collect::<Vec<_>>() == ["radio0", "scan"])
+            .withf(|program, args| {
+                program == "iwinfo"
+                    && args.iter().map(String::as_str).collect::<Vec<_>>() == ["radio0", "scan"]
+            })
             .returning(|_, _| {
                 Ok(CommandOutput {
                     exit_code: 0,
@@ -890,7 +885,10 @@ Cell 04 - Address: AA:BB:CC:DD:EE:04
         let scanner = WifiScanner::new();
         let result = scanner.scan_radio("radio;rm -rf /").await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), WifiScanError::InvalidRadio(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            WifiScanError::InvalidRadio(_)
+        ));
     }
 
     /// Test retry behavior with mock that fails then succeeds.
@@ -898,31 +896,27 @@ Cell 04 - Address: AA:BB:CC:DD:EE:04
     async fn test_scan_radio_retries_then_succeeds() {
         let mut mock = MockCommandExecutor::new();
         // First two calls fail, third succeeds
-        mock.expect_execute()
-            .times(2)
-            .returning(|_, _| {
-                Ok(CommandOutput {
-                    exit_code: 1,
-                    stdout: String::new(),
-                    stderr: "device busy".to_owned(),
-                })
-            });
-        mock.expect_execute()
-            .returning(|_, _| {
-                Ok(CommandOutput {
-                    exit_code: 0,
-                    stdout: r#"Cell 01 - Address: AA:BB:CC:DD:EE:01
+        mock.expect_execute().times(2).returning(|_, _| {
+            Ok(CommandOutput {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: "device busy".to_owned(),
+            })
+        });
+        mock.expect_execute().returning(|_, _| {
+            Ok(CommandOutput {
+                exit_code: 0,
+                stdout: r#"Cell 01 - Address: AA:BB:CC:DD:EE:01
           ESSID: "RetryNet"
           Signal: -55 dBm
           Encryption: none
 "#
-                    .to_owned(),
-                    stderr: String::new(),
-                })
-            });
+                .to_owned(),
+                stderr: String::new(),
+            })
+        });
 
-        let scanner = WifiScanner::with_executor(Box::new(mock))
-            .with_max_retries(3);
+        let scanner = WifiScanner::with_executor(Box::new(mock)).with_max_retries(3);
         let results = scanner.scan_radio("radio0").await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].ssid, "RetryNet");
@@ -932,17 +926,15 @@ Cell 04 - Address: AA:BB:CC:DD:EE:04
     #[tokio::test]
     async fn test_scan_radio_retries_exhausted() {
         let mut mock = MockCommandExecutor::new();
-        mock.expect_execute()
-            .returning(|_, _| {
-                Ok(CommandOutput {
-                    exit_code: 1,
-                    stdout: String::new(),
-                    stderr: "device not found".to_owned(),
-                })
-            });
+        mock.expect_execute().returning(|_, _| {
+            Ok(CommandOutput {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: "device not found".to_owned(),
+            })
+        });
 
-        let scanner = WifiScanner::with_executor(Box::new(mock))
-            .with_max_retries(2);
+        let scanner = WifiScanner::with_executor(Box::new(mock)).with_max_retries(2);
         let result = scanner.scan_radio("radio0").await;
         assert!(result.is_err());
         match result.unwrap_err() {

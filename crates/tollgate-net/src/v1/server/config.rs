@@ -25,18 +25,16 @@ const fn default_margin() -> f64 {
     0.1
 }
 fn default_accepted_mints() -> Vec<MintConfig> {
-    vec![
-        MintConfig {
-            url: "https://testnut.cashu.exchange".to_owned(),
-            min_balance: 64,
-            balance_tolerance_percent: 10,
-            payout_interval_seconds: 60,
-            min_payout_amount: 128,
-            price_per_step: 1,
-            price_unit: "sat".to_owned(),
-            purchase_min_steps: 0,
-        },
-    ]
+    vec![MintConfig {
+        url: "https://testnut.cashu.exchange".to_owned(),
+        min_balance: 64,
+        balance_tolerance_percent: 10,
+        payout_interval_seconds: 60,
+        min_payout_amount: 128,
+        price_per_step: 1,
+        price_unit: "sat".to_owned(),
+        purchase_min_steps: 0,
+    }]
 }
 fn default_profit_share() -> Vec<ProfitShareConfig> {
     vec![
@@ -90,10 +88,7 @@ fn is_172_private(host: &str) -> bool {
     if !host.starts_with("172.") {
         return false;
     }
-    let second = host
-        .split('.')
-        .nth(1)
-        .and_then(|s| s.parse::<u8>().ok());
+    let second = host.split('.').nth(1).and_then(|s| s.parse::<u8>().ok());
     matches!(second, Some(16..=31))
 }
 
@@ -190,9 +185,8 @@ pub fn load_or_generate_keys(path: &str) -> Result<Keys, KeyError> {
     match std::fs::read_to_string(path) {
         Ok(data) => {
             let kf: NostrKeyFile = serde_json::from_str(&data)?;
-            let keys = Keys::parse(&kf.private_key).map_err(|e| {
-                KeyError::InvalidKey(format!("failed to parse private key: {e}"))
-            })?;
+            let keys = Keys::parse(&kf.private_key)
+                .map_err(|e| KeyError::InvalidKey(format!("failed to parse private key: {e}")))?;
             tracing::info!(public_key = %keys.public_key(), "Loaded Nostr keys from {path}");
             Ok(keys)
         }
@@ -712,7 +706,10 @@ mod tests {
             ]
         }"#;
         let ids: Identities = serde_json::from_str(json).unwrap();
-        assert_eq!(ids.lightning_address("owner").as_deref(), Some("owner@ln.tld"));
+        assert_eq!(
+            ids.lightning_address("owner").as_deref(),
+            Some("owner@ln.tld")
+        );
         assert_eq!(ids.lightning_address("dev"), None);
         assert_eq!(ids.lightning_address("missing"), None);
     }

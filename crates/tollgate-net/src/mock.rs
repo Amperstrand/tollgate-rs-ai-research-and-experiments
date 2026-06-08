@@ -60,7 +60,10 @@ impl Wallet for MockWallet {
         Box::pin(async move { result })
     }
 
-    fn mint_reachable(&self, _: &str) -> Pin<Box<dyn Future<Output = Result<bool, WalletError>> + Send + '_>> {
+    fn mint_reachable(
+        &self,
+        _: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, WalletError>> + Send + '_>> {
         Box::pin(async { Ok(true) })
     }
 

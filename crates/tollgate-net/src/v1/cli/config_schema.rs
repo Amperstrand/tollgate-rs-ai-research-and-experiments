@@ -74,10 +74,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
             description: Some("Metering metric type".to_owned()),
             default: Some(serde_json::json!("bytes")),
             required: true,
-            r#enum: vec![
-                "bytes".to_owned(),
-                "milliseconds".to_owned(),
-            ],
+            r#enum: vec!["bytes".to_owned(), "milliseconds".to_owned()],
             min: None,
             max: None,
             children: vec![],
@@ -129,9 +126,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
             name: "ResellerMode".to_owned(),
             json_key: "reseller_mode".to_owned(),
             field_type: "bool".to_owned(),
-            description: Some(
-                "Enable reseller mode for upstream gateway discovery".to_owned(),
-            ),
+            description: Some("Enable reseller mode for upstream gateway discovery".to_owned()),
             default: Some(serde_json::json!(false)),
             required: true,
             r#enum: vec![],
@@ -168,9 +163,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "MinBalance".to_owned(),
                     json_key: "min_balance".to_owned(),
                     field_type: "uint64".to_owned(),
-                    description: Some(
-                        "Minimum balance before auto-replenish (sats)".to_owned(),
-                    ),
+                    description: Some("Minimum balance before auto-replenish (sats)".to_owned()),
                     default: Some(serde_json::json!(64)),
                     required: true,
                     r#enum: vec![],
@@ -183,9 +176,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "BalanceTolerancePercent".to_owned(),
                     json_key: "balance_tolerance_percent".to_owned(),
                     field_type: "uint64".to_owned(),
-                    description: Some(
-                        "Tolerance percentage for balance checks".to_owned(),
-                    ),
+                    description: Some("Tolerance percentage for balance checks".to_owned()),
                     default: Some(serde_json::json!(10)),
                     required: true,
                     r#enum: vec![],
@@ -250,9 +241,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "MinPurchaseSteps".to_owned(),
                     json_key: "purchase_min_steps".to_owned(),
                     field_type: "uint64".to_owned(),
-                    description: Some(
-                        "Minimum number of steps per purchase".to_owned(),
-                    ),
+                    description: Some("Minimum number of steps per purchase".to_owned()),
                     default: Some(serde_json::json!(0)),
                     required: true,
                     r#enum: vec![],
@@ -296,9 +285,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "Identity".to_owned(),
                     json_key: "identity".to_owned(),
                     field_type: "string".to_owned(),
-                    description: Some(
-                        "Identity name from identities.json".to_owned(),
-                    ),
+                    description: Some("Identity name from identities.json".to_owned()),
                     default: None,
                     required: true,
                     r#enum: vec![],
@@ -316,9 +303,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
             name: "UpstreamDetector".to_owned(),
             json_key: "upstream_detector".to_owned(),
             field_type: "object".to_owned(),
-            description: Some(
-                "Upstream gateway detector configuration".to_owned(),
-            ),
+            description: Some("Upstream gateway detector configuration".to_owned()),
             default: None,
             required: true,
             r#enum: vec![],
@@ -368,9 +353,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "RequireValidSignature".to_owned(),
                     json_key: "require_valid_signature".to_owned(),
                     field_type: "bool".to_owned(),
-                    description: Some(
-                        "Require valid NIP-70 signature".to_owned(),
-                    ),
+                    description: Some("Require valid NIP-70 signature".to_owned()),
                     default: Some(serde_json::json!(true)),
                     required: true,
                     r#enum: vec![],
@@ -384,9 +367,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     json_key: "ignore_interfaces".to_owned(),
                     field_type: "array".to_owned(),
                     description: Some("Interfaces to ignore".to_owned()),
-                    default: Some(serde_json::json!(
-                        ["lo", "docker0", "br-lan", "hostap0"]
-                    )),
+                    default: Some(serde_json::json!(["lo", "docker0", "br-lan", "hostap0"])),
                     required: false,
                     r#enum: vec![],
                     min: None,
@@ -410,9 +391,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "OnlyInterfaces".to_owned(),
                     json_key: "only_interfaces".to_owned(),
                     field_type: "array".to_owned(),
-                    description: Some(
-                        "Only probe these interfaces (empty = all)".to_owned(),
-                    ),
+                    description: Some("Only probe these interfaces (empty = all)".to_owned()),
                     default: Some(serde_json::json!(Vec::<String>::new())),
                     required: false,
                     r#enum: vec![],
@@ -454,9 +433,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
             name: "UpstreamSessionManager".to_owned(),
             json_key: "upstream_session_manager".to_owned(),
             field_type: "object".to_owned(),
-            description: Some(
-                "Upstream session manager configuration".to_owned(),
-            ),
+            description: Some("Upstream session manager configuration".to_owned()),
             default: None,
             required: true,
             r#enum: vec![],
@@ -504,15 +481,10 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                             name: "DefaultPolicy".to_owned(),
                             json_key: "default_policy".to_owned(),
                             field_type: "string".to_owned(),
-                            description: Some(
-                                "Default trust policy".to_owned(),
-                            ),
+                            description: Some("Default trust policy".to_owned()),
                             default: Some(serde_json::json!("trust_all")),
                             required: true,
-                            r#enum: vec![
-                                "trust_all".to_owned(),
-                                "trust_none".to_owned(),
-                            ],
+                            r#enum: vec!["trust_all".to_owned(), "trust_none".to_owned()],
                             min: None,
                             max: None,
                             children: vec![],
@@ -523,9 +495,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                             json_key: "allowlist".to_owned(),
                             field_type: "array".to_owned(),
                             description: Some("Trusted pubkeys".to_owned()),
-                            default: Some(
-                                serde_json::json!(Vec::<String>::new()),
-                            ),
+                            default: Some(serde_json::json!(Vec::<String>::new())),
                             required: false,
                             r#enum: vec![],
                             min: None,
@@ -550,9 +520,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                             json_key: "blocklist".to_owned(),
                             field_type: "array".to_owned(),
                             description: Some("Blocked pubkeys".to_owned()),
-                            default: Some(
-                                serde_json::json!(Vec::<String>::new()),
-                            ),
+                            default: Some(serde_json::json!(Vec::<String>::new())),
                             required: false,
                             r#enum: vec![],
                             min: None,
@@ -587,16 +555,10 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     max: None,
                     children: vec![
                         FieldSchema {
-                            name: "PreferredSessionIncrementsMilliseconds"
-                                .to_owned(),
-                            json_key:
-                                "preferred_session_increments_milliseconds"
-                                    .to_owned(),
+                            name: "PreferredSessionIncrementsMilliseconds".to_owned(),
+                            json_key: "preferred_session_increments_milliseconds".to_owned(),
                             field_type: "uint64".to_owned(),
-                            description: Some(
-                                "Preferred time session increment (ms)"
-                                    .to_owned(),
-                            ),
+                            description: Some("Preferred time session increment (ms)".to_owned()),
                             default: Some(serde_json::json!(60_000)),
                             required: true,
                             r#enum: vec![],
@@ -607,12 +569,10 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                         },
                         FieldSchema {
                             name: "PreferredSessionIncrementsBytes".to_owned(),
-                            json_key: "preferred_session_increments_bytes"
-                                .to_owned(),
+                            json_key: "preferred_session_increments_bytes".to_owned(),
                             field_type: "uint64".to_owned(),
                             description: Some(
-                                "Preferred data session increment (bytes)"
-                                    .to_owned(),
+                                "Preferred data session increment (bytes)".to_owned(),
                             ),
                             default: Some(serde_json::json!(131_100_000)),
                             required: true,
@@ -626,9 +586,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                             name: "MillisecondRenewalOffset".to_owned(),
                             json_key: "millisecond_renewal_offset".to_owned(),
                             field_type: "uint64".to_owned(),
-                            description: Some(
-                                "Renew this many ms before expiry".to_owned(),
-                            ),
+                            description: Some("Renew this many ms before expiry".to_owned()),
                             default: Some(serde_json::json!(10_000)),
                             required: true,
                             r#enum: vec![],
@@ -641,9 +599,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                             name: "BytesRenewalOffset".to_owned(),
                             json_key: "bytes_renewal_offset".to_owned(),
                             field_type: "uint64".to_owned(),
-                            description: Some(
-                                "Renew this many bytes before limit".to_owned(),
-                            ),
+                            description: Some("Renew this many bytes before limit".to_owned()),
                             default: Some(serde_json::json!(131_100_000)),
                             required: true,
                             r#enum: vec![],
@@ -669,9 +625,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                         name: "DataMonitoringInterval".to_owned(),
                         json_key: "data_monitoring_interval".to_owned(),
                         field_type: "duration".to_owned(),
-                        description: Some(
-                            "How often to check data usage".to_owned(),
-                        ),
+                        description: Some("How often to check data usage".to_owned()),
                         default: Some(serde_json::json!("500ms")),
                         required: true,
                         r#enum: vec![],
@@ -690,9 +644,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
             name: "UpstreamWifi".to_owned(),
             json_key: "upstream_wifi".to_owned(),
             field_type: "object".to_owned(),
-            description: Some(
-                "Upstream WiFi scanning and selection configuration".to_owned(),
-            ),
+            description: Some("Upstream WiFi scanning and selection configuration".to_owned()),
             default: None,
             required: true,
             r#enum: vec![],
@@ -703,9 +655,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "ScanIntervalSeconds".to_owned(),
                     json_key: "scan_interval_seconds".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Seconds between full WiFi scans".to_owned(),
-                    ),
+                    description: Some("Seconds between full WiFi scans".to_owned()),
                     default: Some(serde_json::json!(300)),
                     required: true,
                     r#enum: vec![],
@@ -718,9 +668,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "FastCheckSeconds".to_owned(),
                     json_key: "fast_check_seconds".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Seconds between fast signal checks".to_owned(),
-                    ),
+                    description: Some("Seconds between fast signal checks".to_owned()),
                     default: Some(serde_json::json!(30)),
                     required: true,
                     r#enum: vec![],
@@ -734,8 +682,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     json_key: "lost_threshold".to_owned(),
                     field_type: "int".to_owned(),
                     description: Some(
-                        "Consecutive fast-check failures before marking as lost"
-                            .to_owned(),
+                        "Consecutive fast-check failures before marking as lost".to_owned(),
                     ),
                     default: Some(serde_json::json!(2)),
                     required: true,
@@ -749,9 +696,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "HysteresisDB".to_owned(),
                     json_key: "hysteresis_db".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Signal hysteresis in dB to prevent flapping".to_owned(),
-                    ),
+                    description: Some("Signal hysteresis in dB to prevent flapping".to_owned()),
                     default: Some(serde_json::json!(12)),
                     required: true,
                     r#enum: vec![],
@@ -765,8 +710,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     json_key: "signal_floor".to_owned(),
                     field_type: "int".to_owned(),
                     description: Some(
-                        "Minimum signal strength in dBm to consider a network usable"
-                            .to_owned(),
+                        "Minimum signal strength in dBm to consider a network usable".to_owned(),
                     ),
                     default: Some(serde_json::json!(-85)),
                     required: true,
@@ -780,10 +724,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "BlacklistTTLMinutes".to_owned(),
                     json_key: "blacklist_ttl_minutes".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Minutes before a blacklisted network is retried"
-                            .to_owned(),
-                    ),
+                    description: Some("Minutes before a blacklisted network is retried".to_owned()),
                     default: Some(serde_json::json!(60)),
                     required: true,
                     r#enum: vec![],
@@ -796,9 +737,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "EmergencyPenalty".to_owned(),
                     json_key: "emergency_penalty".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Penalty score added on emergency disconnect".to_owned(),
-                    ),
+                    description: Some("Penalty score added on emergency disconnect".to_owned()),
                     default: Some(serde_json::json!(20)),
                     required: true,
                     r#enum: vec![],
@@ -811,9 +750,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "MaxConsecutiveFailures".to_owned(),
                     json_key: "max_consecutive_failures".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Consecutive failures before emergency scan".to_owned(),
-                    ),
+                    description: Some("Consecutive failures before emergency scan".to_owned()),
                     default: Some(serde_json::json!(3)),
                     required: true,
                     r#enum: vec![],
@@ -826,9 +763,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "SwitchCooldownMinutes".to_owned(),
                     json_key: "switch_cooldown_minutes".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Minimum minutes between network switches".to_owned(),
-                    ),
+                    description: Some("Minimum minutes between network switches".to_owned()),
                     default: Some(serde_json::json!(10)),
                     required: true,
                     r#enum: vec![],
@@ -841,9 +776,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "StartupGraceSeconds".to_owned(),
                     json_key: "startup_grace_seconds".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Grace period on startup before scoring".to_owned(),
-                    ),
+                    description: Some("Grace period on startup before scoring".to_owned()),
                     default: Some(serde_json::json!(90)),
                     required: true,
                     r#enum: vec![],
@@ -856,9 +789,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "PostSwitchWaitSeconds".to_owned(),
                     json_key: "post_switch_wait_seconds".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Seconds to wait after a switch before scoring".to_owned(),
-                    ),
+                    description: Some("Seconds to wait after a switch before scoring".to_owned()),
                     default: Some(serde_json::json!(5)),
                     required: true,
                     r#enum: vec![],
@@ -871,10 +802,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     name: "DHCPTimeoutSeconds".to_owned(),
                     json_key: "dhcp_timeout_seconds".to_owned(),
                     field_type: "int".to_owned(),
-                    description: Some(
-                        "Timeout for DHCP after connecting to a network"
-                            .to_owned(),
-                    ),
+                    description: Some("Timeout for DHCP after connecting to a network".to_owned()),
                     default: Some(serde_json::json!(180)),
                     required: true,
                     r#enum: vec![],
@@ -888,8 +816,7 @@ pub fn get_config_schema() -> Vec<FieldSchema> {
                     json_key: "manual_pause_seconds".to_owned(),
                     field_type: "int".to_owned(),
                     description: Some(
-                        "Seconds to pause scanning after manual intervention"
-                            .to_owned(),
+                        "Seconds to pause scanning after manual intervention".to_owned(),
                     ),
                     default: Some(serde_json::json!(120)),
                     required: true,
@@ -926,9 +853,7 @@ pub fn get_identities_schema() -> Vec<FieldSchema> {
             name: "OwnedIdentities".to_owned(),
             json_key: "owned_identities".to_owned(),
             field_type: "array".to_owned(),
-            description: Some(
-                "Identities with private keys (managed by the system)".to_owned(),
-            ),
+            description: Some("Identities with private keys (managed by the system)".to_owned()),
             default: None,
             required: true,
             r#enum: vec![],
@@ -952,9 +877,7 @@ pub fn get_identities_schema() -> Vec<FieldSchema> {
                     name: "PrivateKey".to_owned(),
                     json_key: "privatekey".to_owned(),
                     field_type: "string".to_owned(),
-                    description: Some(
-                        "Nostr private key (sensitive)".to_owned(),
-                    ),
+                    description: Some("Nostr private key (sensitive)".to_owned()),
                     default: None,
                     required: true,
                     r#enum: vec![],
@@ -970,9 +893,7 @@ pub fn get_identities_schema() -> Vec<FieldSchema> {
             name: "PublicIdentities".to_owned(),
             json_key: "public_identities".to_owned(),
             field_type: "array".to_owned(),
-            description: Some(
-                "Public identities for profit sharing and trust".to_owned(),
-            ),
+            description: Some("Public identities for profit sharing and trust".to_owned()),
             default: None,
             required: true,
             r#enum: vec![],
@@ -1013,9 +934,7 @@ pub fn get_identities_schema() -> Vec<FieldSchema> {
                     name: "LightningAddress".to_owned(),
                     json_key: "lightning_address".to_owned(),
                     field_type: "string".to_owned(),
-                    description: Some(
-                        "Lightning address for payouts".to_owned(),
-                    ),
+                    description: Some("Lightning address for payouts".to_owned()),
                     default: None,
                     required: false,
                     r#enum: vec![],
@@ -1101,10 +1020,7 @@ mod tests {
     fn test_schema_log_level_has_enum() {
         let schema = get_config_schema();
         let log_level = schema.iter().find(|f| f.name == "LogLevel").unwrap();
-        assert_eq!(
-            log_level.r#enum,
-            vec!["debug", "info", "warn", "error"]
-        );
+        assert_eq!(log_level.r#enum, vec!["debug", "info", "warn", "error"]);
     }
 
     #[test]
@@ -1132,15 +1048,11 @@ mod tests {
     #[test]
     fn test_schema_accepted_mints_children() {
         let schema = get_config_schema();
-        let mints = schema
-            .iter()
-            .find(|f| f.name == "AcceptedMints")
-            .unwrap();
+        let mints = schema.iter().find(|f| f.name == "AcceptedMints").unwrap();
         assert_eq!(mints.field_type, "array");
         assert_eq!(mints.children.len(), 8);
 
-        let child_names: Vec<&str> =
-            mints.children.iter().map(|c| c.name.as_str()).collect();
+        let child_names: Vec<&str> = mints.children.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             child_names,
             vec![
@@ -1167,10 +1079,7 @@ mod tests {
     #[test]
     fn test_schema_profit_share_children() {
         let schema = get_config_schema();
-        let ps = schema
-            .iter()
-            .find(|f| f.name == "ProfitShare")
-            .unwrap();
+        let ps = schema.iter().find(|f| f.name == "ProfitShare").unwrap();
         assert_eq!(ps.children.len(), 2);
 
         let factor = ps.children.iter().find(|c| c.name == "Factor").unwrap();
@@ -1192,10 +1101,7 @@ mod tests {
     #[test]
     fn test_schema_upstream_wifi_children() {
         let schema = get_config_schema();
-        let wifi = schema
-            .iter()
-            .find(|f| f.name == "UpstreamWifi")
-            .unwrap();
+        let wifi = schema.iter().find(|f| f.name == "UpstreamWifi").unwrap();
         assert_eq!(wifi.field_type, "object");
         assert_eq!(wifi.children.len(), 13);
 
@@ -1236,20 +1142,13 @@ mod tests {
             .find(|f| f.name == "UpstreamSessionManager")
             .unwrap();
 
-        let trust = sm
-            .children
-            .iter()
-            .find(|c| c.name == "Trust")
-            .unwrap();
+        let trust = sm.children.iter().find(|c| c.name == "Trust").unwrap();
         let default_policy = trust
             .children
             .iter()
             .find(|c| c.name == "DefaultPolicy")
             .unwrap();
-        assert_eq!(
-            default_policy.r#enum,
-            vec!["trust_all", "trust_none"]
-        );
+        assert_eq!(default_policy.r#enum, vec!["trust_all", "trust_none"]);
         assert_eq!(default_policy.default.as_ref().unwrap(), "trust_all");
     }
 
@@ -1276,10 +1175,7 @@ mod tests {
 
         let pub_child_names: Vec<&str> =
             schema[2].children.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(
-            pub_child_names,
-            vec!["Name", "PubKey", "LightningAddress"]
-        );
+        assert_eq!(pub_child_names, vec!["Name", "PubKey", "LightningAddress"]);
     }
 
     #[test]

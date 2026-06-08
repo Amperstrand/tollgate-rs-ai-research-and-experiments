@@ -60,10 +60,7 @@ pub async fn add_allotment(
         s.allotment += allotment;
         s.start_time = now;
         let updated = s.clone();
-        sessions
-            .update(mac, s)
-            .await
-            .map_err(|e| e.to_string())?;
+        sessions.update(mac, s).await.map_err(|e| e.to_string())?;
         updated
     } else {
         let s = CustomerSession {

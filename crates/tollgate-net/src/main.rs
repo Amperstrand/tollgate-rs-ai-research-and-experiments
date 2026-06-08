@@ -280,8 +280,8 @@ async fn main() {
         } => {
             use std::time::Duration;
             use v1::server::payout::{PayoutConfig, PayoutTarget};
-            use v1::server::Valve;
             use v1::server::NetworkMonitor;
+            use v1::server::Valve;
 
             let nostr_keys = match keys_path {
                 Some(path) => v1::server::load_or_generate_keys(&path).unwrap_or_else(|e| {
@@ -294,11 +294,10 @@ async fn main() {
                 // Load from config file, then apply CLI overrides for
                 // port/metric/step_size (UCI may provide different values
                 // than what's in the config file).
-                let mut sc =
-                    v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
-                        eprintln!("Failed to load config from {path}: {e}");
-                        std::process::exit(1);
-                    });
+                let mut sc = v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
+                    eprintln!("Failed to load config from {path}: {e}");
+                    std::process::exit(1);
+                });
                 sc.metric = metric.clone();
                 sc.step_size = step_size;
                 sc
@@ -391,13 +390,17 @@ async fn main() {
                 tokio::spawn(async move {
                     while let Some(event) = event_rx.recv().await {
                         match &event {
-                            v1::server::NetworkEvent::InterfaceUp { name, gateway_ip, .. } => {
+                            v1::server::NetworkEvent::InterfaceUp {
+                                name, gateway_ip, ..
+                            } => {
                                 tracing::info!(interface = %name, ?gateway_ip, "NetworkEvent: InterfaceUp");
                             }
                             v1::server::NetworkEvent::InterfaceDown { name } => {
                                 tracing::info!(interface = %name, "NetworkEvent: InterfaceDown");
                             }
-                            v1::server::NetworkEvent::AddressAdded { interface, address, .. } => {
+                            v1::server::NetworkEvent::AddressAdded {
+                                interface, address, ..
+                            } => {
                                 tracing::info!(interface = %interface, %address, "NetworkEvent: AddressAdded");
                             }
                             v1::server::NetworkEvent::AddressDeleted { interface, address } => {
@@ -415,12 +418,17 @@ async fn main() {
 
             match wt {
                 WalletType::Mock => {
-                    let wallet: Arc<dyn tollgate_core::wallet::Wallet> = Arc::new(mock::MockWallet::new(0));
+                    let wallet: Arc<dyn tollgate_core::wallet::Wallet> =
+                        Arc::new(mock::MockWallet::new(0));
                     let merchant = Arc::new(v1::server::MerchantProvider::new(wallet));
                     server.run(merchant, valve).await;
                 }
                 WalletType::Cdk => {
-                    let mint_urls: Vec<String> = server_config.accepted_mints.iter().map(|m| m.url.clone()).collect();
+                    let mint_urls: Vec<String> = server_config
+                        .accepted_mints
+                        .iter()
+                        .map(|m| m.url.clone())
+                        .collect();
 
                     let mint_cfg = &server_config.accepted_mints[0];
                     let profit_share = server_config.profit_share.clone();
@@ -429,18 +437,20 @@ async fn main() {
                     let identities_path = config_path.as_ref().map_or_else(
                         || "/etc/tollgate/identities.json".to_owned(),
                         |p| {
-                            std::path::Path::new(p)
-                                .parent()
-                                .map_or_else(|| "/etc/tollgate/identities.json".to_owned(), |dir| {
-                                    dir.join("identities.json").to_string_lossy().into_owned()
-                                })
+                            std::path::Path::new(p).parent().map_or_else(
+                                || "/etc/tollgate/identities.json".to_owned(),
+                                |dir| dir.join("identities.json").to_string_lossy().into_owned(),
+                            )
                         },
                     );
-                    let identities = v1::server::config::Identities::load_or_generate(&identities_path)
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Failed to load identities from {identities_path}: {e}");
-                            v1::server::config::Identities::default()
-                        });
+                    let identities =
+                        v1::server::config::Identities::load_or_generate(&identities_path)
+                            .unwrap_or_else(|e| {
+                                tracing::warn!(
+                                    "Failed to load identities from {identities_path}: {e}"
+                                );
+                                v1::server::config::Identities::default()
+                            });
 
                     let payout_cfg = PayoutConfig {
                         min_balance: mint_cfg.min_balance,
@@ -469,12 +479,14 @@ async fn main() {
                             .collect(),
                     };
 
-                    let wallet_result = cdk_wallet::CdkWallet::try_mints(&mint_urls, [4u8; 64]).await;
+                    let wallet_result =
+                        cdk_wallet::CdkWallet::try_mints(&mint_urls, [4u8; 64]).await;
 
                     match wallet_result {
                         Ok(cdk_wallet) => {
                             let wallet = Arc::new(cdk_wallet);
-                            let payout = v1::server::payout::spawn_payout_task(wallet.clone(), payout_cfg);
+                            let payout =
+                                v1::server::payout::spawn_payout_task(wallet.clone(), payout_cfg);
                             let server = server
                                 .with_mac_resolver(Arc::new(v1::server::DhcpLeasesResolver))
                                 .with_mint_quote_wallet(wallet.clone());
@@ -492,10 +504,15 @@ async fn main() {
                             tracing::warn!("Wallet init failed (mints may be unreachable): {e}");
                             tracing::warn!("Falling back to degraded mode");
 
-                            let wallet: Arc<dyn tollgate_core::wallet::Wallet> = Arc::new(v1::server::DegradedWallet);
+                            let wallet: Arc<dyn tollgate_core::wallet::Wallet> =
+                                Arc::new(v1::server::DegradedWallet);
                             let merchant = Arc::new(v1::server::MerchantProvider::new(wallet));
 
-                            let health_urls: Vec<String> = server_config.accepted_mints.iter().map(|m| m.url.clone()).collect();
+                            let health_urls: Vec<String> = server_config
+                                .accepted_mints
+                                .iter()
+                                .map(|m| m.url.clone())
+                                .collect();
                             let tracker = Arc::new(v1::server::MintHealthTracker::new(health_urls));
                             tracker.run_initial_probe();
 
@@ -621,9 +638,10 @@ async fn main() {
                 },
             };
 
-            let session_manager = Arc::new(
-                v1::session_manager::SessionManager::new(sm_config, wallet.clone()),
-            );
+            let session_manager = Arc::new(v1::session_manager::SessionManager::new(
+                sm_config,
+                wallet.clone(),
+            ));
 
             let crowsnest_config = v1::crowsnest::CrowsnestConfig {
                 gateway_ips,

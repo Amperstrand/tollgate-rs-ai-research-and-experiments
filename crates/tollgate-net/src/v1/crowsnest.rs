@@ -287,9 +287,7 @@ mod tests {
         axum::Json(serde_json::to_value(event).expect("serialize ad event"))
     }
 
-    async fn post_payment(
-        State(state): State<Arc<Mutex<TestServerState>>>,
-    ) -> impl IntoResponse {
+    async fn post_payment(State(state): State<Arc<Mutex<TestServerState>>>) -> impl IntoResponse {
         let mut s = state.lock().expect("lock");
         s.payments_received += 1;
         s.allotment += 60_000;
@@ -400,7 +398,10 @@ mod tests {
         cancel_token.cancel();
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle).await;
-        assert!(result.is_ok(), "crowsnest should terminate after cancellation");
+        assert!(
+            result.is_ok(),
+            "crowsnest should terminate after cancellation"
+        );
 
         sm.stop().await;
     }
@@ -428,7 +429,10 @@ mod tests {
 
         // No sessions should exist (all probes fail).
         let sessions = sm.get_active_sessions().await;
-        assert!(sessions.is_empty(), "no sessions should exist for failed probes");
+        assert!(
+            sessions.is_empty(),
+            "no sessions should exist for failed probes"
+        );
 
         cancel_token.cancel();
         sm.stop().await;

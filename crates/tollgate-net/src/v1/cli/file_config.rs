@@ -23,8 +23,8 @@ impl FileConfig {
 
 impl CliConfig for FileConfig {
     fn get_config(&self) -> Result<serde_json::Value, String> {
-        let data = std::fs::read_to_string(&self.path)
-            .map_err(|e| format!("Cannot read config: {e}"))?;
+        let data =
+            std::fs::read_to_string(&self.path).map_err(|e| format!("Cannot read config: {e}"))?;
         serde_json::from_str(&data).map_err(|e| format!("Invalid JSON: {e}"))
     }
 
@@ -41,14 +41,15 @@ impl CliConfig for FileConfig {
 
         if root == "identities" {
             // Navigate identities JSON
-            let id_path = self.identities_path.as_ref().ok_or_else(|| {
-                "Identities path not configured".to_owned()
-            })?;
+            let id_path = self
+                .identities_path
+                .as_ref()
+                .ok_or_else(|| "Identities path not configured".to_owned())?;
             let mut id_cfg = read_json_file(id_path)?;
             let rest = &parts[1..];
             if rest.is_empty() {
                 return Err(
-                    "cannot replace entire identities object; use specific fields".to_owned()
+                    "cannot replace entire identities object; use specific fields".to_owned(),
                 );
             }
             navigate_and_set(&mut id_cfg, rest, value)?;
@@ -65,7 +66,13 @@ impl CliConfig for FileConfig {
         let parsed: serde_json::Value =
             serde_json::from_str(json).map_err(|e| format!("Invalid JSON: {e}"))?;
 
-        let required = ["config_version", "metric", "step_size", "accepted_mints", "profit_share"];
+        let required = [
+            "config_version",
+            "metric",
+            "step_size",
+            "accepted_mints",
+            "profit_share",
+        ];
         let missing: Vec<&str> = required
             .iter()
             .filter(|f| parsed.get(**f).is_none())
@@ -78,8 +85,8 @@ impl CliConfig for FileConfig {
         // Validate profit_share factors sum to 1.0
         validate_profit_share(&parsed)?;
 
-        let output = serde_json::to_string_pretty(&parsed)
-            .map_err(|e| format!("Cannot serialize: {e}"))?;
+        let output =
+            serde_json::to_string_pretty(&parsed).map_err(|e| format!("Cannot serialize: {e}"))?;
         std::fs::write(&self.path, output).map_err(|e| format!("Cannot write config: {e}"))?;
 
         Ok(())
@@ -92,15 +99,16 @@ impl CliConfig for FileConfig {
         if !id_path.exists() {
             return Ok(serde_json::json!({}));
         }
-        let data = std::fs::read_to_string(id_path)
-            .map_err(|e| format!("Cannot read identities: {e}"))?;
+        let data =
+            std::fs::read_to_string(id_path).map_err(|e| format!("Cannot read identities: {e}"))?;
         serde_json::from_str(&data).map_err(|e| format!("Invalid identities JSON: {e}"))
     }
 
     fn save_identities(&self, json: &str) -> Result<(), String> {
-        let id_path = self.identities_path.as_ref().ok_or_else(|| {
-            "Identities path not configured".to_owned()
-        })?;
+        let id_path = self
+            .identities_path
+            .as_ref()
+            .ok_or_else(|| "Identities path not configured".to_owned())?;
 
         let parsed: serde_json::Value =
             serde_json::from_str(json).map_err(|e| format!("Invalid JSON: {e}"))?;
@@ -110,10 +118,9 @@ impl CliConfig for FileConfig {
             return Err("Missing required field: config_version".to_owned());
         }
 
-        let output = serde_json::to_string_pretty(&parsed)
-            .map_err(|e| format!("Cannot serialize: {e}"))?;
-        std::fs::write(id_path, output)
-            .map_err(|e| format!("Cannot write identities: {e}"))?;
+        let output =
+            serde_json::to_string_pretty(&parsed).map_err(|e| format!("Cannot serialize: {e}"))?;
+        std::fs::write(id_path, output).map_err(|e| format!("Cannot write identities: {e}"))?;
 
         Ok(())
     }
@@ -167,10 +174,7 @@ fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
             }
         }
         if !found {
-            return Err(format!(
-                "unknown config key {:?}",
-                parts[..=i].join(".")
-            ));
+            return Err(format!("unknown config key {:?}", parts[..=i].join(".")));
         }
     }
 
@@ -211,7 +215,9 @@ fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
             }
         }
         "uint64" => {
-            let n: u64 = value.parse().map_err(|_| format!("invalid uint64 value {value:?}"))?;
+            let n: u64 = value
+                .parse()
+                .map_err(|_| format!("invalid uint64 value {value:?}"))?;
             if let Some(ref min) = field.min {
                 if let Some(min_val) = min.as_u64() {
                     if n < min_val {
@@ -228,7 +234,9 @@ fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
             }
         }
         "int" => {
-            let n: i64 = value.parse().map_err(|_| format!("invalid int value {value:?}"))?;
+            let n: i64 = value
+                .parse()
+                .map_err(|_| format!("invalid int value {value:?}"))?;
             if let Some(ref min) = field.min {
                 if let Some(min_val) = json_to_i64(min) {
                     if n < min_val {
@@ -245,7 +253,9 @@ fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
             }
         }
         "float64" => {
-            let f: f64 = value.parse().map_err(|_| format!("invalid float64 value {value:?}"))?;
+            let f: f64 = value
+                .parse()
+                .map_err(|_| format!("invalid float64 value {value:?}"))?;
             if let Some(ref min) = field.min {
                 if let Some(min_val) = json_to_f64(min) {
                     if f < min_val {
@@ -326,7 +336,11 @@ fn parse_go_duration(s: &str) -> Result<(), String> {
             "s" => 1_000_000_000,
             "m" => 60_000_000_000,
             "h" => 3_600_000_000_000,
-            _ => return Err(format!("invalid duration unit {unit_str:?} in {original:?}")),
+            _ => {
+                return Err(format!(
+                    "invalid duration unit {unit_str:?} in {original:?}"
+                ))
+            }
         };
 
         total_ns += (n * multiplier as f64) as i64;
@@ -350,8 +364,7 @@ fn read_json_file(path: &PathBuf) -> Result<serde_json::Value, String> {
 }
 
 fn write_json_file(path: &PathBuf, val: &serde_json::Value) -> Result<(), String> {
-    let output =
-        serde_json::to_string_pretty(val).map_err(|e| format!("Cannot serialize: {e}"))?;
+    let output = serde_json::to_string_pretty(val).map_err(|e| format!("Cannot serialize: {e}"))?;
     std::fs::write(path, output).map_err(|e| format!("Cannot write config: {e}"))
 }
 
@@ -485,9 +498,7 @@ fn validate_profit_share(cfg: &serde_json::Value) -> Result<(), String> {
             .ok_or_else(|| format!("profit_share[{i}] factor is not a number"))?;
 
         if f < 0.0 {
-            return Err(format!(
-                "profit_share[{i}] has negative factor {f}"
-            ));
+            return Err(format!("profit_share[{i}] has negative factor {f}"));
         }
         if f > 1.0 {
             return Err(format!(
@@ -696,7 +707,8 @@ mod tests {
         )
         .unwrap();
         let cfg = FileConfig::new(path);
-        let err = cfg.set_value("accepted_mints.5.url", "https://bad.example.com")
+        let err = cfg
+            .set_value("accepted_mints.5.url", "https://bad.example.com")
             .unwrap_err();
         assert!(err.contains("out of range"));
     }
@@ -788,10 +800,8 @@ mod tests {
         std::fs::write(&config_path, r#"{"metric":"bytes"}"#).unwrap();
 
         let cfg = FileConfig::new(config_path).with_identities_path(identities_path.clone());
-        cfg.save_identities(
-            r#"{"config_version":"v0.0.1","public_identities":[{"name":"bob"}]}"#,
-        )
-        .unwrap();
+        cfg.save_identities(r#"{"config_version":"v0.0.1","public_identities":[{"name":"bob"}]}"#)
+            .unwrap();
 
         let content = std::fs::read_to_string(&identities_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -834,7 +844,9 @@ mod tests {
         std::fs::write(&path, "{}").unwrap();
         let cfg = FileConfig::new(path);
         let err = cfg
-            .save_config(r#"{"config_version":"v0.0.7","metric":"ms","step_size":60,"accepted_mints":[]}"#)
+            .save_config(
+                r#"{"config_version":"v0.0.7","metric":"ms","step_size":60,"accepted_mints":[]}"#,
+            )
             .unwrap_err();
         assert!(err.contains("Missing required fields"));
         assert!(err.contains("profit_share"));
@@ -937,7 +949,8 @@ mod tests {
         )
         .unwrap();
         let cfg = FileConfig::new(path.clone());
-        cfg.set_value("upstream_detector.probe_timeout", "30s").unwrap();
+        cfg.set_value("upstream_detector.probe_timeout", "30s")
+            .unwrap();
         let val: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(val["upstream_detector"]["probe_timeout"], "30s");

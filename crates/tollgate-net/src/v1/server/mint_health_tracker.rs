@@ -333,10 +333,10 @@ pub async fn probe_mint(mint_url: &str, timeout: Duration) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use crate::mock::MockWallet;
     use super::super::merchant_provider::MerchantProvider;
+    use super::*;
+    use crate::mock::MockWallet;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     // ------------------------------------------------------------------
     // Helpers — lightweight mock HTTP servers
@@ -362,11 +362,7 @@ mod tests {
                     let mut stream = stream;
                     // Read the request (discard)
                     let _ = stream.read(&mut buf).await;
-                    let body = if status_code == 200 {
-                        "{}"
-                    } else {
-                        "error"
-                    };
+                    let body = if status_code == 200 { "{}" } else { "error" };
                     let response = format!(
                         "HTTP/1.1 {status_code} OK\r\nContent-Length: {}\r\n\r\n{body}",
                         body.len()
@@ -599,8 +595,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_swap() {
-        use tollgate_core::wallet::Wallet;
         use tollgate_core::types::Amount;
+        use tollgate_core::wallet::Wallet;
 
         // Start with degraded wallet
         let degraded: Arc<dyn Wallet> = Arc::new(super::super::DegradedWallet);
@@ -633,7 +629,10 @@ mod tests {
         let handle = tracker.start();
         tracker.stop();
         let result = tokio::time::timeout(Duration::from_secs(2), handle).await;
-        assert!(result.is_ok(), "background task did not stop within timeout");
+        assert!(
+            result.is_ok(),
+            "background task did not stop within timeout"
+        );
     }
 
     // ------------------------------------------------------------------

@@ -48,10 +48,7 @@ pub enum WifiConnectError {
     CommandFailed(String),
     /// DHCP timeout — STA did not get an IP address.
     #[error("DHCP timeout: STA {iface} did not get IP within {timeout:?}")]
-    DhcpTimeout {
-        iface: String,
-        timeout: Duration,
-    },
+    DhcpTimeout { iface: String, timeout: Duration },
     /// Connection verification failed (SSID mismatch).
     #[error("verification failed: {0}")]
     VerificationFailed(String),
@@ -155,9 +152,7 @@ impl WifiConnector {
 
         // Wait for the STA to get an IP
         // Go v1 uses "ifup wwan" + DHCP wait with cross-radio nudge
-        let _ifup_ops = UciOpBuilder::new()
-            .shell("ifup wwan")
-            .build();
+        let _ifup_ops = UciOpBuilder::new().shell("ifup wwan").build();
         execute_shell(&_ifup_ops).await;
 
         // Determine the STA interface name
@@ -357,10 +352,7 @@ impl WifiConnector {
                 "network",
                 "interface",
                 "wwan",
-                vec![
-                    ("proto", "dhcp"),
-                    ("metric", "50"),
-                ],
+                vec![("proto", "dhcp"), ("metric", "50")],
             )
             .add_list("firewall", "@zone[1]", "network", "wwan")
             .commit("network")
@@ -483,7 +475,14 @@ impl WifiConnector {
 
         while start.elapsed() < timeout {
             // Check if interface has an IP
-            if let Ok(output) = self.executor.execute("ip", vec!["addr".to_owned(), "show".to_owned(), iface.to_owned()]).await {
+            if let Ok(output) = self
+                .executor
+                .execute(
+                    "ip",
+                    vec!["addr".to_owned(), "show".to_owned(), iface.to_owned()],
+                )
+                .await
+            {
                 if output.success() {
                     // Look for "inet 192.168.x.x/" in output
                     for line in output.stdout.lines() {
@@ -506,7 +505,15 @@ impl WifiConnector {
             // Nudge DHCP client (Go v1 does this)
             let _ = self
                 .executor
-                .execute("udhcpc", vec!["-i".to_owned(), iface.to_owned(), "-n".to_owned(), "-q".to_owned()])
+                .execute(
+                    "udhcpc",
+                    vec![
+                        "-i".to_owned(),
+                        iface.to_owned(),
+                        "-n".to_owned(),
+                        "-q".to_owned(),
+                    ],
+                )
                 .await;
 
             tokio::time::sleep(poll_interval).await;
@@ -548,11 +555,7 @@ impl WifiConnector {
     }
 
     /// Fallback to a previous connection after a failed switch.
-    async fn fallback_to(
-        &self,
-        radio: &str,
-        ssid: &str,
-    ) -> Result<(), WifiConnectError> {
+    async fn fallback_to(&self, radio: &str, ssid: &str) -> Result<(), WifiConnectError> {
         tracing::warn!("falling back to '{ssid}' on {radio}");
         // Best-effort: try to reconnect to the old AP
         let sta_name = format!("sta_{radio}");
@@ -714,14 +717,21 @@ mod tests {
             matches!(op, UciOp::AddList { config, section, option, value }
                 if config == "firewall" && section == "@zone[1]" && option == "network" && value == "wwan")
         });
-        assert!(add_list_op.is_some(), "should have AddList for firewall wan zone");
+        assert!(
+            add_list_op.is_some(),
+            "should have AddList for firewall wan zone"
+        );
 
         // Check commits
         let commits: Vec<_> = ops
             .iter()
             .filter(|op| matches!(op, UciOp::Commit { config } if config == "network" || config == "firewall"))
             .collect();
-        assert_eq!(commits.len(), 2, "should have commits for network and firewall");
+        assert_eq!(
+            commits.len(),
+            2,
+            "should have commits for network and firewall"
+        );
     }
 
     #[test]
@@ -737,7 +747,9 @@ mod tests {
         );
 
         // Should start with a comment
-        assert!(matches!(&ops[0], UciOp::Comment { text } if text.contains("OldNet") && text.contains("NewNet")));
+        assert!(
+            matches!(&ops[0], UciOp::Comment { text } if text.contains("OldNet") && text.contains("NewNet"))
+        );
 
         // Should have a Delete for the old STA
         let delete_op = ops.iter().find(|op| {
@@ -763,7 +775,9 @@ mod tests {
         assert!(ops.len() >= 2);
 
         // Check for commit
-        assert!(ops.iter().any(|op| matches!(op, UciOp::Commit { config } if config == "wireless")));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, UciOp::Commit { config } if config == "wireless")));
     }
 
     #[test]
@@ -772,7 +786,9 @@ mod tests {
         let ops = connector.build_cleanup_ops();
 
         assert!(ops.len() >= 2);
-        assert!(ops.iter().any(|op| matches!(op, UciOp::Commit { config } if config == "wireless")));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, UciOp::Commit { config } if config == "wireless")));
     }
 
     #[test]
@@ -804,10 +820,7 @@ mod tests {
                     ssid_safe || !cmd.contains("Test"),
                     "SSID with shell metacharacters must be single-quoted: {cmd}"
                 );
-                assert!(
-                    pass_safe,
-                    "Password with quotes must be escaped: {cmd}"
-                );
+                assert!(pass_safe, "Password with quotes must be escaped: {cmd}");
             }
         }
     }
@@ -820,13 +833,15 @@ mod tests {
 
         // Should include uci add for network.wwan
         assert!(
-            cmds.iter().any(|c| c.contains("uci set network.wwan='interface'")),
+            cmds.iter()
+                .any(|c| c.contains("uci set network.wwan='interface'")),
             "should set network.wwan interface type: {cmds:?}"
         );
 
         // Should include firewall add_list
         assert!(
-            cmds.iter().any(|c| c.contains("uci add_list firewall.@zone[1].network='wwan'")),
+            cmds.iter()
+                .any(|c| c.contains("uci add_list firewall.@zone[1].network='wwan'")),
             "should add wwan to firewall wan zone: {cmds:?}"
         );
     }

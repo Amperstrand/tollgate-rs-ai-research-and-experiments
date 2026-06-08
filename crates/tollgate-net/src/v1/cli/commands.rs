@@ -206,10 +206,7 @@ where
     // Step 5: Create STA
     let iface_name = sanitize_iface_name(ssid);
     // Go uses bestRadio; placeholder until M4
-    send_progress(
-        "[5/7]",
-        &format!("Creating STA {} on TBD...", iface_name),
-    );
+    send_progress("[5/7]", &format!("Creating STA {} on TBD...", iface_name));
     // TODO: M4 - s.connector.FindOrCreateSTAForSSID()
 
     // Step 6: Switch upstream
@@ -346,10 +343,7 @@ mod tests {
     fn sanitize_iface_name_special_chars() {
         assert_eq!(sanitize_iface_name("Café-5G!"), "upstream_caf__5g_");
         assert_eq!(sanitize_iface_name("Net@Work"), "upstream_net_work");
-        assert_eq!(
-            sanitize_iface_name("UPPER CASE"),
-            "upstream_upper_case"
-        );
+        assert_eq!(sanitize_iface_name("UPPER CASE"), "upstream_upper_case");
     }
 
     #[test]
@@ -363,11 +357,9 @@ mod tests {
     #[tokio::test]
     async fn streaming_connect_progress_steps() {
         let mut progress_log: Vec<(String, String)> = Vec::new();
-        let result = handle_upstream_connect_streaming(
-            "TestNet",
-            None,
-            |step, msg| progress_log.push((step.to_owned(), msg.to_owned())),
-        )
+        let result = handle_upstream_connect_streaming("TestNet", None, |step, msg| {
+            progress_log.push((step.to_owned(), msg.to_owned()))
+        })
         .await;
 
         assert!(!result.success);
@@ -376,11 +368,29 @@ mod tests {
         assert!(error.contains("M4"));
 
         assert_eq!(progress_log.len(), 6);
-        assert_eq!(progress_log[0], ("[1/7]".to_owned(), "Enabling radios...".to_owned()));
-        assert_eq!(progress_log[1], ("[2/7]".to_owned(), "Scanning for 'TestNet'...".to_owned()));
+        assert_eq!(
+            progress_log[0],
+            ("[1/7]".to_owned(), "Enabling radios...".to_owned())
+        );
+        assert_eq!(
+            progress_log[1],
+            ("[2/7]".to_owned(), "Scanning for 'TestNet'...".to_owned())
+        );
         assert!(progress_log[2].1.contains("Found 'TestNet'"));
-        assert_eq!(progress_log[3], ("[4/7]".to_owned(), "Setting up wwan interface...".to_owned()));
+        assert_eq!(
+            progress_log[3],
+            (
+                "[4/7]".to_owned(),
+                "Setting up wwan interface...".to_owned()
+            )
+        );
         assert!(progress_log[4].1.contains("Creating STA upstream_testnet"));
-        assert_eq!(progress_log[5], ("[6/7]".to_owned(), "Switching upstream... waiting for DHCP".to_owned()));
+        assert_eq!(
+            progress_log[5],
+            (
+                "[6/7]".to_owned(),
+                "Switching upstream... waiting for DHCP".to_owned()
+            )
+        );
     }
 }

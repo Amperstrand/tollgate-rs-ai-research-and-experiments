@@ -256,11 +256,7 @@ impl<W: Wallet> V1Client<W> {
         let amount = steps * pricing.price_per_step;
         let mint_url = pricing.mint_url.clone();
 
-        tracing::info!(
-            steps,
-            amount,
-            "Requesting Lightning invoice"
-        );
+        tracing::info!(steps, amount, "Requesting Lightning invoice");
 
         let resp = self.http.request_ln_invoice(amount, &mint_url).await?;
         let quote = resp

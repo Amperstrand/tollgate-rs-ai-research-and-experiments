@@ -13,32 +13,9 @@ use super::types::CLIResponse;
 // ---------------------------------------------------------------------------
 
 const NATO_WORDS: &[&str] = &[
-    "alpha",
-    "bravo",
-    "charlie",
-    "delta",
-    "echo",
-    "foxtrot",
-    "golf",
-    "hotel",
-    "india",
-    "juliet",
-    "kilo",
-    "lima",
-    "mike",
-    "november",
-    "oscar",
-    "papa",
-    "quebec",
-    "romeo",
-    "sierra",
-    "tango",
-    "uniform",
-    "victor",
-    "whiskey",
-    "xray",
-    "yankee",
-    "zulu",
+    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet",
+    "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo", "sierra", "tango",
+    "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
 ];
 
 /// Generate a human-readable random password in the format `Word-Word-Word-NN`.
@@ -137,9 +114,7 @@ fn wifi_reload() -> Result<(), String> {
 /// Top-level dispatch for `network` CLI commands.
 pub fn handle_network_command(args: &[String]) -> CLIResponse {
     let Some(subcommand) = args.first() else {
-        return CLIResponse::error(
-            "Network command requires a subcommand (private)",
-        );
+        return CLIResponse::error("Network command requires a subcommand (private)");
     };
 
     match subcommand.as_str() {
@@ -186,7 +161,8 @@ fn handle_private_network_status() -> CLIResponse {
         Err(e) => return CLIResponse::error(format!("Failed to get private network SSID: {e}")),
     };
 
-    let password = uci_get("wireless.private_radio0.key").unwrap_or_else(|_| "(not set)".to_owned());
+    let password =
+        uci_get("wireless.private_radio0.key").unwrap_or_else(|_| "(not set)".to_owned());
 
     let disabled = uci_get("wireless.private_radio0.disabled").unwrap_or_default();
     let enabled = disabled != "1";
@@ -270,7 +246,9 @@ fn handle_private_network_rename(new_ssid: &str) -> CLIResponse {
         return CLIResponse::error(format!("Failed to reload wireless: {e}"));
     }
 
-    CLIResponse::ok(format!("Private network renamed to '{new_ssid}' successfully"))
+    CLIResponse::ok(format!(
+        "Private network renamed to '{new_ssid}' successfully"
+    ))
 }
 
 /// `network private set-password [password]` — change password.
@@ -356,7 +334,11 @@ mod tests {
 
             // Last part should be two digits
             let num_part = parts[3];
-            assert_eq!(num_part.len(), 2, "number part should be 2 digits: {num_part}");
+            assert_eq!(
+                num_part.len(),
+                2,
+                "number part should be 2 digits: {num_part}"
+            );
             assert!(
                 num_part.chars().all(|c| c.is_ascii_digit()),
                 "number part should be all digits: {num_part}"
@@ -422,7 +404,10 @@ mod tests {
         let args: Vec<String> = vec!["private".to_owned(), "explode".to_owned()];
         let resp = handle_network_command(&args);
         assert!(!resp.success);
-        assert!(resp.error.unwrap().contains("Unknown private network action"));
+        assert!(resp
+            .error
+            .unwrap()
+            .contains("Unknown private network action"));
     }
 
     #[test]

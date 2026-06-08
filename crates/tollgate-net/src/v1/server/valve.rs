@@ -101,10 +101,7 @@ pub trait Valve: Send + Sync {
 
     /// Get total data usage (download + upload) since baseline was set.
     /// Default: returns 0.
-    async fn get_client_usage_since_baseline(
-        &self,
-        _mac_address: &str,
-    ) -> Result<u64, ValveError> {
+    async fn get_client_usage_since_baseline(&self, _mac_address: &str) -> Result<u64, ValveError> {
         Ok(0)
     }
 
@@ -337,8 +334,12 @@ mod nds {
             let stats = self.fetch_client_stats(mac).await?;
             let baselines = self.data_baselines.lock().await;
             let baseline = baselines.get(mac).cloned().unwrap_or_default();
-            let dl = stats.downloaded_bytes().saturating_sub(baseline.downloaded_bytes);
-            let ul = stats.uploaded_bytes().saturating_sub(baseline.uploaded_bytes);
+            let dl = stats
+                .downloaded_bytes()
+                .saturating_sub(baseline.downloaded_bytes);
+            let ul = stats
+                .uploaded_bytes()
+                .saturating_sub(baseline.uploaded_bytes);
             Ok(dl + ul)
         }
 
@@ -417,7 +418,10 @@ mod nds {
                         .await;
                     match output {
                         Ok(out) if out.status.success() => {
-                            tracing::debug!(mac = mac_owned, "ndsctl deauth successful (auto-close)");
+                            tracing::debug!(
+                                mac = mac_owned,
+                                "ndsctl deauth successful (auto-close)"
+                            );
                         }
                         Ok(out) => {
                             tracing::error!(
@@ -486,7 +490,8 @@ mod nds {
             until_timestamp: i64,
         ) -> Result<(), ValveError> {
             validate_mac(mac_address)?;
-            self.open_gate_until_inner(mac_address, until_timestamp).await
+            self.open_gate_until_inner(mac_address, until_timestamp)
+                .await
         }
 
         async fn get_client_stats(&self, mac_address: &str) -> Result<ClientStats, ValveError> {
@@ -499,7 +504,8 @@ mod nds {
             mac_address: &str,
         ) -> Result<u64, ValveError> {
             validate_mac(mac_address)?;
-            self.get_client_usage_since_baseline_inner(mac_address).await
+            self.get_client_usage_since_baseline_inner(mac_address)
+                .await
         }
 
         async fn set_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
@@ -606,7 +612,10 @@ mod nds {
             assert!(result.is_ok(), "open_gate should succeed");
 
             let gates = valve.gates.lock().await;
-            assert!(gates.contains_key("aa:bb:cc:dd:ee:ff"), "MAC should be in gates map");
+            assert!(
+                gates.contains_key("aa:bb:cc:dd:ee:ff"),
+                "MAC should be in gates map"
+            );
             assert!(
                 matches!(gates.get("aa:bb:cc:dd:ee:ff"), Some(GateEntry::Indefinite)),
                 "gate should be Indefinite"
@@ -624,11 +633,16 @@ mod nds {
                 .as_secs() as i64
                 + 3600;
 
-            let result = valve.open_gate_until_inner("aa:bb:cc:dd:ee:ff", future_ts).await;
+            let result = valve
+                .open_gate_until_inner("aa:bb:cc:dd:ee:ff", future_ts)
+                .await;
             assert!(result.is_ok(), "open_gate_until should succeed");
 
             let gates = valve.gates.lock().await;
-            assert!(gates.contains_key("aa:bb:cc:dd:ee:ff"), "MAC should be in gates map");
+            assert!(
+                gates.contains_key("aa:bb:cc:dd:ee:ff"),
+                "MAC should be in gates map"
+            );
             assert!(
                 matches!(gates.get("aa:bb:cc:dd:ee:ff"), Some(GateEntry::Timed(_))),
                 "gate should be Timed"
@@ -641,7 +655,9 @@ mod nds {
             let valve = NdsValve::with_ndsctl_path(path);
 
             let past_ts = 1;
-            let result = valve.open_gate_until_inner("aa:bb:cc:dd:ee:ff", past_ts).await;
+            let result = valve
+                .open_gate_until_inner("aa:bb:cc:dd:ee:ff", past_ts)
+                .await;
             assert!(result.is_err(), "past timestamp should return error");
         }
 
@@ -735,7 +751,9 @@ mod nds {
             valve.open_gate_inner("aa:bb:cc:dd:ee:ff").await.unwrap();
 
             let baselines = valve.data_baselines.lock().await;
-            let baseline = baselines.get("aa:bb:cc:dd:ee:ff").expect("baseline should exist");
+            let baseline = baselines
+                .get("aa:bb:cc:dd:ee:ff")
+                .expect("baseline should exist");
             assert_eq!(baseline.downloaded_bytes, 1024 * 1024);
             assert_eq!(baseline.uploaded_bytes, 512 * 1024);
         }
@@ -752,7 +770,9 @@ mod nds {
                 .unwrap();
 
             let baselines = valve.data_baselines.lock().await;
-            let baseline = baselines.get("aa:bb:cc:dd:ee:ff").expect("baseline should exist");
+            let baseline = baselines
+                .get("aa:bb:cc:dd:ee:ff")
+                .expect("baseline should exist");
             assert_eq!(baseline.downloaded_bytes, 0);
             assert_eq!(baseline.uploaded_bytes, 0);
         }

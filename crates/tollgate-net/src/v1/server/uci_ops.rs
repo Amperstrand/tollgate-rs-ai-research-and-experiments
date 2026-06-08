@@ -125,28 +125,19 @@ pub enum UciOp {
     /// Commit pending changes.
     /// Shell: `uci commit {config}`
     /// ubus: `uci.commit {config}`
-    Commit {
-        config: String,
-    },
+    Commit { config: String },
 
     /// Raw shell command (for operations that don't map to UCI).
     /// ubus transport: skipped or mapped to ubus exec if available.
-    Shell {
-        command: String,
-    },
+    Shell { command: String },
 
     /// Service management action.
     /// Shell: `/etc/init.d/{name} {action}`
     /// ubus: `rc.{action} {name}`
-    Service {
-        name: String,
-        action: ServiceAction,
-    },
+    Service { name: String, action: ServiceAction },
 
     /// Comment (for logging, not executed).
-    Comment {
-        text: String,
-    },
+    Comment { text: String },
 }
 
 /// Service management actions (start, stop, restart, enable, disable).
@@ -209,7 +200,9 @@ pub fn render_shell(ops: &[UciOp]) -> Vec<String> {
                         }
                         OpValue::List(items) => {
                             // For lists, first delete existing, then add each item
-                            cmds.push(format!("uci delete {config}.{section}.{key} 2>/dev/null || true"));
+                            cmds.push(format!(
+                                "uci delete {config}.{section}.{key} 2>/dev/null || true"
+                            ));
                             for item in items {
                                 cmds.push(format!(
                                     "uci add_list {config}.{section}.{key}={}",
@@ -228,10 +221,7 @@ pub fn render_shell(ops: &[UciOp]) -> Vec<String> {
             } => {
                 // Named section: `uci set config.name='type'`
                 if !name.is_empty() {
-                    cmds.push(format!(
-                        "uci set {config}.{name}={}",
-                        sh_quote(type_name)
-                    ));
+                    cmds.push(format!("uci set {config}.{name}={}", sh_quote(type_name)));
                 } else {
                     // Anonymous section is not directly supported via shell in one command.
                     // Use `uci add config type` and then set values.
@@ -348,17 +338,13 @@ pub async fn execute_shell(ops: &[UciOp]) -> Vec<Result<(), UciOpError>> {
                     let stderr = String::from_utf8_lossy(&out.stderr);
                     tracing::warn!("command failed: {cmd}: {stderr}");
                     if op_result.is_ok() {
-                        op_result = Err(UciOpError::ShellFailed(format!(
-                            "{cmd}: {stderr}"
-                        )));
+                        op_result = Err(UciOpError::ShellFailed(format!("{cmd}: {stderr}")));
                     }
                 }
                 Err(e) => {
                     tracing::warn!("command execution error: {cmd}: {e}");
                     if op_result.is_ok() {
-                        op_result = Err(UciOpError::ShellFailed(format!(
-                            "{cmd}: {e}"
-                        )));
+                        op_result = Err(UciOpError::ShellFailed(format!("{cmd}: {e}")));
                     }
                 }
             }
@@ -398,12 +384,7 @@ impl UciOpBuilder {
     }
 
     /// Set one or more key-value pairs on a UCI section.
-    pub fn set(
-        mut self,
-        config: &str,
-        section: &str,
-        values: Vec<(&str, &str)>,
-    ) -> Self {
+    pub fn set(mut self, config: &str, section: &str, values: Vec<(&str, &str)>) -> Self {
         self.ops.push(UciOp::Set {
             config: config.to_owned(),
             section: section.to_owned(),
@@ -456,13 +437,7 @@ impl UciOpBuilder {
     }
 
     /// Append a value to a UCI list option.
-    pub fn add_list(
-        mut self,
-        config: &str,
-        section: &str,
-        option: &str,
-        value: &str,
-    ) -> Self {
+    pub fn add_list(mut self, config: &str, section: &str, option: &str, value: &str) -> Self {
         self.ops.push(UciOp::AddList {
             config: config.to_owned(),
             section: section.to_owned(),
@@ -588,10 +563,7 @@ mod tests {
             section: "radio0".to_owned(),
             values: vec![
                 ("disabled".to_owned(), OpValue::Single("0".to_owned())),
-                (
-                    "channel".to_owned(),
-                    OpValue::Single("36".to_owned()),
-                ),
+                ("channel".to_owned(), OpValue::Single("36".to_owned())),
             ],
         }];
         let cmds = render_shell(&ops);
@@ -633,10 +605,7 @@ mod tests {
             name: "myap".to_owned(),
             values: vec![
                 ("ssid".to_owned(), OpValue::Single("TestAP".to_owned())),
-                (
-                    "mode".to_owned(),
-                    OpValue::Single("ap".to_owned()),
-                ),
+                ("mode".to_owned(), OpValue::Single("ap".to_owned())),
             ],
         }];
         let cmds = render_shell(&ops);
@@ -656,10 +625,7 @@ mod tests {
             config: "wireless".to_owned(),
             type_name: "wifi-iface".to_owned(),
             name: String::new(),
-            values: vec![(
-                "ssid".to_owned(),
-                OpValue::Single("AnonAP".to_owned()),
-            )],
+            values: vec![("ssid".to_owned(), OpValue::Single("AnonAP".to_owned()))],
         }];
         let cmds = render_shell(&ops);
         assert_eq!(
@@ -751,10 +717,7 @@ mod tests {
             UciOp::Set {
                 config: "wireless".to_owned(),
                 section: "radio0".to_owned(),
-                values: vec![(
-                    "disabled".to_owned(),
-                    OpValue::Single("0".to_owned()),
-                )],
+                values: vec![("disabled".to_owned(), OpValue::Single("0".to_owned()))],
             },
             UciOp::Commit {
                 config: "wireless".to_owned(),
@@ -803,14 +766,26 @@ mod tests {
 
         // Verify types
         assert!(matches!(&ops[0], UciOp::Comment { text } if text == "Configure WiFi"));
-        assert!(matches!(&ops[1], UciOp::Set { config, section, .. } if config == "wireless" && section == "radio0"));
-        assert!(matches!(&ops[2], UciOp::Add { config, type_name, name, .. } if config == "wireless" && type_name == "wifi-iface" && name == "myap"));
-        assert!(matches!(&ops[3], UciOp::AddList { config, section, option, value } if config == "firewall" && section == "guest" && option == "network" && value == "guest"));
-        assert!(matches!(&ops[4], UciOp::Delete { config, section, option } if config == "wireless" && section == "radio0" && option.as_deref() == Some("channel")));
-        assert!(matches!(&ops[5], UciOp::Delete { config, section, option } if config == "wireless" && section == "old_iface" && option.is_none()));
+        assert!(
+            matches!(&ops[1], UciOp::Set { config, section, .. } if config == "wireless" && section == "radio0")
+        );
+        assert!(
+            matches!(&ops[2], UciOp::Add { config, type_name, name, .. } if config == "wireless" && type_name == "wifi-iface" && name == "myap")
+        );
+        assert!(
+            matches!(&ops[3], UciOp::AddList { config, section, option, value } if config == "firewall" && section == "guest" && option == "network" && value == "guest")
+        );
+        assert!(
+            matches!(&ops[4], UciOp::Delete { config, section, option } if config == "wireless" && section == "radio0" && option.as_deref() == Some("channel"))
+        );
+        assert!(
+            matches!(&ops[5], UciOp::Delete { config, section, option } if config == "wireless" && section == "old_iface" && option.is_none())
+        );
         assert!(matches!(&ops[6], UciOp::Commit { config } if config == "wireless"));
         assert!(matches!(&ops[7], UciOp::Shell { command } if command == "wifi reload"));
-        assert!(matches!(&ops[8], UciOp::Service { name, action } if name == "network" && *action == ServiceAction::Restart));
+        assert!(
+            matches!(&ops[8], UciOp::Service { name, action } if name == "network" && *action == ServiceAction::Restart)
+        );
     }
 
     #[test]
@@ -822,7 +797,11 @@ mod tests {
     #[test]
     fn test_builder_set_values() {
         let ops = UciOpBuilder::new()
-            .set("wireless", "radio0", vec![("disabled", "0"), ("channel", "36")])
+            .set(
+                "wireless",
+                "radio0",
+                vec![("disabled", "0"), ("channel", "36")],
+            )
             .build();
 
         let values = match &ops[0] {

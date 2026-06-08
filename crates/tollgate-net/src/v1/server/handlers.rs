@@ -163,7 +163,11 @@ async fn resolve_origin(headers: &HeaderMap) -> (Option<String>, bool) {
 
 async fn handle_get_details(headers: HeaderMap, State(state): State<Arc<ServerState>>) -> Response {
     let (origin, is_local) = resolve_origin(&headers).await;
-    cors_response(json_response(StatusCode::OK, state.advertisement.clone()), origin.as_deref(), is_local)
+    cors_response(
+        json_response(StatusCode::OK, state.advertisement.clone()),
+        origin.as_deref(),
+        is_local,
+    )
 }
 
 async fn handle_options(headers: HeaderMap) -> Response {
@@ -322,7 +326,11 @@ async fn handle_post_payment(
     }
 
     match merchant::build_session_event(&session, &state.config, &mac) {
-        Ok(json) => cors_response(json_response(StatusCode::OK, json), origin.as_deref(), is_local),
+        Ok(json) => cors_response(
+            json_response(StatusCode::OK, json),
+            origin.as_deref(),
+            is_local,
+        ),
         Err(e) => {
             tracing::error!("Failed to build session event: {e}");
             cors_response(
@@ -347,12 +355,24 @@ async fn handle_usage(
 
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
-        Err(_) => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local),
+        Err(_) => {
+            return cors_response(
+                text_response(StatusCode::OK, "-1/-1".to_owned()),
+                origin.as_deref(),
+                is_local,
+            )
+        }
     };
 
     let session = match state.sessions.get(&mac).await.ok().flatten() {
         Some(s) => s,
-        None => return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local),
+        None => {
+            return cors_response(
+                text_response(StatusCode::OK, "-1/-1".to_owned()),
+                origin.as_deref(),
+                is_local,
+            )
+        }
     };
 
     if session.metric == "milliseconds" {
@@ -367,26 +387,43 @@ async fn handle_usage(
             if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
-            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local);
+            return cors_response(
+                text_response(StatusCode::OK, "-1/-1".to_owned()),
+                origin.as_deref(),
+                is_local,
+            );
         }
 
-        cors_response(text_response(
-            StatusCode::OK,
-            format!("{elapsed_ms}/{}", session.allotment),
-        ), origin.as_deref(), is_local)
+        cors_response(
+            text_response(
+                StatusCode::OK,
+                format!("{elapsed_ms}/{}", session.allotment),
+            ),
+            origin.as_deref(),
+            is_local,
+        )
     } else {
-        let usage = state.valve.get_client_usage_since_baseline(&mac).await.unwrap_or(0);
+        let usage = state
+            .valve
+            .get_client_usage_since_baseline(&mac)
+            .await
+            .unwrap_or(0);
         if usage >= session.allotment {
             let _ = state.sessions.remove(&mac).await;
             if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
-            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()), origin.as_deref(), is_local);
+            return cors_response(
+                text_response(StatusCode::OK, "-1/-1".to_owned()),
+                origin.as_deref(),
+                is_local,
+            );
         }
-        cors_response(text_response(
-            StatusCode::OK,
-            format!("{usage}/{}", session.allotment),
-        ), origin.as_deref(), is_local)
+        cors_response(
+            text_response(StatusCode::OK, format!("{usage}/{}", session.allotment)),
+            origin.as_deref(),
+            is_local,
+        )
     }
 }
 
@@ -398,8 +435,16 @@ async fn handle_whoami(
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let (origin, is_local) = resolve_origin(&headers).await;
     match state.mac_resolver.resolve(&ip) {
-        Ok(mac) => cors_response(text_response(StatusCode::OK, format!("mac={mac}")), origin.as_deref(), is_local),
-        Err(_) => cors_response(text_response(StatusCode::OK, "mac=".to_owned()), origin.as_deref(), is_local),
+        Ok(mac) => cors_response(
+            text_response(StatusCode::OK, format!("mac={mac}")),
+            origin.as_deref(),
+            is_local,
+        ),
+        Err(_) => cors_response(
+            text_response(StatusCode::OK, "mac=".to_owned()),
+            origin.as_deref(),
+            is_local,
+        ),
     }
 }
 
@@ -413,20 +458,28 @@ async fn handle_balance(
     let mac = match state.mac_resolver.resolve(&ip) {
         Ok(mac) => mac,
         Err(_) => {
-            return cors_response(json_response(
-                StatusCode::OK,
-                r#"{"status":1,"session_active":false}"#.to_owned(),
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                json_response(
+                    StatusCode::OK,
+                    r#"{"status":1,"session_active":false}"#.to_owned(),
+                ),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
     let session = match state.sessions.get(&mac).await.ok().flatten() {
         Some(s) => s,
         None => {
-            return cors_response(json_response(
-                StatusCode::OK,
-                r#"{"status":1,"session_active":false}"#.to_owned(),
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                json_response(
+                    StatusCode::OK,
+                    r#"{"status":1,"session_active":false}"#.to_owned(),
+                ),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
@@ -442,25 +495,37 @@ async fn handle_balance(
             if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
-            return cors_response(json_response(
-                StatusCode::OK,
-                r#"{"status":1,"session_active":false}"#.to_owned(),
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                json_response(
+                    StatusCode::OK,
+                    r#"{"status":1,"session_active":false}"#.to_owned(),
+                ),
+                origin.as_deref(),
+                is_local,
+            );
         }
 
         let rem = session.allotment as i64 - elapsed_ms;
         (elapsed_ms as u64, rem.max(0) as u64)
     } else {
-        let usage = state.valve.get_client_usage_since_baseline(&mac).await.unwrap_or(0);
+        let usage = state
+            .valve
+            .get_client_usage_since_baseline(&mac)
+            .await
+            .unwrap_or(0);
         if usage >= session.allotment {
             let _ = state.sessions.remove(&mac).await;
             if let Err(e) = state.valve.close_gate(&mac).await {
                 tracing::warn!("Failed to close valve for {mac}: {e}");
             }
-            return cors_response(json_response(
-                StatusCode::OK,
-                r#"{"status":1,"session_active":false}"#.to_owned(),
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                json_response(
+                    StatusCode::OK,
+                    r#"{"status":1,"session_active":false}"#.to_owned(),
+                ),
+                origin.as_deref(),
+                is_local,
+            );
         }
         let rem = session.allotment.saturating_sub(usage);
         (usage, rem)
@@ -476,10 +541,14 @@ async fn handle_balance(
         "start_time": session.start_time,
     });
 
-    cors_response(json_response(
-        StatusCode::OK,
-        serde_json::to_string(&json).unwrap_or_default(),
-    ), origin.as_deref(), is_local)
+    cors_response(
+        json_response(
+            StatusCode::OK,
+            serde_json::to_string(&json).unwrap_or_default(),
+        ),
+        origin.as_deref(),
+        is_local,
+    )
 }
 
 fn extract_payment_token(body: &str) -> String {
@@ -587,20 +656,22 @@ async fn handle_post_ln_invoice(
     let req: LnInvoiceRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => {
-            return cors_response(ln_error_response(
-                StatusCode::BAD_REQUEST,
-                "amount and mint_url are required",
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(StatusCode::BAD_REQUEST, "amount and mint_url are required"),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
     let mint_url = req.mint_url.or(req.mint).unwrap_or_default();
 
     if req.amount == 0 || mint_url.is_empty() {
-        return cors_response(ln_error_response(
-            StatusCode::BAD_REQUEST,
-            "amount and mint_url are required",
-        ), origin.as_deref(), is_local);
+        return cors_response(
+            ln_error_response(StatusCode::BAD_REQUEST, "amount and mint_url are required"),
+            origin.as_deref(),
+            is_local,
+        );
     }
 
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
@@ -608,10 +679,14 @@ async fn handle_post_ln_invoice(
         Ok(mac) => mac,
         Err(e) => {
             tracing::warn!("MAC resolution failed for {ip}: {e}");
-            return cors_response(ln_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "cannot resolve MAC address",
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "cannot resolve MAC address",
+                ),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
@@ -621,19 +696,21 @@ async fn handle_post_ln_invoice(
         .iter()
         .any(|m| m.url == mint_url)
     {
-        return cors_response(ln_error_response(
-            StatusCode::BAD_REQUEST,
-            "mint not accepted",
-        ), origin.as_deref(), is_local);
+        return cors_response(
+            ln_error_response(StatusCode::BAD_REQUEST, "mint not accepted"),
+            origin.as_deref(),
+            is_local,
+        );
     }
 
     let wallet = match &state.mint_quote_wallet {
         Some(w) => Arc::clone(w),
         None => {
-            return cors_response(ln_error_response(
-                StatusCode::BAD_REQUEST,
-                "lightning payments not available",
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(StatusCode::BAD_REQUEST, "lightning payments not available"),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
@@ -641,10 +718,14 @@ async fn handle_post_ln_invoice(
         Ok(info) => info,
         Err(e) => {
             tracing::warn!("Mint quote request failed: {e}");
-            return cors_response(ln_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("quote request failed: {e}"),
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("quote request failed: {e}"),
+                ),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
@@ -671,10 +752,11 @@ async fn handle_post_ln_invoice(
 
     if let Err(e) = state.lightning_quotes.insert(record).await {
         tracing::error!("Failed to store lightning quote: {e}");
-        return cors_response(ln_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal error",
-        ), origin.as_deref(), is_local);
+        return cors_response(
+            ln_error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+            origin.as_deref(),
+            is_local,
+        );
     }
 
     let resp = LnInvoiceResponse {
@@ -691,10 +773,14 @@ async fn handle_post_ln_invoice(
         error: None,
     };
 
-    cors_response(json_response(
-        StatusCode::OK,
-        serde_json::to_string(&resp).unwrap_or_default(),
-    ), origin.as_deref(), is_local)
+    cors_response(
+        json_response(
+            StatusCode::OK,
+            serde_json::to_string(&resp).unwrap_or_default(),
+        ),
+        origin.as_deref(),
+        is_local,
+    )
 }
 
 #[allow(clippy::too_many_lines)]
@@ -709,10 +795,11 @@ async fn handle_get_ln_invoice(
     let quote_id = match params.quote {
         Some(q) if !q.is_empty() => q,
         _ => {
-            return cors_response(ln_error_response(
-                StatusCode::BAD_REQUEST,
-                "quote is required",
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(StatusCode::BAD_REQUEST, "quote is required"),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
@@ -721,17 +808,22 @@ async fn handle_get_ln_invoice(
         Ok(mac) => mac,
         Err(e) => {
             tracing::warn!("MAC resolution failed for {ip}: {e}");
-            return cors_response(ln_error_response(
-                StatusCode::OK,
-                "cannot resolve MAC address",
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(StatusCode::OK, "cannot resolve MAC address"),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
     let mut record = match state.lightning_quotes.get_for_mac(&quote_id, &mac).await {
         Ok(Some(r)) => r,
         Ok(None) | Err(_) => {
-            return cors_response(ln_error_response(StatusCode::OK, "quote not found"), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(StatusCode::OK, "quote not found"),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
@@ -781,10 +873,11 @@ async fn handle_get_ln_invoice(
                         .lightning_quotes
                         .update(&quote_id, record.clone())
                         .await;
-                    return cors_response(ln_error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "mint tokens failed",
-                    ), origin.as_deref(), is_local);
+                    return cors_response(
+                        ln_error_response(StatusCode::INTERNAL_SERVER_ERROR, "mint tokens failed"),
+                        origin.as_deref(),
+                        is_local,
+                    );
                 }
             }
         }
@@ -799,10 +892,14 @@ async fn handle_get_ln_invoice(
                         .lightning_quotes
                         .update(&quote_id, record.clone())
                         .await;
-                    return cors_response(ln_error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "allotment calculation failed",
-                    ), origin.as_deref(), is_local);
+                    return cors_response(
+                        ln_error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "allotment calculation failed",
+                        ),
+                        origin.as_deref(),
+                        is_local,
+                    );
                 }
             };
 
@@ -824,10 +921,14 @@ async fn handle_get_ln_invoice(
                     .lightning_quotes
                     .update(&quote_id, record.clone())
                     .await;
-                return cors_response(ln_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "failed to update session",
-                ), origin.as_deref(), is_local);
+                return cors_response(
+                    ln_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to update session",
+                    ),
+                    origin.as_deref(),
+                    is_local,
+                );
             }
         };
 
@@ -849,10 +950,14 @@ async fn handle_get_ln_invoice(
                 .lightning_quotes
                 .update(&quote_id, record.clone())
                 .await;
-            return cors_response(ln_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "valve open failed, session rolled back",
-            ), origin.as_deref(), is_local);
+            return cors_response(
+                ln_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "valve open failed, session rolled back",
+                ),
+                origin.as_deref(),
+                is_local,
+            );
         }
 
         record.session_granted = true;
@@ -900,10 +1005,14 @@ async fn handle_get_ln_invoice(
         }
     };
 
-    cors_response(json_response(
-        StatusCode::OK,
-        serde_json::to_string(&resp).unwrap_or_default(),
-    ), origin.as_deref(), is_local)
+    cors_response(
+        json_response(
+            StatusCode::OK,
+            serde_json::to_string(&resp).unwrap_or_default(),
+        ),
+        origin.as_deref(),
+        is_local,
+    )
 }
 
 #[cfg(test)]
@@ -964,15 +1073,21 @@ mod tests {
         let resp = text_response(StatusCode::OK, "test".to_owned());
         let resp = cors_response(resp, Some("http://192.168.1.1:8080"), true);
         assert_eq!(
-            resp.headers().get("access-control-allow-origin").map(|v| v.to_str().unwrap()),
+            resp.headers()
+                .get("access-control-allow-origin")
+                .map(|v| v.to_str().unwrap()),
             Some("http://192.168.1.1:8080")
         );
         assert_eq!(
-            resp.headers().get("access-control-allow-methods").map(|v| v.to_str().unwrap()),
+            resp.headers()
+                .get("access-control-allow-methods")
+                .map(|v| v.to_str().unwrap()),
             Some("GET, POST, OPTIONS")
         );
         assert_eq!(
-            resp.headers().get("access-control-allow-headers").map(|v| v.to_str().unwrap()),
+            resp.headers()
+                .get("access-control-allow-headers")
+                .map(|v| v.to_str().unwrap()),
             Some("Content-Type, Authorization")
         );
     }

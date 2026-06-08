@@ -24,8 +24,8 @@ use tollgate_net::mock::MockWallet;
 use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
     build_advertisement, AcceptedMint, InMemoryLightningQuoteStore, InMemorySessionStore,
-    LightningQuoteRecord, MerchantProvider, MockMintQuoteWallet, QuoteState, ServerState, StubMacResolver, StubValve,
-    V1ServerConfig,
+    LightningQuoteRecord, MerchantProvider, MockMintQuoteWallet, QuoteState, ServerState,
+    StubMacResolver, StubValve, V1ServerConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -86,11 +86,7 @@ fn mock_token(amount_sats: u64) -> Vec<u8> {
 /// Start a v1 server on a random port. Returns (base_url, join_handle, server_state).
 async fn start_server(
     config: V1ServerConfig,
-) -> (
-    String,
-    tokio::task::JoinHandle<()>,
-    Arc<ServerState>,
-) {
+) -> (String, tokio::task::JoinHandle<()>, Arc<ServerState>) {
     let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
     let merchant = Arc::new(MerchantProvider::new(wallet));
     let advertisement = build_advertisement(&config).unwrap();
@@ -151,7 +147,12 @@ async fn parity_get_advertisement_returns_kind_10021() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -167,7 +168,12 @@ async fn parity_get_advertisement_valid_signature() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
     assert!(
@@ -184,7 +190,12 @@ async fn parity_get_advertisement_has_metric_tag() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -207,7 +218,12 @@ async fn parity_get_advertisement_has_step_size_tag() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -230,7 +246,12 @@ async fn parity_get_advertisement_has_price_per_step_tags() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -263,7 +284,12 @@ async fn parity_get_advertisement_has_cors_headers() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(
         resp.headers()
             .get("access-control-allow-origin")
@@ -280,7 +306,12 @@ async fn parity_get_advertisement_json_content_type() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let ct = resp
         .headers()
         .get("content-type")
@@ -303,7 +334,12 @@ async fn parity_get_advertisement_pubkey_matches_config() {
     let (base_url, server, _state) = start_server(config).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
     assert_eq!(event.pubkey, expected_pubkey);
@@ -337,7 +373,12 @@ async fn parity_get_advertisement_multiple_mints() {
     let (base_url, server, _state) = start_server(config).await;
     let client = Client::new();
 
-    let resp = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     let event: Event = Event::from_json(&body).unwrap();
 
@@ -362,7 +403,13 @@ async fn parity_post_payment_returns_kind_1022() {
     let client = Client::new();
 
     let token = mock_token(10);
-    let resp = client.post(&base_url).header("Origin", "http://192.168.1.1:8080").body(token).send().await.unwrap();
+    let resp = client
+        .post(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .body(token)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -474,10 +521,7 @@ async fn parity_post_session_event_has_p_tag() {
             None
         }
     });
-    assert!(
-        p_tag.is_some(),
-        "session event must have a 'p' tag"
-    );
+    assert!(p_tag.is_some(), "session event must have a 'p' tag");
     assert!(
         p_tag.as_ref().unwrap().contains(':'),
         "p tag should contain MAC address with colons: {}",
@@ -511,7 +555,10 @@ async fn parity_post_session_event_has_start_time_tag() {
             None
         }
     });
-    assert!(start_time.is_some(), "session event must have start-time tag");
+    assert!(
+        start_time.is_some(),
+        "session event must have start-time tag"
+    );
     let st = start_time.unwrap();
     assert!(
         st >= before && st <= after,
@@ -638,7 +685,13 @@ async fn parity_post_payment_raw_token() {
 
     // Send raw bytes — not a JSON event, just the mock token
     let token = mock_token(10);
-    let resp = client.post(&base_url).header("Origin", "http://192.168.1.1:8080").body(token).send().await.unwrap();
+    let resp = client
+        .post(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .body(token)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
 
     let body = resp.text().await.unwrap();
@@ -726,7 +779,13 @@ async fn parity_post_payment_has_cors_headers() {
     let client = Client::new();
 
     let token = mock_token(10);
-    let resp = client.post(&base_url).header("Origin", "http://192.168.1.1:8080").body(token).send().await.unwrap();
+    let resp = client
+        .post(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .body(token)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(
         resp.headers()
             .get("access-control-allow-origin")
@@ -1492,10 +1551,20 @@ async fn parity_edge_advertisement_consistent() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
-    let resp1 = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp1 = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body1 = resp1.text().await.unwrap();
 
-    let resp2 = client.get(&base_url).header("Origin", "http://192.168.1.1:8080").send().await.unwrap();
+    let resp2 = client
+        .get(&base_url)
+        .header("Origin", "http://192.168.1.1:8080")
+        .send()
+        .await
+        .unwrap();
     let body2 = resp2.text().await.unwrap();
 
     assert_eq!(

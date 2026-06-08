@@ -29,9 +29,7 @@ impl Wallet for DegradedWallet {
         &self,
         _token: &[u8],
     ) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
-        Box::pin(async {
-            Err(WalletError::TokenRejected(DEGRADED_MSG.to_owned()))
-        })
+        Box::pin(async { Err(WalletError::TokenRejected(DEGRADED_MSG.to_owned())) })
     }
 
     fn create_token(
@@ -39,9 +37,7 @@ impl Wallet for DegradedWallet {
         _amount: Amount,
         _mint_url: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, WalletError>> + Send + '_>> {
-        Box::pin(async {
-            Err(WalletError::Internal(DEGRADED_MSG.to_owned()))
-        })
+        Box::pin(async { Err(WalletError::Internal(DEGRADED_MSG.to_owned())) })
     }
 
     fn mint_reachable(

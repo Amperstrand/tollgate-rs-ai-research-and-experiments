@@ -35,9 +35,9 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteMessage};
-use netlink_packet_route::link::LinkFlags;
 use netlink_packet_route::address::AddressAttribute;
+use netlink_packet_route::link::LinkFlags;
+use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteMessage};
 use rtnetlink::MulticastGroup;
 
 // ---------------------------------------------------------------------------
@@ -66,10 +66,7 @@ pub enum NetworkEvent {
         gateway_ip: Option<IpAddr>,
     },
     /// Address removed from an interface.
-    AddressDeleted {
-        interface: String,
-        address: IpAddr,
-    },
+    AddressDeleted { interface: String, address: IpAddr },
 }
 
 /// Snapshot of interface state at event time.
@@ -390,10 +387,7 @@ impl NetworkMonitor {
         let link_index = msg.header.index;
         let gateway_ip = infer_gateway(&iface_name, link_index, handle).await;
 
-        if self
-            .should_emit(&iface_name, EventType::AddressAdded)
-            .await
-        {
+        if self.should_emit(&iface_name, EventType::AddressAdded).await {
             tracing::info!(interface = %iface_name, %addr, ?gateway_ip, "AddressAdded");
             let event = NetworkEvent::AddressAdded {
                 interface: iface_name,
@@ -652,10 +646,7 @@ async fn find_global_default_gateway(
 ///
 /// Given `192.168.1.100/24`, computes `192.168.1.1`.
 /// Go v1 also tries `network+254` as a second candidate.
-async fn ip_heuristic_gateway(
-    handle: &rtnetlink::Handle,
-    link_index: u32,
-) -> Option<IpAddr> {
+async fn ip_heuristic_gateway(handle: &rtnetlink::Handle, link_index: u32) -> Option<IpAddr> {
     let mut addrs = handle
         .address()
         .get()
@@ -697,10 +688,7 @@ async fn get_current_interfaces(
     handle: &rtnetlink::Handle,
     monitor: &NetworkMonitor,
 ) -> Result<Vec<InterfaceInfo>, NetworkMonitorError> {
-    let mut links = handle
-        .link()
-        .get()
-        .execute();
+    let mut links = handle.link().get().execute();
 
     let mut result = Vec::new();
 
@@ -740,10 +728,7 @@ async fn get_current_interfaces(
 }
 
 /// Query all IP addresses assigned to a specific link index.
-async fn query_interface_addresses(
-    handle: &rtnetlink::Handle,
-    link_index: u32,
-) -> Vec<IpAddr> {
+async fn query_interface_addresses(handle: &rtnetlink::Handle, link_index: u32) -> Vec<IpAddr> {
     let mut addrs = Vec::new();
     let mut stream = handle
         .address()
@@ -781,8 +766,7 @@ fn link_name(msg: &netlink_packet_route::link::LinkMessage) -> Option<String> {
 
 /// Check IFF_UP | IFF_RUNNING. Go v1: `link.Flags&net.FlagUp != 0`.
 fn link_is_up(msg: &netlink_packet_route::link::LinkMessage) -> bool {
-    msg.header.flags.contains(LinkFlags::Up)
-        && msg.header.flags.contains(LinkFlags::Running)
+    msg.header.flags.contains(LinkFlags::Up) && msg.header.flags.contains(LinkFlags::Running)
 }
 
 fn link_is_loopback(msg: &netlink_packet_route::link::LinkMessage) -> bool {
@@ -955,12 +939,8 @@ mod tests {
         let net = ipnetwork::Ipv4Network::new(addr, 24).unwrap();
         let network = net.network();
         let octets = network.octets();
-        let candidate = std::net::Ipv4Addr::new(
-            octets[0],
-            octets[1],
-            octets[2],
-            octets[3].saturating_add(1),
-        );
+        let candidate =
+            std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3].saturating_add(1));
         assert_eq!(candidate, std::net::Ipv4Addr::new(192, 168, 1, 1));
 
         // 10.0.0.5/24 → network 10.0.0.0 → gateway 10.0.0.1

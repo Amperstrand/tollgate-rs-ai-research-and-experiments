@@ -182,7 +182,11 @@ impl TollGateHttpClient {
     /// The server creates a NUT-04 mint quote and returns a BOLT11 invoice
     /// that the client must pay externally. Once paid, the server mints
     /// tokens and grants access.
-    pub async fn request_ln_invoice(&self, amount: u64, mint_url: &str) -> Result<LnInvoiceResponse, V1HttpError> {
+    pub async fn request_ln_invoice(
+        &self,
+        amount: u64,
+        mint_url: &str,
+    ) -> Result<LnInvoiceResponse, V1HttpError> {
         let request = LnInvoiceRequest {
             amount,
             mint_url: Some(mint_url.to_owned()),
@@ -211,7 +215,10 @@ impl TollGateHttpClient {
     ///
     /// Returns the current quote state (UNPAID/PAID/ISSUED) and whether
     /// access has been granted.
-    pub async fn check_ln_invoice_status(&self, quote: &str) -> Result<LnInvoiceStatus, V1HttpError> {
+    pub async fn check_ln_invoice_status(
+        &self,
+        quote: &str,
+    ) -> Result<LnInvoiceStatus, V1HttpError> {
         let url = format!("{}/ln-invoice?quote={}", self.base_url, quote);
         let response = self.client.get(&url).send().await?.error_for_status()?;
         let body = response.text().await?;

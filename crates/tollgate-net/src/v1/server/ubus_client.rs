@@ -56,10 +56,7 @@ pub enum UbusError {
     AuthFailed(String),
     /// ubus call returned a non-zero status code.
     #[error("call failed with code {code}: {message}")]
-    CallFailed {
-        code: i64,
-        message: String,
-    },
+    CallFailed { code: i64, message: String },
     /// HTTP transport error (connection refused, timeout, etc.).
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
@@ -160,15 +157,16 @@ impl UbusClient {
     /// On failure, returns [`UbusError::AuthFailed`].
     pub async fn login(&mut self, username: &str, password: &str) -> Result<(), UbusError> {
         let params = serde_json::json!([username, password]);
-        let response = self
-            .rpc_call_raw("session", "login", params)
-            .await?;
+        let response = self.rpc_call_raw("session", "login", params).await?;
 
         // response is the `result` array: [0, {"ubus_rpc_session": "...", ...}]
         let login_data: LoginResult = serde_json::from_value(response)
             .map_err(|e| UbusError::AuthFailed(format!("failed to parse login response: {e}")))?;
 
-        tracing::debug!("ubus login successful, session length={}", login_data.session.len());
+        tracing::debug!(
+            "ubus login successful, session length={}",
+            login_data.session.len()
+        );
         self.token = Some(login_data.session);
         Ok(())
     }
@@ -230,7 +228,9 @@ impl UbusClient {
             .get("section")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .ok_or_else(|| UbusError::Connection("missing 'section' in uci.add response".to_owned()))
+            .ok_or_else(|| {
+                UbusError::Connection("missing 'section' in uci.add response".to_owned())
+            })
     }
 
     /// Delete a UCI section or a specific option within a section.
@@ -357,13 +357,11 @@ impl UbusClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, UbusError> {
-        let token = self
-            .token
-            .as_deref()
-            .ok_or_else(|| UbusError::Connection("not authenticated — call login() first".to_owned()))?;
+        let token = self.token.as_deref().ok_or_else(|| {
+            UbusError::Connection("not authenticated — call login() first".to_owned())
+        })?;
 
-        let rpc_params =
-            serde_json::json!([token, ubus_obj, method, params]);
+        let rpc_params = serde_json::json!([token, ubus_obj, method, params]);
 
         self.rpc_call_raw(ubus_obj, method, rpc_params).await
     }
@@ -388,21 +386,13 @@ impl UbusClient {
 
         tracing::trace!("ubus call {ubus_obj}.{method} (id={})", request.id);
 
-        let response = self
-            .client
-            .post(&self.url)
-            .json(&request)
-            .send()
-            .await?;
+        let response = self.client.post(&self.url).json(&request).send().await?;
 
         let rpc_response: JsonRpcResponse = response.json().await?;
 
         // Check for JSON-RPC level error
         if let Some(error) = rpc_response.error {
-            let code = error
-                .get("code")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(-1);
+            let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
             let message = error
                 .get("message")
                 .and_then(|m| m.as_str())
@@ -412,9 +402,9 @@ impl UbusClient {
         }
 
         // Parse ubus result array: [status_code, result_data]
-        let result = rpc_response
-            .result
-            .ok_or_else(|| UbusError::Connection("missing result in JSON-RPC response".to_owned()))?;
+        let result = rpc_response.result.ok_or_else(|| {
+            UbusError::Connection("missing result in JSON-RPC response".to_owned())
+        })?;
 
         let result_arr = result
             .as_array()
@@ -424,9 +414,7 @@ impl UbusClient {
             return Err(UbusError::Connection("empty result array".to_owned()));
         }
 
-        let status_code = result_arr[0]
-            .as_i64()
-            .unwrap_or(-1);
+        let status_code = result_arr[0].as_i64().unwrap_or(-1);
 
         if status_code != 0 {
             let message = result_arr
@@ -458,10 +446,7 @@ impl UbusClient {
 /// # Errors
 /// Returns individual [`UciOpError`] per failed op without stopping
 /// execution of subsequent ops.
-pub async fn execute_ubus(
-    client: &UbusClient,
-    ops: &[UciOp],
-) -> Vec<Result<(), UciOpError>> {
+pub async fn execute_ubus(client: &UbusClient, ops: &[UciOp]) -> Vec<Result<(), UciOpError>> {
     let mut results = Vec::with_capacity(ops.len());
 
     for op in ops {
@@ -475,16 +460,14 @@ pub async fn execute_ubus(
                 for (key, value) in values {
                     match value {
                         OpValue::Single(v) => {
-                            json_values
-                                .insert(key.clone(), serde_json::Value::String(v.clone()));
+                            json_values.insert(key.clone(), serde_json::Value::String(v.clone()));
                         }
                         OpValue::List(items) => {
                             let arr: Vec<serde_json::Value> = items
                                 .iter()
                                 .map(|i| serde_json::Value::String(i.clone()))
                                 .collect();
-                            json_values
-                                .insert(key.clone(), serde_json::Value::Array(arr));
+                            json_values.insert(key.clone(), serde_json::Value::Array(arr));
                         }
                     }
                 }
@@ -504,16 +487,14 @@ pub async fn execute_ubus(
                 for (key, value) in values {
                     match value {
                         OpValue::Single(v) => {
-                            json_values
-                                .insert(key.clone(), serde_json::Value::String(v.clone()));
+                            json_values.insert(key.clone(), serde_json::Value::String(v.clone()));
                         }
                         OpValue::List(items) => {
                             let arr: Vec<serde_json::Value> = items
                                 .iter()
                                 .map(|i| serde_json::Value::String(i.clone()))
                                 .collect();
-                            json_values
-                                .insert(key.clone(), serde_json::Value::Array(arr));
+                            json_values.insert(key.clone(), serde_json::Value::Array(arr));
                         }
                     }
                 }
@@ -595,9 +576,7 @@ mod tests {
     ///
     /// Returns `(client, server_guard, mock)`. The mock MUST be kept alive
     /// for the duration of the test — dropping it unregisters the handler.
-    async fn mock_ubus(
-        body: &str,
-    ) -> (UbusClient, mockito::ServerGuard, mockito::Mock) {
+    async fn mock_ubus(body: &str) -> (UbusClient, mockito::ServerGuard, mockito::Mock) {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("POST", "/ubus")
@@ -635,10 +614,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_failure() {
-        let (mut client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[6,{"message":"Access denied"}]}"#,
-        )
-        .await;
+        let (mut client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[6,{"message":"Access denied"}]}"#).await;
         client.token = None;
 
         let result = client.login("root", "wrongpassword").await;
@@ -647,17 +624,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_uci_set_success() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#).await;
 
         let result = client
-            .uci_set(
-                "wireless",
-                "radio0",
-                serde_json::json!({"disabled": "0"}),
-            )
+            .uci_set("wireless", "radio0", serde_json::json!({"disabled": "0"}))
             .await;
         assert!(result.is_ok(), "uci_set should succeed: {result:?}");
     }
@@ -679,13 +650,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_uci_add_success() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[0,{"section":"cfg012345"}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[0,{"section":"cfg012345"}]}"#).await;
 
         let result = client
-            .uci_add("wireless", "wifi-iface", serde_json::json!({"ssid": "TestAP"}))
+            .uci_add(
+                "wireless",
+                "wifi-iface",
+                serde_json::json!({"ssid": "TestAP"}),
+            )
             .await;
         assert!(result.is_ok(), "uci_add should succeed: {result:?}");
         assert_eq!(result.unwrap(), "cfg012345");
@@ -693,36 +666,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_uci_delete_section() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#).await;
 
-        let result = client
-            .uci_delete("wireless", "old_iface", None)
-            .await;
+        let result = client.uci_delete("wireless", "old_iface", None).await;
         assert!(result.is_ok(), "uci_delete should succeed: {result:?}");
     }
 
     #[tokio::test]
     async fn test_uci_delete_option() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#).await;
 
         let result = client
             .uci_delete("wireless", "radio0", Some("disabled"))
             .await;
-        assert!(result.is_ok(), "uci_delete option should succeed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "uci_delete option should succeed: {result:?}"
+        );
     }
 
     #[tokio::test]
     async fn test_uci_commit_success() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#).await;
 
         let result = client.uci_commit("wireless").await;
         assert!(result.is_ok(), "uci_commit should succeed: {result:?}");
@@ -730,10 +698,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_action_success() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#).await;
 
         let result = client.service_action("network", "restart").await;
         assert!(result.is_ok(), "service_action should succeed: {result:?}");
@@ -767,11 +733,17 @@ mod tests {
         let radios = result.unwrap();
         assert_eq!(radios.len(), 2);
 
-        let radio0 = radios.iter().find(|r| r.name == "radio0").expect("radio0 should exist");
+        let radio0 = radios
+            .iter()
+            .find(|r| r.name == "radio0")
+            .expect("radio0 should exist");
         assert_eq!(radio0.band, "2g");
         assert_eq!(radio0.channel, "1");
 
-        let radio1 = radios.iter().find(|r| r.name == "radio1").expect("radio1 should exist");
+        let radio1 = radios
+            .iter()
+            .find(|r| r.name == "radio1")
+            .expect("radio1 should exist");
         assert_eq!(radio1.band, "5g");
         assert_eq!(radio1.channel, "36");
     }
@@ -814,10 +786,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ubus_call_failed() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[6,{"message":"Access denied"}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[6,{"message":"Access denied"}]}"#).await;
 
         let result = client.uci_get("wireless", "radio0").await;
         assert!(result.is_err());
@@ -836,19 +806,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_ubus_ops() {
-        let (client, _server, _mock) = mock_ubus(
-            r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#,
-        )
-        .await;
+        let (client, _server, _mock) =
+            mock_ubus(r#"{"jsonrpc":"2.0","id":1,"result":[0,{}]}"#).await;
 
         let ops = vec![
             UciOp::Set {
                 config: "wireless".to_owned(),
                 section: "radio0".to_owned(),
-                values: vec![(
-                    "disabled".to_owned(),
-                    OpValue::Single("0".to_owned()),
-                )],
+                values: vec![("disabled".to_owned(), OpValue::Single("0".to_owned()))],
             },
             UciOp::Commit {
                 config: "wireless".to_owned(),
@@ -864,8 +829,20 @@ mod tests {
         let results = execute_ubus(&client, &ops).await;
         assert_eq!(results.len(), 4);
         assert!(results[0].is_ok(), "Set should succeed: {:?}", results[0]);
-        assert!(results[1].is_ok(), "Commit should succeed: {:?}", results[1]);
-        assert!(results[2].is_ok(), "Shell should be skipped (Ok): {:?}", results[2]);
-        assert!(results[3].is_ok(), "Comment should be skipped (Ok): {:?}", results[3]);
+        assert!(
+            results[1].is_ok(),
+            "Commit should succeed: {:?}",
+            results[1]
+        );
+        assert!(
+            results[2].is_ok(),
+            "Shell should be skipped (Ok): {:?}",
+            results[2]
+        );
+        assert!(
+            results[3].is_ok(),
+            "Comment should be skipped (Ok): {:?}",
+            results[3]
+        );
     }
 }

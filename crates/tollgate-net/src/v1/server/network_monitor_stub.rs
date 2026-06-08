@@ -31,7 +31,9 @@ pub enum NetworkEvent {
         gateway_ip: Option<IpAddr>,
         info: InterfaceInfo,
     },
-    InterfaceDown { name: String },
+    InterfaceDown {
+        name: String,
+    },
     AddressAdded {
         interface: String,
         address: IpAddr,
@@ -117,9 +119,7 @@ impl NetworkMonitor {
         &self,
         event_tx: mpsc::Sender<NetworkEvent>,
     ) -> Result<(), NetworkMonitorError> {
-        tracing::info!(
-            "NetworkMonitor (stub) started — will emit fake eth0 InterfaceUp after 2s"
-        );
+        tracing::info!("NetworkMonitor (stub) started — will emit fake eth0 InterfaceUp after 2s");
 
         // Emit fake event after 2s delay (matches Go v1 stub)
         tokio::select! {

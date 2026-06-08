@@ -36,7 +36,10 @@ pub fn spawn_data_monitor(
                 .collect();
 
             for session in bytes_sessions {
-                let usage = match valve.get_client_usage_since_baseline(&session.mac_address).await {
+                let usage = match valve
+                    .get_client_usage_since_baseline(&session.mac_address)
+                    .await
+                {
                     Ok(u) => u,
                     Err(e) => {
                         tracing::debug!(
@@ -79,8 +82,8 @@ pub fn spawn_data_monitor(
 mod tests {
     use super::*;
     use crate::v1::server::{CustomerSession, InMemorySessionStore};
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     struct MockBytesValve {
         usage: AtomicU64,
@@ -128,11 +131,7 @@ mod tests {
         };
         store.insert(session).await.unwrap();
 
-        let handle = spawn_data_monitor(
-            store.clone(),
-            valve.clone(),
-            Duration::from_millis(50),
-        );
+        let handle = spawn_data_monitor(store.clone(), valve.clone(), Duration::from_millis(50));
 
         tokio::time::sleep(Duration::from_millis(200)).await;
         handle.abort();
@@ -160,11 +159,7 @@ mod tests {
         };
         store.insert(session.clone()).await.unwrap();
 
-        let handle = spawn_data_monitor(
-            store.clone(),
-            valve.clone(),
-            Duration::from_millis(50),
-        );
+        let handle = spawn_data_monitor(store.clone(), valve.clone(), Duration::from_millis(50));
 
         tokio::time::sleep(Duration::from_millis(200)).await;
         handle.abort();
@@ -188,11 +183,7 @@ mod tests {
         };
         store.insert(session).await.unwrap();
 
-        let handle = spawn_data_monitor(
-            store.clone(),
-            valve.clone(),
-            Duration::from_millis(50),
-        );
+        let handle = spawn_data_monitor(store.clone(), valve.clone(), Duration::from_millis(50));
 
         tokio::time::sleep(Duration::from_millis(200)).await;
         handle.abort();

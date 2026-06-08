@@ -180,10 +180,7 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
 /// The task exits when: the quote is granted, the quote is removed from the
 /// store, or 30 minutes have elapsed.
 #[allow(clippy::too_many_lines, clippy::cast_possible_wrap)]
-pub fn spawn_quote_monitor(
-    quote_id: String,
-    state: Arc<ServerState>,
-) -> JoinHandle<()> {
+pub fn spawn_quote_monitor(quote_id: String, state: Arc<ServerState>) -> JoinHandle<()> {
     tokio::spawn(async move {
         let poll_interval = Duration::from_secs(2);
         let max_lifetime = Duration::from_secs(30 * 60);
