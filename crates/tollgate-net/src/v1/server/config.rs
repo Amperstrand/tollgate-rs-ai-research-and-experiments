@@ -71,7 +71,30 @@ fn mint_hostname_has_test(url: &str) -> bool {
         .split(':')
         .next()
         .unwrap_or(url);
-    host.to_ascii_lowercase().contains("test")
+    let lower = host.to_ascii_lowercase();
+    // Allow private IPs (10.x.x.x, 172.16-31.x.x, 192.168.x.x), localhost,
+    // and loopback (127.x.x.x) for local/cloud lab testing.
+    if lower == "localhost"
+        || lower.starts_with("127.")
+        || lower.starts_with("10.")
+        || lower.starts_with("192.168.")
+        || is_172_private(&lower)
+    {
+        return true;
+    }
+    lower.contains("test")
+}
+
+/// Check if host is in 172.16.0.0/12 private range (172.16.x.x – 172.31.x.x).
+fn is_172_private(host: &str) -> bool {
+    if !host.starts_with("172.") {
+        return false;
+    }
+    let second = host
+        .split('.')
+        .nth(1)
+        .and_then(|s| s.parse::<u8>().ok());
+    matches!(second, Some(16..=31))
 }
 
 pub const CONFIG_SCHEMA_VERSION: &str = "v0.0.7";
@@ -610,6 +633,21 @@ mod tests {
 
         let good = ServerConfig::default();
         assert!(good.validate().is_empty(), "default config should validate");
+    }
+
+    #[test]
+    fn mint_safety_allows_private_ips_and_localhost() {
+        assert!(mint_hostname_has_test("http://10.99.99.2:8383"));
+        assert!(mint_hostname_has_test("http://192.168.1.1:3333"));
+        assert!(mint_hostname_has_test("http://172.16.0.1"));
+        assert!(mint_hostname_has_test("http://172.31.255.255"));
+        assert!(mint_hostname_has_test("http://localhost:8383"));
+        assert!(mint_hostname_has_test("http://127.0.0.1:8384"));
+        assert!(mint_hostname_has_test("https://testnut.cashu.exchange"));
+        assert!(mint_hostname_has_test("https://my-test-mint.example.com"));
+        assert!(!mint_hostname_has_test("https://mint.example.com"));
+        assert!(!mint_hostname_has_test("http://172.32.0.1"));
+        assert!(!mint_hostname_has_test("http://11.0.0.1"));
     }
 
     #[test]
