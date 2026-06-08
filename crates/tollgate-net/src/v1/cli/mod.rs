@@ -297,7 +297,7 @@ async fn dispatch_upstream(args: &[String]) -> CLIResponse {
 
 fn dispatch_config(args: &[String], config: &Option<Arc<dyn CliConfig>>) -> CLIResponse {
     let Some(subcommand) = args.first() else {
-        return CLIResponse::error("Config command requires a subcommand (get, set, save, schema)");
+        return CLIResponse::error("Config command requires a subcommand (get, set, save, schema, save-identities)");
     };
 
     // `schema` is static metadata — does not require a running config manager.
@@ -326,8 +326,15 @@ fn dispatch_config(args: &[String], config: &Option<Arc<dyn CliConfig>>) -> CLIR
             }
             commands::handle_config_save(cfg.as_ref(), json_str)
         }
+        "save-identities" => {
+            let json_str = args.get(1).map_or("", String::as_str);
+            if json_str.is_empty() {
+                return CLIResponse::error("config save-identities requires <json-string>");
+            }
+            commands::handle_config_save_identities(cfg.as_ref(), json_str)
+        }
         other => CLIResponse::error(format!(
-            "Unknown config subcommand: {other} (supported: get, set, save, schema)"
+            "Unknown config subcommand: {other} (supported: get, set, save, schema, save-identities)"
         )),
     }
 }
@@ -715,6 +722,106 @@ mod tests {
         let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
         assert!(resp.success);
         let data = resp.data.unwrap();
-        assert_eq!(data["metric"], "milliseconds");
+        assert_eq!(data["config"]["metric"], "milliseconds");
+        assert!(data.get("identities").is_some());
+    }
+
+    #[test]
+    fn dispatch_config_get_with_identities_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let identities_path = dir.path().join("identities.json");
+        std::fs::write(&config_path, r#"{"metric":"bytes","step_size":60000}"#).unwrap();
+        std::fs::write(
+            &identities_path,
+            r#"{"config_version":"v0.0.1","public_identities":[{"name":"alice"}]}"#,
+        )
+        .unwrap();
+
+        let config: Arc<dyn CliConfig> =
+            Arc::new(FileConfig::new(config_path).with_identities_path(identities_path));
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec!["get".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        assert!(resp.success);
+        let data = resp.data.unwrap();
+        assert_eq!(data["config"]["metric"], "bytes");
+        assert_eq!(data["identities"]["config_version"], "v0.0.1");
+        assert_eq!(data["identities"]["public_identities"][0]["name"], "alice");
+    }
+
+    #[test]
+    fn dispatch_config_save_identities() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let identities_path = dir.path().join("identities.json");
+        std::fs::write(&config_path, r#"{"metric":"bytes"}"#).unwrap();
+
+        let config: Arc<dyn CliConfig> =
+            Arc::new(FileConfig::new(config_path).with_identities_path(identities_path.clone()));
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec![
+                "save-identities".to_owned(),
+                r#"{"config_version":"v0.0.1","public_identities":[]}"#.to_owned(),
+            ],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        assert!(resp.success);
+        assert!(resp.message.unwrap().contains("Identities saved"));
+
+        let content = std::fs::read_to_string(&identities_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["config_version"], "v0.0.1");
+    }
+
+    #[test]
+    fn dispatch_config_save_identities_no_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let identities_path = dir.path().join("identities.json");
+        std::fs::write(&config_path, r#"{"metric":"bytes"}"#).unwrap();
+
+        let config: Arc<dyn CliConfig> =
+            Arc::new(FileConfig::new(config_path).with_identities_path(identities_path));
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec!["save-identities".to_owned()],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("save-identities requires"));
+    }
+
+    #[test]
+    fn dispatch_config_save_validates_profit_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{}").unwrap();
+        let config: Arc<dyn CliConfig> = Arc::new(FileConfig::new(path));
+        let wallet = make_wallet(0);
+        let msg = CLIMessage {
+            command: "config".to_owned(),
+            args: vec![
+                "save".to_owned(),
+                r#"{"config_version":"v0.0.7","metric":"ms","step_size":60,"accepted_mints":[],"profit_share":[{"factor":0.5,"identity":"alice"},{"factor":0.3,"identity":"bob"}]}"#.to_owned(),
+            ],
+            flags: HashMap::new(),
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let resp = rt.block_on(dispatch(&msg, &wallet, &Some(config), std::time::Instant::now()));
+        assert!(!resp.success);
+        assert!(resp.error.unwrap().contains("profit_share"));
     }
 }

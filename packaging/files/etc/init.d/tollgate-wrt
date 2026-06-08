@@ -7,6 +7,9 @@ EXTRA_COMMANDS="status"
 EXTRA_HELP="	status	Check service status"
 
 start_service() {
+    # Start cron daemon (required for scheduled payout tasks)
+    /etc/init.d/cron start 2>/dev/null || true
+
     # Determine valve mode: use NDS if nodogsplash is installed
     VALVE_MODE="stub"
     NDSCTL_PATH=""

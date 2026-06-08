@@ -12,7 +12,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use cdk::nuts::{CurrencyUnit, MintQuoteState, PaymentMethod};
-use cdk::wallet::{ReceiveOptions, SendOptions};
+use cdk::wallet::{ReceiveOptions, SendKind, SendOptions};
 use cdk_sqlite::wallet::memory;
 use tollgate_core::error::WalletError;
 use tollgate_core::types::Amount;
@@ -49,6 +49,33 @@ impl CdkWallet {
         let wallet = cdk::Wallet::new(mint_url, CurrencyUnit::Sat, localstore, seed, None)
             .map_err(|e| WalletError::Internal(format!("wallet init: {e}")))?;
         Ok(Self { wallet })
+    }
+
+    /// Try each mint URL in order, returning the first that initializes successfully.
+    ///
+    /// Mirrors Go's `TollWallet.New()` — loops through `accepted_mints`, creates a
+    /// wallet for each, breaks on first success, returns error if all fail.
+    pub async fn try_mints(mint_urls: &[String], seed: [u8; 64]) -> Result<Self, WalletError> {
+        if mint_urls.is_empty() {
+            return Err(WalletError::Internal("no mint URLs provided".to_owned()));
+        }
+        let mut last_err = None;
+        for url in mint_urls {
+            tracing::info!("Trying mint: {url}");
+            match Self::new(url, seed).await {
+                Ok(wallet) => {
+                    tracing::info!("Connected to mint: {url}");
+                    return Ok(wallet);
+                }
+                Err(e) => {
+                    tracing::warn!("Mint {url} failed: {e}");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            WalletError::Internal("all mints failed".to_owned())
+        }))
     }
 
     /// Mint test tokens from a Cashu mint with FakeWallet (e.g., testnut.cashu.space).
@@ -359,6 +386,43 @@ impl Wallet for CdkWallet {
                 .await
                 .map_err(|e| WalletError::Internal(format!("balance: {e}")))?;
             Ok(Amount(u64::from(bal)))
+        })
+    }
+
+    fn create_token_with_overpayment(
+        &self,
+        amount: Amount,
+        _mint_url: &str,
+        max_overpayment_absolute: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, WalletError>> + Send + '_>> {
+        let cdk_amount: cdk::Amount = cdk::Amount::from(amount.0);
+        let tolerance: cdk::Amount = cdk::Amount::from(max_overpayment_absolute);
+        Box::pin(async move {
+            tracing::info!(
+                "[NUT-00] Creating Cashu token for {} sat (overpayment tolerance: {} sat)",
+                amount.0,
+                max_overpayment_absolute
+            );
+            let opts = SendOptions {
+                send_kind: SendKind::OnlineTolerance(tolerance),
+                include_fee: true,
+                ..SendOptions::default()
+            };
+            let prepared = self
+                .wallet
+                .prepare_send(cdk_amount, opts)
+                .await
+                .map_err(|e| WalletError::Internal(format!("prepare_send: {e}")))?;
+            let token = prepared
+                .confirm(None)
+                .await
+                .map_err(|e| WalletError::Internal(format!("confirm: {e}")))?;
+            let encoded = token.to_string();
+            tracing::info!(
+                "[NUT-00] Token created: {} bytes (V4 cashuB)",
+                encoded.len()
+            );
+            Ok(encoded.into_bytes())
         })
     }
 }

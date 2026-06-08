@@ -320,6 +320,13 @@ async fn main() {
                 }];
                 sc
             };
+            let validation_errors = server_config.validate();
+            if !validation_errors.is_empty() {
+                for e in &validation_errors {
+                    eprintln!("config error: {e}");
+                }
+                std::process::exit(1);
+            }
             let config = server_config.to_server_config(nostr_keys, port);
             let server = v1::server::V1Server::new(config);
 
@@ -413,10 +420,7 @@ async fn main() {
                     server.run(merchant, valve).await;
                 }
                 WalletType::Cdk => {
-                    let wallet_mint_url = server_config
-                        .accepted_mints
-                        .first()
-                        .map_or_else(|| mint_url.clone(), |m| m.url.clone());
+                    let mint_urls: Vec<String> = server_config.accepted_mints.iter().map(|m| m.url.clone()).collect();
 
                     let mint_cfg = &server_config.accepted_mints[0];
                     let profit_share = server_config.profit_share.clone();
@@ -465,7 +469,7 @@ async fn main() {
                             .collect(),
                     };
 
-                    let wallet_result = cdk_wallet::CdkWallet::new(&wallet_mint_url, [4u8; 64]).await;
+                    let wallet_result = cdk_wallet::CdkWallet::try_mints(&mint_urls, [4u8; 64]).await;
 
                     match wallet_result {
                         Ok(cdk_wallet) => {
@@ -491,20 +495,20 @@ async fn main() {
                             let wallet: Arc<dyn tollgate_core::wallet::Wallet> = Arc::new(v1::server::DegradedWallet);
                             let merchant = Arc::new(v1::server::MerchantProvider::new(wallet));
 
-                            let mint_urls: Vec<String> = server_config.accepted_mints.iter().map(|m| m.url.clone()).collect();
-                            let tracker = Arc::new(v1::server::MintHealthTracker::new(mint_urls));
+                            let health_urls: Vec<String> = server_config.accepted_mints.iter().map(|m| m.url.clone()).collect();
+                            let tracker = Arc::new(v1::server::MintHealthTracker::new(health_urls));
                             tracker.run_initial_probe();
 
                             let tracker_cb = tracker.clone();
                             let merchant_cb = merchant.clone();
-                            let mint_url_cb = wallet_mint_url.clone();
+                            let recovery_urls = mint_urls.clone();
                             tracker.set_on_first_reachable(Box::new(move || {
                                 let merchant_cb = merchant_cb.clone();
                                 let tracker_cb = tracker_cb.clone();
-                                let mint_url_cb = mint_url_cb.clone();
+                                let recovery_urls = recovery_urls.clone();
                                 tokio::spawn(async move {
                                     tracing::info!("Mint became reachable — attempting to upgrade from degraded mode");
-                                    match cdk_wallet::CdkWallet::new(&mint_url_cb, [4u8; 64]).await {
+                                    match cdk_wallet::CdkWallet::try_mints(&recovery_urls, [4u8; 64]).await {
                                         Ok(new_wallet) => {
                                             let new_wallet: Arc<dyn tollgate_core::wallet::Wallet> = Arc::new(new_wallet);
                                             merchant_cb.swap(new_wallet);

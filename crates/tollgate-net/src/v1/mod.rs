@@ -215,9 +215,10 @@ impl<W: Wallet> V1Client<W> {
 
         // Step 6: Create token and send
         let token_bytes = wallet
-            .create_token(
+            .create_token_with_overpayment(
                 tollgate_core::types::Amount(payment_amount),
                 &pricing.mint_url,
+                100,
             )
             .await?;
         let token_str = String::from_utf8_lossy(&token_bytes).to_string();
@@ -367,9 +368,10 @@ impl<W: Wallet> V1Client<W> {
         tracing::info!(steps, payment_amount, "Renewing session");
 
         let token_bytes = wallet
-            .create_token(
+            .create_token_with_overpayment(
                 tollgate_core::types::Amount(payment_amount),
                 &pricing.mint_url,
+                100,
             )
             .await?;
         let token_str = String::from_utf8_lossy(&token_bytes).to_string();
@@ -393,7 +395,13 @@ impl<W: Wallet> V1Client<W> {
         let poll_interval = tokio::time::Duration::from_secs(self.config.poll_interval_secs);
 
         loop {
-            tokio::time::sleep(poll_interval).await;
+            tokio::select! {
+                _ = tokio::time::sleep(poll_interval) => {}
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received shutdown signal, stopping client...");
+                    return Ok(());
+                }
+            }
 
             let (usage, allotment, needs_renewal) = self.poll_usage().await;
 

@@ -236,6 +236,9 @@ impl V1Server {
             _ = quote_janitor => {
                 tracing::warn!("quote janitor task finished unexpectedly");
             }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received shutdown signal, stopping server...");
+            }
         }
     }
 }

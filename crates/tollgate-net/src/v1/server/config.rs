@@ -27,17 +27,7 @@ const fn default_margin() -> f64 {
 fn default_accepted_mints() -> Vec<MintConfig> {
     vec![
         MintConfig {
-            url: "https://mint.coinos.io".to_owned(),
-            min_balance: 64,
-            balance_tolerance_percent: 10,
-            payout_interval_seconds: 60,
-            min_payout_amount: 128,
-            price_per_step: 1,
-            price_unit: "sat".to_owned(),
-            purchase_min_steps: 0,
-        },
-        MintConfig {
-            url: "https://mint.minibits.cash/Bitcoin".to_owned(),
+            url: "https://testnut.cashu.exchange".to_owned(),
             min_balance: 64,
             balance_tolerance_percent: 10,
             payout_interval_seconds: 60,
@@ -70,7 +60,20 @@ const fn default_false() -> bool {
     false
 }
 
-/// Current config schema version this binary writes.
+fn mint_hostname_has_test(url: &str) -> bool {
+    let host = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or(url)
+        .split(':')
+        .next()
+        .unwrap_or(url);
+    host.to_ascii_lowercase().contains("test")
+}
+
 pub const CONFIG_SCHEMA_VERSION: &str = "v0.0.7";
 
 /// Top-level server configuration, matching Go v1's `/etc/tollgate/config.json`.
@@ -253,6 +256,12 @@ impl ServerConfig {
         for (i, m) in self.accepted_mints.iter().enumerate() {
             if m.url.is_empty() {
                 errors.push(format!("accepted_mints[{i}].url must not be empty"));
+            } else if !mint_hostname_has_test(&m.url) {
+                errors.push(format!(
+                    "accepted_mints[{i}].url hostname must contain \"test\" \
+                     (got {url:?} — non-test mints will cause real Bitcoin loss)",
+                    url = m.url
+                ));
             }
         }
         if !self.profit_share.is_empty() {
@@ -427,11 +436,11 @@ mod tests {
         assert_eq!(c.metric, "bytes");
         assert_eq!(c.step_size, 22_020_096);
         assert!((c.margin - 0.1).abs() < f64::EPSILON);
-        assert_eq!(c.accepted_mints.len(), 2);
+        assert_eq!(c.accepted_mints.len(), 1);
         assert_eq!(c.profit_share.len(), 2);
 
         let m0 = &c.accepted_mints[0];
-        assert_eq!(m0.url, "https://mint.coinos.io");
+        assert_eq!(m0.url, "https://testnut.cashu.exchange");
         assert_eq!(m0.min_balance, 64);
         assert_eq!(m0.balance_tolerance_percent, 10);
         assert_eq!(m0.payout_interval_seconds, 60);
@@ -439,9 +448,6 @@ mod tests {
         assert_eq!(m0.price_per_step, 1);
         assert_eq!(m0.price_unit, "sat");
         assert_eq!(m0.purchase_min_steps, 0);
-
-        let m1 = &c.accepted_mints[1];
-        assert_eq!(m1.url, "https://mint.minibits.cash/Bitcoin");
 
         assert!((c.profit_share[0].factor - 0.79).abs() < f64::EPSILON);
         assert_eq!(c.profit_share[0].identity, "owner");
@@ -462,7 +468,7 @@ mod tests {
             "margin": 0.2,
             "accepted_mints": [
                 {
-                    "url": "https://example.com/mint",
+                    "url": "https://testmint.example.com/mint",
                     "price_per_step": 5
                 }
             ],
@@ -480,7 +486,7 @@ mod tests {
         assert_eq!(c.step_size, 60000);
         assert!((c.margin - 0.2).abs() < f64::EPSILON);
         assert_eq!(c.accepted_mints.len(), 1);
-        assert_eq!(c.accepted_mints[0].url, "https://example.com/mint");
+        assert_eq!(c.accepted_mints[0].url, "https://testmint.example.com/mint");
         assert_eq!(c.accepted_mints[0].price_per_step, 5);
         assert_eq!(c.accepted_mints[0].min_balance, 64);
         assert_eq!(c.accepted_mints[0].balance_tolerance_percent, 10);
@@ -500,7 +506,7 @@ mod tests {
             .unwrap();
         assert_eq!(c.metric, "bytes");
         assert_eq!(c.step_size, 22_020_096);
-        assert_eq!(c.accepted_mints.len(), 2);
+        assert_eq!(c.accepted_mints.len(), 1);
     }
 
     #[test]
@@ -517,7 +523,7 @@ mod tests {
         assert_eq!(c.log_level, "info");
         assert_eq!(c.step_size, 22_020_096);
         assert!((c.margin - 0.1).abs() < f64::EPSILON);
-        assert_eq!(c.accepted_mints.len(), 2);
+        assert_eq!(c.accepted_mints.len(), 1);
         assert_eq!(c.profit_share.len(), 2);
 
         std::fs::remove_dir_all(&dir).ok();
@@ -534,7 +540,7 @@ mod tests {
             show_setup: true,
             reseller_mode: false,
             accepted_mints: vec![MintConfig {
-                url: "https://mint.example.com".to_owned(),
+                url: "https://testmint.example.com".to_owned(),
                 min_balance: 32,
                 balance_tolerance_percent: 5,
                 payout_interval_seconds: 30,
@@ -554,7 +560,7 @@ mod tests {
         assert_eq!(v1.step_size, 1000);
         assert_eq!(v1.port, 4242);
         assert_eq!(v1.accepted_mints.len(), 1);
-        assert_eq!(v1.accepted_mints[0].url, "https://mint.example.com");
+        assert_eq!(v1.accepted_mints[0].url, "https://testmint.example.com");
         assert_eq!(v1.accepted_mints[0].price_per_step, 2);
         assert_eq!(v1.accepted_mints[0].unit, "sat");
         assert_eq!(v1.accepted_mints[0].min_steps, 3);

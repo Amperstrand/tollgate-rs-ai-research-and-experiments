@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use nostr::prelude::*;
 use reqwest::Client;
 use tollgate_core::wallet::Wallet;
@@ -8,8 +9,21 @@ use tollgate_net::mock::MockWallet;
 use tollgate_net::v1::server::handlers::build_router;
 use tollgate_net::v1::server::{
     build_advertisement, AcceptedMint, InMemoryLightningQuoteStore, InMemorySessionStore,
-    MerchantProvider, ServerState, StubMacResolver, StubValve, V1ServerConfig,
+    MerchantProvider, ServerState, StubMacResolver, StubValve, V1ServerConfig, Valve, ValveError,
 };
+
+struct FailingValve;
+
+#[async_trait]
+impl Valve for FailingValve {
+    async fn open_gate(&self, _mac_address: &str) -> Result<(), ValveError> {
+        Err(ValveError::Other("valve intentionally failed".to_owned()))
+    }
+
+    async fn close_gate(&self, _mac_address: &str) -> Result<(), ValveError> {
+        Ok(())
+    }
+}
 
 fn test_config() -> V1ServerConfig {
     V1ServerConfig {
@@ -254,6 +268,110 @@ async fn v1_server_usage_no_session() {
 
     let body = resp.text().await.unwrap();
     assert_eq!(body.trim(), "-1/-1");
+
+    server.abort();
+    let _ = server.await;
+}
+
+async fn start_server_with_valve(
+    config: V1ServerConfig,
+    valve: Arc<dyn Valve>,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Arc<ServerState>,
+) {
+    let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
+    let merchant = Arc::new(MerchantProvider::new(wallet));
+    let advertisement = build_advertisement(&config).unwrap();
+
+    let state = Arc::new(ServerState {
+        merchant,
+        config,
+        sessions: Arc::new(InMemorySessionStore::new()),
+        mac_resolver: Arc::new(StubMacResolver::default()),
+        valve,
+        mint_quote_wallet: None,
+        lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
+        advertisement,
+    });
+
+    let app = build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind to random port");
+    let addr = listener.local_addr().expect("local addr");
+    let base_url = format!("http://{addr}");
+
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("mock server error");
+    });
+
+    (base_url, handle, state)
+}
+
+#[tokio::test]
+async fn v1_server_rollback_session_on_valve_failure() {
+    let valve: Arc<dyn Valve> = Arc::new(FailingValve);
+    let (base_url, server, state) =
+        start_server_with_valve(test_config(), valve).await;
+    let client = Client::new();
+
+    let token = mock_token(10);
+    let resp = client.post(&base_url).body(token).send().await.unwrap();
+    assert_eq!(resp.status(), 500);
+
+    let stored = state
+        .sessions
+        .get("00:11:22:33:44:55")
+        .await
+        .unwrap();
+    assert!(
+        stored.is_none(),
+        "session should be rolled back (removed) when valve fails, but found: {stored:?}"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn v1_server_restores_prior_session_on_valve_failure() {
+    let valve: Arc<dyn Valve> = Arc::new(FailingValve);
+    let (base_url, server, state) =
+        start_server_with_valve(test_config(), valve).await;
+
+    let sessions = state.sessions.clone();
+    let prior = tollgate_net::v1::server::CustomerSession {
+        mac_address: "00:11:22:33:44:55".to_owned(),
+        start_time: 1000,
+        metric: "milliseconds".to_owned(),
+        allotment: 60_000,
+    };
+    sessions.insert(prior.clone()).await.unwrap();
+
+    let client = Client::new();
+    let token = mock_token(10);
+    let resp = client.post(&base_url).body(token).send().await.unwrap();
+    assert_eq!(resp.status(), 500);
+
+    let stored = sessions.get("00:11:22:33:44:55").await.unwrap().unwrap();
+    assert_eq!(
+        stored.allotment, prior.allotment,
+        "prior session allotment should be restored, got {}",
+        stored.allotment
+    );
+    assert_eq!(
+        stored.start_time, prior.start_time,
+        "prior session start_time should be restored, got {}",
+        stored.start_time
+    );
 
     server.abort();
     let _ = server.await;

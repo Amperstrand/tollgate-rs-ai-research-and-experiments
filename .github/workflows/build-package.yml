@@ -279,7 +279,9 @@ jobs:
             MAINTAINER="Amperstrand" \
             LICENSE="MIT" \
             DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt" \
-            DEPENDS="nodogsplash" \
+            DEPENDS="nodogsplash, luci, jq" \
+            PROVIDES="nodogsplash-files" \
+            REPLACES="nodogsplash, base-files" \
             packaging/build-ipk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
 
       - name: Upload package artifact
@@ -370,7 +372,9 @@ jobs:
             MAINTAINER="Amperstrand" \
             LICENSE="MIT" \
             DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt" \
-            DEPENDS="nodogsplash" \
+            DEPENDS="nodogsplash, luci, jq" \
+            PROVIDES="nodogsplash-files" \
+            REPLACES="nodogsplash, base-files" \
             packaging/build-apk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
 
       - name: Upload package artifact

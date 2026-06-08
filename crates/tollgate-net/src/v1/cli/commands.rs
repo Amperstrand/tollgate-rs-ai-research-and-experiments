@@ -260,6 +260,15 @@ pub trait CliConfig: Send + Sync {
     fn set_value(&self, key: &str, value: &str) -> Result<(), String>;
     /// Save entire config from a JSON string, with validation.
     fn save_config(&self, json: &str) -> Result<(), String>;
+    /// Get the identities config as a JSON value.
+    fn get_identities(&self) -> Result<serde_json::Value, String> {
+        Err("Identities not supported".to_owned())
+    }
+    /// Save identities config from a JSON string, with validation.
+    fn save_identities(&self, json: &str) -> Result<(), String> {
+        let _ = json;
+        Err("Identities not supported".to_owned())
+    }
 }
 
 /// Health check — lighter than status, matches Go's health endpoint.
@@ -281,12 +290,20 @@ pub fn handle_health(wallet_ok: bool, config_ok: bool, uptime_secs: u64) -> CLIR
     )
 }
 
-/// Retrieve the current configuration as JSON.
+/// Retrieve the current configuration and identities as JSON.
 pub fn handle_config_get(config: &dyn CliConfig) -> CLIResponse {
-    match config.get_config() {
-        Ok(cfg) => CLIResponse::ok_with_data("Configuration retrieved", cfg),
-        Err(e) => CLIResponse::error(format!("Failed to get config: {e}")),
-    }
+    let cfg_val = match config.get_config() {
+        Ok(v) => v,
+        Err(e) => return CLIResponse::error(format!("Failed to get config: {e}")),
+    };
+    let identities_val = config.get_identities().unwrap_or(serde_json::json!({}));
+    CLIResponse::ok_with_data(
+        "Configuration retrieved",
+        serde_json::json!({
+            "config": cfg_val,
+            "identities": identities_val,
+        }),
+    )
 }
 
 /// Set a single config value by key.
@@ -305,6 +322,13 @@ pub fn handle_config_save(config: &dyn CliConfig, json: &str) -> CLIResponse {
     match config.save_config(json) {
         Ok(()) => CLIResponse::ok("Configuration saved (restart tollgate-wrt to apply)"),
         Err(e) => CLIResponse::error(format!("Failed to save config: {e}")),
+    }
+}
+
+pub fn handle_config_save_identities(config: &dyn CliConfig, json: &str) -> CLIResponse {
+    match config.save_identities(json) {
+        Ok(()) => CLIResponse::ok("Identities saved (restart tollgate-wrt to apply)"),
+        Err(e) => CLIResponse::error(format!("Failed to save identities: {e}")),
     }
 }
 

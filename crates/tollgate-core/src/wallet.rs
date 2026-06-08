@@ -46,4 +46,16 @@ pub trait Wallet: Send + Sync {
 
     /// Get current wallet balance.
     fn balance(&self) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>>;
+
+    /// Create a token allowing overpayment up to `max_overpayment_absolute` sats.
+    /// Default implementation delegates to [`create_token`](Wallet::create_token).
+    fn create_token_with_overpayment(
+        &self,
+        amount: Amount,
+        mint_url: &str,
+        max_overpayment_absolute: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, WalletError>> + Send + '_>> {
+        let _ = max_overpayment_absolute;
+        self.create_token(amount, mint_url)
+    }
 }

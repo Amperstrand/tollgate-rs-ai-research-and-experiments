@@ -171,21 +171,38 @@ async fn handle_options(headers: HeaderMap) -> Response {
     cors_response(StatusCode::OK.into_response(), origin.as_deref(), is_local)
 }
 
-#[allow(clippy::too_many_lines)]
 async fn open_gate_for_session(
     valve: &dyn super::Valve,
     mac: &str,
     metric: &str,
     start_time: i64,
     allotment: u64,
-) {
+) -> Result<(), super::ValveError> {
     if metric == "milliseconds" {
         let until_ts = start_time + (allotment as i64 / 1000);
-        if let Err(e) = valve.open_gate_until(mac, until_ts).await {
-            tracing::warn!("Failed to open valve (until {until_ts}) for {mac}: {e}");
+        valve.open_gate_until(mac, until_ts).await?;
+    } else {
+        valve.open_gate(mac).await?;
+    }
+    Ok(())
+}
+
+async fn rollback_session(
+    sessions: &dyn super::SessionStore,
+    mac: &str,
+    prior: Option<super::CustomerSession>,
+) {
+    match prior {
+        Some(old) => {
+            if let Err(e) = sessions.update(mac, old).await {
+                tracing::error!("Failed to restore prior session for {mac}: {e}");
+            }
         }
-    } else if let Err(e) = valve.open_gate(mac).await {
-        tracing::warn!("Failed to open valve for {mac}: {e}");
+        None => {
+            if let Err(e) = sessions.remove(mac).await {
+                tracing::error!("Failed to remove new session for {mac}: {e}");
+            }
+        }
     }
 }
 
@@ -257,6 +274,8 @@ async fn handle_post_payment(
         }
     };
 
+    let prior_session = state.sessions.get(&mac).await.ok().flatten();
+
     let session = match super::merchant_provider::add_allotment(
         &*state.sessions,
         &mac,
@@ -280,14 +299,27 @@ async fn handle_post_payment(
         }
     };
 
-    open_gate_for_session(
+    if let Err(e) = open_gate_for_session(
         &*state.valve,
         &mac,
         &session.metric,
         session.start_time,
         session.allotment,
     )
-    .await;
+    .await
+    {
+        tracing::error!("Valve open failed for {mac}, rolling back session: {e}");
+        rollback_session(&*state.sessions, &mac, prior_session).await;
+        return notice_response(
+            "error",
+            "valve-error",
+            &format!("valve open failed, session rolled back: {e}"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &state.config,
+            origin.as_deref(),
+            is_local,
+        );
+    }
 
     match merchant::build_session_event(&session, &state.config, &mac) {
         Ok(json) => cors_response(json_response(StatusCode::OK, json), origin.as_deref(), is_local),
@@ -774,6 +806,8 @@ async fn handle_get_ln_invoice(
                 }
             };
 
+        let prior_session = state.sessions.get(&mac).await.ok().flatten();
+
         let session = match super::merchant_provider::add_allotment(
             &*state.sessions,
             &mac,
@@ -799,14 +833,27 @@ async fn handle_get_ln_invoice(
 
         let effective_allotment = session.allotment;
 
-        open_gate_for_session(
+        if let Err(e) = open_gate_for_session(
             &*state.valve,
             &mac,
             &state.config.metric,
             now,
             effective_allotment,
         )
-        .await;
+        .await
+        {
+            tracing::error!("Valve open failed for LN session {mac}, rolling back: {e}");
+            rollback_session(&*state.sessions, &mac, prior_session).await;
+            record.processing = false;
+            let _ = state
+                .lightning_quotes
+                .update(&quote_id, record.clone())
+                .await;
+            return cors_response(ln_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "valve open failed, session rolled back",
+            ), origin.as_deref(), is_local);
+        }
 
         record.session_granted = true;
         record.completed_at = Some(now);
