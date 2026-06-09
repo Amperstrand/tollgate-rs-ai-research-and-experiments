@@ -134,6 +134,8 @@ pub struct V1Server {
     sessions: Option<Arc<dyn SessionStore>>,
     mac_resolver: Option<Arc<dyn MacResolver + Send + Sync>>,
     mint_quote_wallet: Option<Arc<dyn MintQuoteWallet>>,
+    cli_socket_path: Option<String>,
+    cli_config_path: Option<String>,
 }
 
 impl V1Server {
@@ -143,6 +145,8 @@ impl V1Server {
             sessions: None,
             mac_resolver: None,
             mint_quote_wallet: None,
+            cli_socket_path: None,
+            cli_config_path: None,
         }
     }
 
@@ -169,8 +173,29 @@ impl V1Server {
         self
     }
 
+    /// Enable the CLI Unix socket server at the given path.
+    ///
+    /// Without this, no CLI socket is started.
+    #[must_use]
+    pub fn with_cli_socket(mut self, path: String) -> Self {
+        self.cli_socket_path = Some(path);
+        self
+    }
+
+    /// Set the path to the JSON config file for `tollgate config get/set/save`.
+    ///
+    /// Requires `with_cli_socket` to also be set; otherwise has no effect.
+    #[must_use]
+    pub fn with_cli_config_path(mut self, path: String) -> Self {
+        self.cli_config_path = Some(path);
+        self
+    }
+
+    #[allow(clippy::too_many_lines)]
     pub async fn run(self, merchant: Arc<MerchantProvider>, valve: Arc<dyn Valve + Send + Sync>) {
         let port = self.config.port;
+        let cli_socket_path = self.cli_socket_path.clone();
+        let cli_config_path = self.cli_config_path.clone();
         let advertisement =
             merchant::build_advertisement(&self.config).expect("failed to build advertisement");
 
@@ -182,7 +207,7 @@ impl V1Server {
             .unwrap_or_else(|| Arc::new(StubMacResolver::default()));
 
         let state = Arc::new(ServerState {
-            merchant,
+            merchant: merchant.clone(),
             config: self.config,
             sessions,
             mac_resolver,
@@ -191,6 +216,44 @@ impl V1Server {
             lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
             advertisement,
         });
+
+        let cli_server = if let Some(path) = cli_socket_path {
+            let mint_urls: Vec<String> = state
+                .config
+                .accepted_mints
+                .iter()
+                .map(|m| m.url.clone())
+                .collect();
+            let adapter: Arc<dyn crate::v1::cli::commands::CliWallet> =
+                Arc::new(crate::v1::cli::MerchantWalletAdapter::new(
+                    merchant.clone(),
+                    mint_urls,
+                ));
+            let mut server =
+                crate::v1::cli::CliServer::new(adapter, Some(path.clone()));
+            if let Some(cfg_path) = cli_config_path {
+                let cfg: Arc<dyn crate::v1::cli::commands::CliConfig> = Arc::new(
+                    crate::v1::cli::FileConfig::new(std::path::PathBuf::from(cfg_path)),
+                );
+                server = server.with_config(cfg);
+            }
+            match server.start() {
+                Ok(()) => {
+                    tracing::info!(socket_path = %path, "CLI server started");
+                    Some(server)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        socket_path = %path,
+                        "Failed to start CLI server (continuing without it)"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let janitor = spawn_janitor(
             state.sessions.clone(),
@@ -240,6 +303,12 @@ impl V1Server {
             }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Received shutdown signal, stopping server...");
+            }
+        }
+
+        if let Some(srv) = cli_server {
+            if let Err(e) = srv.stop() {
+                tracing::warn!(error = %e, "Error stopping CLI server");
             }
         }
     }

@@ -101,6 +101,14 @@ enum Commands {
         /// Interfaces to monitor (comma-separated, empty = all except lo)
         #[arg(long, value_delimiter = ',')]
         monitor_interfaces: Vec<String>,
+        /// Path to Unix domain socket for the CLI server (e.g. /var/run/tollgate.sock).
+        /// If unset, no CLI socket is started. Matches Go v1's CLIServer.
+        #[arg(long)]
+        cli_socket: Option<String>,
+        /// Path to JSON config file for `tollgate config get/set/save` commands.
+        /// Only used when --cli-socket is set.
+        #[arg(long)]
+        cli_config: Option<String>,
     },
     /// Run as a v1 client (pays upstream TollGate routers via TIP-03)
     V1Client {
@@ -277,6 +285,8 @@ async fn main() {
             ndsctl_path,
             monitor: enable_monitor,
             monitor_interfaces,
+            cli_socket,
+            cli_config,
         } => {
             use std::time::Duration;
             use v1::server::payout::{PayoutConfig, PayoutTarget};
@@ -328,6 +338,14 @@ async fn main() {
             }
             let config = server_config.to_server_config(nostr_keys, port);
             let server = v1::server::V1Server::new(config);
+            let server = match cli_socket.clone() {
+                Some(path) => server.with_cli_socket(path),
+                None => server,
+            };
+            let server = match cli_config.clone() {
+                Some(path) => server.with_cli_config_path(path),
+                None => server,
+            };
 
             #[allow(clippy::single_match_else)]
             let valve: Arc<dyn Valve + Send + Sync> = match valve.as_str() {

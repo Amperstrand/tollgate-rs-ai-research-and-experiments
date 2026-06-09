@@ -10,6 +10,7 @@ pub mod config_schema;
 pub mod file_config;
 pub mod network;
 pub mod types;
+pub mod wallet_adapter;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -23,6 +24,7 @@ use self::types::{CLIMessage, CLIResponse, SessionStatus};
 
 pub use commands::CliConfig as CliConfigTrait;
 pub use file_config::FileConfig;
+pub use wallet_adapter::MerchantWalletAdapter;
 
 const DEFAULT_SOCKET_PATH: &str = "/var/run/tollgate.sock";
 const SOCKET_PERMISSIONS: u32 = 0o666;

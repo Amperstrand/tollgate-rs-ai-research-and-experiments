@@ -36,7 +36,8 @@ start_service() {
             --metric "$(uci_get tollgate_wrt @server[0] metric bytes)" \
             --step-size "$(uci_get tollgate_wrt @server[0] step_size 5000)" \
             --valve "$VALVE_MODE" \
-            $NDS_ARGS
+            $NDS_ARGS \
+            --cli-socket /var/run/tollgate.sock
     else
         procd_open_instance
         procd_set_param command /usr/bin/tollgate-wrt v1-server \
@@ -46,7 +47,8 @@ start_service() {
             --metric "$(uci_get tollgate_wrt @server[0] metric bytes)" \
             --step-size "$(uci_get tollgate_wrt @server[0] step_size 5000)" \
             --valve "$VALVE_MODE" \
-            $NDS_ARGS
+            $NDS_ARGS \
+            --cli-socket /var/run/tollgate.sock
     fi
     procd_set_param depends nodogsplash
     procd_set_param respawn 3 5 0
