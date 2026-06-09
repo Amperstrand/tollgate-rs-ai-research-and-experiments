@@ -2099,9 +2099,8 @@ async fn parity_ln_invoice_get_unknown_quote_returns_not_found() {
         .send()
         .await
         .unwrap();
-    // 200 (not 404): busybox wget drops bodies on non-2xx, so the v1 protocol
-    // returns errors as 200 + {"status":0,"error":...}.
-    assert_eq!(resp.status(), 200);
+    // Go v1 parity: returns 404 for unknown quotes (ErrQuoteNotFound)
+    assert_eq!(resp.status(), 404);
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], 0);
@@ -2137,7 +2136,8 @@ async fn parity_ln_invoice_get_wrong_mac_returns_not_found() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    // Go v1 parity: returns 404 for quotes not belonging to this MAC
+    assert_eq!(resp.status(), 404);
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], 0);

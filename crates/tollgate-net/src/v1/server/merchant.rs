@@ -35,7 +35,10 @@ pub fn build_advertisement(
         ));
     }
 
-    tags.push(Tag::custom(TagKind::Custom("tips".into()), [""]));
+    tags.push(Tag::custom(
+        TagKind::Custom("tips".into()),
+        ["1", "2", "3", "4"],
+    ));
 
     let event = EventBuilder::new(Kind::Custom(10_021), "")
         .tags(Tags::from_list(tags))
@@ -106,15 +109,23 @@ pub fn build_notice_event(
     level: &str,
     code: &str,
     message: &str,
+    customer_identifier: Option<&str>,
     config: &V1ServerConfig,
 ) -> Result<String, nostr::event::builder::Error> {
-    let tags = Tags::from_list(vec![
+    let mut tags: Vec<Tag> = vec![
         Tag::custom(TagKind::Custom("level".into()), [level.to_owned()]),
         Tag::custom(TagKind::Custom("code".into()), [code.to_owned()]),
-    ]);
+    ];
+
+    // Go v1 parity: include p tag when customer pubkey/MAC is available
+    if let Some(id) = customer_identifier {
+        if !id.is_empty() {
+            tags.push(Tag::custom(TagKind::Custom("p".into()), [id.to_owned()]));
+        }
+    }
 
     let event = EventBuilder::new(Kind::Custom(21_023), message)
-        .tags(tags)
+        .tags(Tags::from_list(tags))
         .sign_with_keys(&config.nostr_keys)?;
 
     Ok(event.as_json())

@@ -127,6 +127,7 @@ fn cors_response(mut response: Response, origin: Option<&str>, is_local: bool) -
     response
 }
 
+#[allow(clippy::too_many_arguments)]
 fn notice_response(
     level: &str,
     code: &str,
@@ -135,8 +136,9 @@ fn notice_response(
     config: &V1ServerConfig,
     origin: Option<&str>,
     is_local: bool,
+    customer_identifier: Option<&str>,
 ) -> Response {
-    match merchant::build_notice_event(level, code, message, config) {
+    match merchant::build_notice_event(level, code, message, customer_identifier, config) {
         Ok(json) => cors_response(json_response(status, json), origin, is_local),
         Err(e) => {
             tracing::error!("Failed to build notice event: {e}");
@@ -232,15 +234,19 @@ async fn handle_post_payment(
                 &state.config,
                 origin.as_deref(),
                 is_local,
+                None,
             );
         }
     };
 
     let token = extract_payment_token(&body);
 
-    let amount = match state.merchant.get().receive_token(token.as_bytes()).await {
-        Ok(amount) => amount,
-        Err(e) => {
+    let wallet = state.merchant.get();
+    let receive_future = wallet.receive_token(token.as_bytes());
+    let amount = match tokio::time::timeout(std::time::Duration::from_secs(30), receive_future).await
+    {
+        Ok(Ok(amount)) => amount,
+        Ok(Err(e)) => {
             tracing::warn!("Token rejected: {e}");
             let code = classify_payment_error(&e.to_string());
             return notice_response(
@@ -251,6 +257,20 @@ async fn handle_post_payment(
                 &state.config,
                 origin.as_deref(),
                 is_local,
+                Some(&mac),
+            );
+        }
+        Err(_) => {
+            tracing::warn!("Payment processing timed out after 30s for mac={mac}");
+            return notice_response(
+                "error",
+                "payment-processing-timeout",
+                "Payment processing timed out after 30 seconds. Please try again.",
+                StatusCode::BAD_REQUEST,
+                &state.config,
+                origin.as_deref(),
+                is_local,
+                Some(&mac),
             );
         }
     };
@@ -274,6 +294,7 @@ async fn handle_post_payment(
                 &state.config,
                 origin.as_deref(),
                 is_local,
+                Some(&mac),
             );
         }
     };
@@ -299,6 +320,7 @@ async fn handle_post_payment(
                 &state.config,
                 origin.as_deref(),
                 is_local,
+                Some(&mac),
             );
         }
     };
@@ -322,6 +344,7 @@ async fn handle_post_payment(
             &state.config,
             origin.as_deref(),
             is_local,
+            Some(&mac),
         );
     }
 
@@ -357,7 +380,7 @@ async fn handle_usage(
         Ok(mac) => mac,
         Err(_) => {
             return cors_response(
-                text_response(StatusCode::OK, "-1/-1".to_owned()),
+                text_response(StatusCode::INTERNAL_SERVER_ERROR, "-1/-1".to_owned()),
                 origin.as_deref(),
                 is_local,
             )
@@ -441,7 +464,7 @@ async fn handle_whoami(
             is_local,
         ),
         Err(_) => cors_response(
-            text_response(StatusCode::OK, "mac=".to_owned()),
+            StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             origin.as_deref(),
             is_local,
         ),
@@ -683,8 +706,8 @@ async fn handle_post_ln_invoice(
             tracing::warn!("MAC resolution failed for {ip}: {e}");
             return cors_response(
                 ln_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "cannot resolve MAC address",
+                    StatusCode::BAD_REQUEST,
+                    "failed to resolve device MAC address",
                 ),
                 origin.as_deref(),
                 is_local,
@@ -811,7 +834,10 @@ async fn handle_get_ln_invoice(
         Err(e) => {
             tracing::warn!("MAC resolution failed for {ip}: {e}");
             return cors_response(
-                ln_error_response(StatusCode::OK, "cannot resolve MAC address"),
+                ln_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "failed to resolve device MAC address",
+                ),
                 origin.as_deref(),
                 is_local,
             );
@@ -822,7 +848,7 @@ async fn handle_get_ln_invoice(
         Ok(Some(r)) => r,
         Ok(None) | Err(_) => {
             return cors_response(
-                ln_error_response(StatusCode::OK, "quote not found"),
+                ln_error_response(StatusCode::NOT_FOUND, "quote not found"),
                 origin.as_deref(),
                 is_local,
             );
