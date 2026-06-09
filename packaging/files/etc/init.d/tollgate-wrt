@@ -26,6 +26,13 @@ start_service() {
 
     KEYS_FILE="/etc/tollgate/keys.json"
 
+    # Create CLI wrapper so `tollgate --json status` works (test suite expects `tollgate` in PATH)
+    # The Go v1 CLI is a separate binary; we wrap tollgate-wrt's `cli` subcommand.
+    if [ ! -L /usr/bin/tollgate ] && [ ! -x /usr/bin/tollgate ]; then
+        printf '#!/bin/sh\nexec /usr/bin/tollgate-wrt cli "$@"\n' > /usr/bin/tollgate
+        chmod 755 /usr/bin/tollgate
+    fi
+
     if [ -f "$CONFIG_FILE" ]; then
         procd_open_instance
         procd_set_param command /usr/bin/tollgate-wrt v1-server \

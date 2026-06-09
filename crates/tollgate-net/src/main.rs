@@ -140,6 +140,20 @@ enum Commands {
         #[arg(long, default_value = "0.0001")]
         max_price_per_byte: f64,
     },
+    /// Send a command to the running server's CLI socket
+    Cli {
+        /// Command to send (status, version, wallet balance, wallet info, health, config get/set)
+        command: String,
+        /// Arguments for the command
+        #[arg(default_value = "")]
+        args: Vec<String>,
+        /// Output as JSON (matches Go v1's --json flag behavior)
+        #[arg(long)]
+        json: bool,
+        /// Path to the CLI socket (default: /var/run/tollgate.sock)
+        #[arg(long, default_value = "/var/run/tollgate.sock")]
+        socket: String,
+    },
     /// Run as a v1 client with auto-discovery (probes multiple gateways, creates sessions automatically)
     V1ClientAuto {
         /// Gateway IPs to probe (comma-separated)
@@ -609,6 +623,17 @@ async fn main() {
             let mut client = v1::V1Client::<cdk_wallet::CdkWallet>::new(config);
             if let Err(e) = client.run(wallet).await {
                 tracing::error!("v1 client failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Cli {
+            command,
+            args,
+            json,
+            socket,
+        } => {
+            if let Err(e) = v1::cli::client::run_cli_client(&socket, &command, &args, json) {
+                eprintln!("{e}");
                 std::process::exit(1);
             }
         }

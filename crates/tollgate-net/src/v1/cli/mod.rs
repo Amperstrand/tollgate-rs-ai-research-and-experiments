@@ -5,6 +5,7 @@
 
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
+pub mod client;
 pub mod commands;
 pub mod config_schema;
 pub mod file_config;
