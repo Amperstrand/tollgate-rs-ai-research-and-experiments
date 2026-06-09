@@ -56,6 +56,7 @@ impl ClientStats {
 // MAC validation (Go parity: isValidMAC)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 fn validate_mac(mac: &str) -> Result<(), ValveError> {
     let parts: Vec<&str> = mac.split(':').collect();
     if parts.len() != 6 {
@@ -801,7 +802,7 @@ mod tests {
     async fn test_stub_valve_defaults() {
         let valve = StubValve;
         assert!(valve
-            .open_gate_until("aa:bb:cc:dd:ee:ff", 9999999999)
+            .open_gate_until("aa:bb:cc:dd:ee:ff", 9_999_999_999)
             .await
             .is_ok());
 

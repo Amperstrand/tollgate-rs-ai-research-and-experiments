@@ -49,6 +49,7 @@ pub async fn add_allotment(
     metric: &str,
     allotment: u64,
 ) -> Result<CustomerSession, String> {
+    #[allow(clippy::cast_possible_wrap)]
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

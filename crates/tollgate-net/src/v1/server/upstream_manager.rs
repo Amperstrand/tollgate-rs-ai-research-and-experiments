@@ -51,11 +51,11 @@ impl VendorElementProcessor {
     /// Currently: signal strength + 100 for TollGate- prefixed SSIDs.
     pub fn extract_and_score(&self, network: &ScanResult) -> (serde_json::Value, i32) {
         let vendor_elements = serde_json::json!({});
-        let score = self.calculate_score(network, &vendor_elements);
+        let score = Self::calculate_score(network, &vendor_elements);
         (vendor_elements, score)
     }
 
-    fn calculate_score(&self, network: &ScanResult, _vendor_elements: &serde_json::Value) -> i32 {
+    fn calculate_score(network: &ScanResult, _vendor_elements: &serde_json::Value) -> i32 {
         let mut score = network.signal_dbm;
         if network.ssid.starts_with("TollGate-") {
             score += 100;
@@ -378,6 +378,7 @@ impl UpstreamManager {
     /// This is the main decision loop. Go v1 scatters this logic across
     /// `runManager()`, `evaluateUpstream()`, and `performSwitch()`.
     /// Rust consolidates it into one method with clear return types.
+    #[allow(clippy::too_many_lines)]
     pub async fn run_scan_cycle(
         &mut self,
         reason: ScanReason,
@@ -551,7 +552,7 @@ impl UpstreamManager {
                 score_b.cmp(&score_a)
             });
         } else {
-            candidates.sort_by(|a, b| b.signal_dbm.cmp(&a.signal_dbm));
+            candidates.sort_by_key(|b| std::cmp::Reverse(b.signal_dbm));
         }
 
         candidates

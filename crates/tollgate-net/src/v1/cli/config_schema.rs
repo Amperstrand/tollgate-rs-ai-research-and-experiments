@@ -5,6 +5,8 @@
 //! config editing forms. This is pure metadata — it does NOT read or
 //! modify any config file.
 
+#![allow(clippy::too_many_lines, clippy::unreadable_literal)]
+
 use serde::{Deserialize, Serialize};
 
 use super::types::CLIResponse;

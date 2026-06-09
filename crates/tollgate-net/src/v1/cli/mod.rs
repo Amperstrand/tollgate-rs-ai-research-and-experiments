@@ -59,6 +59,7 @@ impl CliServer {
         }
     }
 
+    #[must_use]
     pub fn with_config(mut self, config: Arc<dyn CliConfig>) -> Self {
         self.config = Some(config);
         self
@@ -163,7 +164,7 @@ async fn handle_connection(
     tracing::debug!(len = trimmed.len(), "Received CLI message");
 
     let response = match serde_json::from_str::<CLIMessage>(trimmed) {
-        Ok(msg) => dispatch(&msg, &wallet, &config, start_time).await,
+        Ok(msg) => dispatch(&msg, &wallet, config.as_ref(), start_time).await,
         Err(e) => CLIResponse::error(format!("Invalid JSON: {e}")),
     };
 
@@ -182,14 +183,14 @@ async fn handle_connection(
 async fn dispatch(
     msg: &CLIMessage,
     wallet: &Arc<dyn CliWallet>,
-    config: &Option<Arc<dyn CliConfig>>,
+    config: Option<&Arc<dyn CliConfig>>,
     start_time: std::time::Instant,
 ) -> CLIResponse {
     tracing::debug!(command = %msg.command, args = ?msg.args, "Dispatching CLI command");
 
     match msg.command.as_str() {
         "wallet" => dispatch_wallet(&msg.args, wallet).await,
-        "upstream" => dispatch_upstream(&msg.args).await,
+        "upstream" => dispatch_upstream(&msg.args),
         "status" => {
             let sessions: Vec<SessionStatus> = Vec::new();
             commands::handle_status(wallet.as_ref(), start_time, &sessions).await
@@ -238,7 +239,7 @@ async fn dispatch_wallet(args: &[String], wallet: &Arc<dyn CliWallet>) -> CLIRes
     }
 }
 
-async fn dispatch_upstream(args: &[String]) -> CLIResponse {
+fn dispatch_upstream(args: &[String]) -> CLIResponse {
     let Some(subcommand) = args.first() else {
         return CLIResponse::error(
             "Upstream command requires a subcommand (scan, connect, list-upstream, remove-upstream)",
@@ -258,9 +259,10 @@ async fn dispatch_upstream(args: &[String]) -> CLIResponse {
                 ssid,
                 passphrase.as_deref(),
                 |step, msg| progress_log.push(format!("{step} {msg}")),
-            )
-            .await;
-            if !progress_log.is_empty() {
+            );
+            if progress_log.is_empty() {
+                result
+            } else {
                 let mut enriched = result;
                 let existing_data = enriched.data.unwrap_or(serde_json::json!({}));
                 let merged = match existing_data {
@@ -277,8 +279,6 @@ async fn dispatch_upstream(args: &[String]) -> CLIResponse {
                 };
                 enriched.data = Some(merged);
                 enriched
-            } else {
-                result
             }
         }
         "list-upstream" => commands::handle_upstream_list(),
@@ -295,7 +295,7 @@ async fn dispatch_upstream(args: &[String]) -> CLIResponse {
     }
 }
 
-fn dispatch_config(args: &[String], config: &Option<Arc<dyn CliConfig>>) -> CLIResponse {
+fn dispatch_config(args: &[String], config: Option<&Arc<dyn CliConfig>>) -> CLIResponse {
     let Some(subcommand) = args.first() else {
         return CLIResponse::error(
             "Config command requires a subcommand (get, set, save, schema, save-identities)",
@@ -396,7 +396,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("Unknown command: foobar"));
     }
@@ -410,7 +410,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["balance"], 500);
@@ -425,7 +425,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("requires an action"));
     }
@@ -439,7 +439,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(resp.success);
         assert!(resp.message.unwrap().contains("tollgate-net"));
     }
@@ -453,7 +453,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["wallet_ok"], true);
@@ -469,7 +469,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("M4"));
     }
@@ -483,7 +483,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         let error = resp.error.unwrap();
         assert!(error.contains("TestNet"));
@@ -504,7 +504,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("SSID"));
     }
@@ -595,7 +595,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["wallet_ok"], true);
@@ -628,7 +628,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(resp.success);
         let data = resp.data.unwrap();
         assert_eq!(data["wallet_ok"], false);
@@ -644,7 +644,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("requires a subcommand"));
     }
@@ -658,7 +658,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("not available"));
     }
@@ -672,7 +672,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
     }
 
@@ -685,7 +685,7 @@ mod tests {
             flags: HashMap::new(),
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let resp = rt.block_on(dispatch(&msg, &wallet, &None, std::time::Instant::now()));
+        let resp = rt.block_on(dispatch(&msg, &wallet, None, std::time::Instant::now()));
         assert!(!resp.success);
         assert!(resp.error.unwrap().contains("not available"));
     }
@@ -706,7 +706,7 @@ mod tests {
         let resp = rt.block_on(dispatch(
             &msg,
             &wallet,
-            &Some(config),
+            Some(&config),
             std::time::Instant::now(),
         ));
         assert!(!resp.success);
@@ -729,7 +729,7 @@ mod tests {
         let resp = rt.block_on(dispatch(
             &msg,
             &wallet,
-            &Some(config),
+            Some(&config),
             std::time::Instant::now(),
         ));
         assert!(resp.success);
@@ -762,7 +762,7 @@ mod tests {
         let resp = rt.block_on(dispatch(
             &msg,
             &wallet,
-            &Some(config),
+            Some(&config),
             std::time::Instant::now(),
         ));
         assert!(resp.success);
@@ -794,7 +794,7 @@ mod tests {
         let resp = rt.block_on(dispatch(
             &msg,
             &wallet,
-            &Some(config),
+            Some(&config),
             std::time::Instant::now(),
         ));
         assert!(resp.success);
@@ -824,7 +824,7 @@ mod tests {
         let resp = rt.block_on(dispatch(
             &msg,
             &wallet,
-            &Some(config),
+            Some(&config),
             std::time::Instant::now(),
         ));
         assert!(!resp.success);
@@ -850,7 +850,7 @@ mod tests {
         let resp = rt.block_on(dispatch(
             &msg,
             &wallet,
-            &Some(config),
+            Some(&config),
             std::time::Instant::now(),
         ));
         assert!(!resp.success);

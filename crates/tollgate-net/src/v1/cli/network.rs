@@ -265,7 +265,7 @@ fn handle_private_network_set_password(new_password: &str) -> CLIResponse {
 
     // WPA2 requires 8–63 characters
     let len = password.len();
-    if len < 8 || len > 63 {
+    if !(8..=63).contains(&len) {
         return CLIResponse::error("Password must be between 8 and 63 characters");
     }
 

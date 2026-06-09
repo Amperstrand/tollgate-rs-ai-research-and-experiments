@@ -220,12 +220,10 @@ pub fn render_shell(ops: &[UciOp]) -> Vec<String> {
                 values,
             } => {
                 // Named section: `uci set config.name='type'`
-                if !name.is_empty() {
-                    cmds.push(format!("uci set {config}.{name}={}", sh_quote(type_name)));
-                } else {
-                    // Anonymous section is not directly supported via shell in one command.
-                    // Use `uci add config type` and then set values.
+                if name.is_empty() {
                     cmds.push(format!("uci add {config} {type_name}"));
+                } else {
+                    cmds.push(format!("uci set {config}.{name}={}", sh_quote(type_name)));
                 }
                 for (key, value) in values {
                     let section_ref = if name.is_empty() {
@@ -384,6 +382,7 @@ impl UciOpBuilder {
     }
 
     /// Set one or more key-value pairs on a UCI section.
+    #[must_use]
     pub fn set(mut self, config: &str, section: &str, values: Vec<(&str, &str)>) -> Self {
         self.ops.push(UciOp::Set {
             config: config.to_owned(),
@@ -397,6 +396,7 @@ impl UciOpBuilder {
     }
 
     /// Add a new UCI section with optional initial values.
+    #[must_use]
     pub fn add(
         mut self,
         config: &str,
@@ -417,6 +417,7 @@ impl UciOpBuilder {
     }
 
     /// Delete an entire UCI section.
+    #[must_use]
     pub fn delete(mut self, config: &str, section: &str) -> Self {
         self.ops.push(UciOp::Delete {
             config: config.to_owned(),
@@ -427,6 +428,7 @@ impl UciOpBuilder {
     }
 
     /// Delete a specific option from a UCI section.
+    #[must_use]
     pub fn delete_option(mut self, config: &str, section: &str, option: &str) -> Self {
         self.ops.push(UciOp::Delete {
             config: config.to_owned(),
@@ -437,6 +439,7 @@ impl UciOpBuilder {
     }
 
     /// Append a value to a UCI list option.
+    #[must_use]
     pub fn add_list(mut self, config: &str, section: &str, option: &str, value: &str) -> Self {
         self.ops.push(UciOp::AddList {
             config: config.to_owned(),
@@ -448,6 +451,7 @@ impl UciOpBuilder {
     }
 
     /// Commit pending changes for a config.
+    #[must_use]
     pub fn commit(mut self, config: &str) -> Self {
         self.ops.push(UciOp::Commit {
             config: config.to_owned(),
@@ -456,6 +460,7 @@ impl UciOpBuilder {
     }
 
     /// Add a raw shell command.
+    #[must_use]
     pub fn shell(mut self, command: &str) -> Self {
         self.ops.push(UciOp::Shell {
             command: command.to_owned(),
@@ -464,6 +469,7 @@ impl UciOpBuilder {
     }
 
     /// Add a service management action.
+    #[must_use]
     pub fn service(mut self, name: &str, action: ServiceAction) -> Self {
         self.ops.push(UciOp::Service {
             name: name.to_owned(),
@@ -473,6 +479,7 @@ impl UciOpBuilder {
     }
 
     /// Add a comment (not executed).
+    #[must_use]
     pub fn comment(mut self, text: &str) -> Self {
         self.ops.push(UciOp::Comment {
             text: text.to_owned(),

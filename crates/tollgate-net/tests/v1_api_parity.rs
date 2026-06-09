@@ -537,11 +537,13 @@ async fn parity_post_session_event_has_start_time_tag() {
     let (base_url, server, _state) = start_server(test_config()).await;
     let client = Client::new();
 
+    #[allow(clippy::cast_possible_wrap)]
     let before = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
     let event = pay(&client, &base_url, 10).await;
+    #[allow(clippy::cast_possible_wrap)]
     let after = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

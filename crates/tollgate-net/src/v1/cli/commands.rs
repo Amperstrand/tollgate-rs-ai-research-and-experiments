@@ -174,50 +174,40 @@ pub fn handle_upstream_scan() -> CLIResponse {
 /// `handleUpstreamConnectStreaming` 7-step flow. Actual WiFi operations are
 /// stubs pending M4 (hardware); the step structure and streaming protocol
 /// match Go exactly.
-pub async fn handle_upstream_connect_streaming<F>(
+pub fn handle_upstream_connect_streaming<F>(
     ssid: &str,
-    passphrase: Option<&str>,
+    _passphrase: Option<&str>,
     mut send_progress: F,
 ) -> CLIResponse
 where
     F: FnMut(&str, &str), // (step, message)
 {
-    let _passphrase = passphrase; // used by M4 implementation
 
     // Step 1: Enable radios
     send_progress("[1/7]", "Enabling radios...");
-    // TODO: M4 - s.connector.EnsureRadiosEnabled()
 
     // Step 2: Scan
-    send_progress("[2/7]", &format!("Scanning for '{}'...", ssid));
-    // TODO: M4 - s.scanner.ScanAllRadios()
+    send_progress("[2/7]", &format!("Scanning for '{ssid}'..."));
 
     // Step 3: Found
-    // Go: "Found '{ssid}' (signal dBm on radio) encryption=..."
     send_progress(
         "[3/7]",
-        &format!("Found '{}' (signal TBD) encryption=TBD", ssid),
+        &format!("Found '{ssid}' (signal TBD) encryption=TBD"),
     );
 
     // Step 4: Setup wwan
     send_progress("[4/7]", "Setting up wwan interface...");
-    // TODO: M4 - s.connector.EnsureWWANSetup()
 
     // Step 5: Create STA
     let iface_name = sanitize_iface_name(ssid);
-    // Go uses bestRadio; placeholder until M4
-    send_progress("[5/7]", &format!("Creating STA {} on TBD...", iface_name));
-    // TODO: M4 - s.connector.FindOrCreateSTAForSSID()
+    send_progress("[5/7]", &format!("Creating STA {iface_name} on TBD..."));
 
     // Step 6: Switch upstream
     send_progress("[6/7]", "Switching upstream... waiting for DHCP");
-    // TODO: M4 - s.connector.SwitchUpstream()
 
     // Step 7: Final result
-    // For now, return not-implemented since actual WiFi ops require M4
     CLIResponse::error(format!(
-        "Streaming connect to '{}' not yet functional — WiFi operations require M4 (hardware)",
-        ssid
+        "Streaming connect to '{ssid}' not yet functional — WiFi operations require M4 (hardware)"
     ))
 }
 
@@ -354,13 +344,12 @@ mod tests {
         assert!(result.starts_with("upstream_"));
     }
 
-    #[tokio::test]
-    async fn streaming_connect_progress_steps() {
+    #[test]
+    fn streaming_connect_progress_steps() {
         let mut progress_log: Vec<(String, String)> = Vec::new();
         let result = handle_upstream_connect_streaming("TestNet", None, |step, msg| {
-            progress_log.push((step.to_owned(), msg.to_owned()))
-        })
-        .await;
+            progress_log.push((step.to_owned(), msg.to_owned()));
+        });
 
         assert!(!result.success);
         let error = result.error.unwrap();

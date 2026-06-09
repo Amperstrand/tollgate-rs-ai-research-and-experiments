@@ -105,11 +105,10 @@ impl EncryptionType {
             Self::None => "none",
             Self::Wep => "wep",
             Self::Psk => "psk",
-            Self::Psk2 | Self::Psk2Ccmp => "psk2",
+            Self::Psk2 | Self::Psk2Ccmp | Self::Unknown(_) => "psk2",
             Self::Sae => "sae",
             Self::SaeMixed => "sae-mixed",
             Self::Wpa2Eap => "wpa2-eap",
-            Self::Unknown(_) => "psk2", // safe default, same as Go v1
         }
     }
 }
@@ -313,7 +312,7 @@ impl WifiScanner {
         }
 
         // Sort by signal strength, strongest first (Go v1 behavior)
-        all_results.sort_by(|a, b| b.signal_dbm.cmp(&a.signal_dbm));
+        all_results.sort_by_key(|b| std::cmp::Reverse(b.signal_dbm));
 
         tracing::info!(
             "scanned {} radios, found {} networks",
@@ -432,6 +431,7 @@ impl WifiScanner {
     ///
     /// Rust: Same approach but with proper error handling and skipping
     /// hidden SSIDs (empty ESSID).
+    #[allow(clippy::similar_names)]
     pub fn parse_iwinfo_output(&self, output: &str, radio: &str) -> Vec<ScanResult> {
         let mut results = Vec::new();
 
@@ -467,7 +467,7 @@ impl WifiScanner {
 
                 // Parse BSSID from "Cell 01 - Address: AA:BB:CC:DD:EE:FF"
                 if let Some(addr) = line.split("Address:").nth(1) {
-                    current_bssid = addr.trim().to_owned();
+                    addr.trim().clone_into(&mut current_bssid);
                 }
                 continue;
             }
@@ -475,12 +475,11 @@ impl WifiScanner {
             // Parse ESSID
             if let Some(essid) = line.strip_prefix("ESSID:") {
                 let essid = essid.trim();
-                // Remove surrounding quotes
-                current_ssid = essid
+                essid
                     .strip_prefix('"')
                     .and_then(|s| s.strip_suffix('"'))
                     .unwrap_or(essid)
-                    .to_owned();
+                    .clone_into(&mut current_ssid);
             }
 
             // Parse signal: "Quality: 70/100  Signal: -45 dBm"
@@ -527,7 +526,7 @@ impl WifiScanner {
         }
 
         // Sort by signal, strongest first
-        results.sort_by(|a, b| b.signal_dbm.cmp(&a.signal_dbm));
+        results.sort_by_key(|b| std::cmp::Reverse(b.signal_dbm));
 
         results
     }

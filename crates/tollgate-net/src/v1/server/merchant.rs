@@ -35,6 +35,8 @@ pub fn build_advertisement(
         ));
     }
 
+    tags.push(Tag::custom(TagKind::Custom("tips".into()), [""]));
+
     let event = EventBuilder::new(Kind::Custom(10_021), "")
         .tags(Tags::from_list(tags))
         .sign_with_keys(&config.nostr_keys)?;

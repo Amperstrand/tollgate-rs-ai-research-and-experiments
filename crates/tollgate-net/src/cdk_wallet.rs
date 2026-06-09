@@ -55,6 +55,10 @@ impl CdkWallet {
     ///
     /// Mirrors Go's `TollWallet.New()` — loops through `accepted_mints`, creates a
     /// wallet for each, breaks on first success, returns error if all fail.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WalletError` if all mints fail to connect.
     pub async fn try_mints(mint_urls: &[String], seed: [u8; 64]) -> Result<Self, WalletError> {
         if mint_urls.is_empty() {
             return Err(WalletError::Internal("no mint URLs provided".to_owned()));
@@ -293,8 +297,7 @@ impl Wallet for CdkWallet {
                 .wallet
                 .total_balance()
                 .await
-                .map(|b| u64::from(b))
-                .unwrap_or(0);
+                .map_or(0, u64::from);
             let mut last_err = String::new();
             for attempt in 0..3 {
                 match self

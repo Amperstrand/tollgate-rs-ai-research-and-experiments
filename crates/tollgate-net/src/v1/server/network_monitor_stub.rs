@@ -125,9 +125,7 @@ impl NetworkMonitor {
         tokio::select! {
             () = tokio::time::sleep(Duration::from_secs(2)) => {
                 let name = "eth0".to_owned();
-                if !self.should_process_interface(&name) {
-                    tracing::debug!("Stub: eth0 filtered out, not emitting fake event");
-                } else {
+                if self.should_process_interface(&name) {
                     let info = InterfaceInfo {
                         name: name.clone(),
                         mac_address: Some("00:00:00:00:00:00".to_owned()),
@@ -146,6 +144,8 @@ impl NetworkMonitor {
                     if event_tx.send(event).await.is_err() {
                         tracing::warn!("Stub: event channel closed");
                     }
+                } else {
+                    tracing::debug!("Stub: eth0 filtered out, not emitting fake event");
                 }
             }
             () = self.cancel.cancelled() => {
@@ -159,12 +159,14 @@ impl NetworkMonitor {
     }
 
     /// Get current interfaces (stub — returns empty list).
+    #[allow(clippy::unused_async)]
     pub async fn get_current_interfaces(&self) -> Result<Vec<InterfaceInfo>, NetworkMonitorError> {
         tracing::debug!("Stub: get_current_interfaces returning empty list");
         Ok(Vec::new())
     }
 
     /// Get gateway for interface (stub — always returns None).
+    #[allow(clippy::unused_async)]
     pub async fn get_gateway_for_interface(
         &self,
         _iface: &str,
@@ -174,6 +176,7 @@ impl NetworkMonitor {
     }
 
     /// Stop the stub monitor.
+    #[allow(clippy::unused_async)]
     pub async fn stop(&self) {
         self.cancel.cancel();
     }
@@ -276,8 +279,8 @@ mod tests {
             Ok(other) => {
                 panic!("Expected InterfaceUp for eth0, got: {other:?}");
             }
-            Err(_) => {
-                panic!("Timed out waiting for fake InterfaceUp event");
+            Err(e) => {
+                panic!("Timed out waiting for fake InterfaceUp event: {e}");
             }
         }
 

@@ -305,7 +305,7 @@ impl ServerConfig {
             to = CONFIG_SCHEMA_VERSION,
             "migrating config schema"
         );
-        self.config_version = CONFIG_SCHEMA_VERSION.to_owned();
+        CONFIG_SCHEMA_VERSION.clone_into(&mut self.config_version);
         true
     }
 
@@ -615,12 +615,14 @@ mod tests {
 
     #[test]
     fn config_validate_catches_bad_metric_and_profit_share() {
-        let mut c = ServerConfig::default();
-        c.metric = "seconds".to_owned();
-        c.profit_share = vec![ProfitShareConfig {
-            factor: 0.5,
-            identity: "owner".to_owned(),
-        }];
+        let c = ServerConfig {
+            metric: "seconds".to_owned(),
+            profit_share: vec![ProfitShareConfig {
+                factor: 0.5,
+                identity: "owner".to_owned(),
+            }],
+            ..Default::default()
+        };
         let errs = c.validate();
         assert!(errs.iter().any(|e| e.contains("metric")));
         assert!(errs.iter().any(|e| e.contains("profit_share")));

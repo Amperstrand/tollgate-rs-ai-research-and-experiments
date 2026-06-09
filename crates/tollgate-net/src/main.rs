@@ -294,11 +294,11 @@ async fn main() {
                 // Load from config file, then apply CLI overrides for
                 // port/metric/step_size (UCI may provide different values
                 // than what's in the config file).
-                let mut sc = v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
+                let mut sc = v1::server::ServerConfig::load_from_file(path).unwrap_or_else(|e| {
                     eprintln!("Failed to load config from {path}: {e}");
                     std::process::exit(1);
                 });
-                sc.metric = metric.clone();
+                sc.metric.clone_from(&metric);
                 sc.step_size = step_size;
                 sc
             } else {
@@ -329,6 +329,7 @@ async fn main() {
             let config = server_config.to_server_config(nostr_keys, port);
             let server = v1::server::V1Server::new(config);
 
+            #[allow(clippy::single_match_else)]
             let valve: Arc<dyn Valve + Send + Sync> = match valve.as_str() {
                 "nds" => {
                     #[cfg(feature = "nds")]
@@ -340,8 +341,6 @@ async fn main() {
                             Arc::new(v1::server::NdsValve::with_ndsctl_path(path))
                                 as Arc<dyn Valve + Send + Sync>
                         } else {
-                            // Fail open at the API level rather than crash-loop:
-                            // keep serving so the failure is diagnosable.
                             tracing::error!(
                                 ndsctl_path = %path.display(),
                                 "ndsctl not found; falling back to stub valve (NO real gating)"

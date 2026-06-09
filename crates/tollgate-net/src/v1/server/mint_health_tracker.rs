@@ -178,9 +178,9 @@ impl MintHealthTracker {
                         };
 
                         // Fire callbacks outside lock.
-                        this.fire_callbacks(pending);
+                        this.fire_callbacks(&pending);
                     }
-                    _ = cancel.cancelled() => {
+                    () = cancel.cancelled() => {
                         tracing::info!("mint health tracker shutting down");
                         return;
                     }
@@ -248,9 +248,8 @@ impl MintHealthTracker {
         let mut first_just_became_reachable = false;
 
         for (url, reachable_now) in results {
-            let state = match inner.mints.get_mut(url.as_str()) {
-                Some(s) => s,
-                None => continue,
+            let Some(state) = inner.mints.get_mut(url.as_str()) else {
+                continue;
             };
 
             if *reachable_now {
@@ -288,7 +287,7 @@ impl MintHealthTracker {
     }
 
     /// Fire queued callbacks outside the lock.
-    fn fire_callbacks(&self, pending: PendingCallbacks) {
+    fn fire_callbacks(&self, pending: &PendingCallbacks) {
         let (first_cb, changed_cb) = {
             let inner = self.inner.lock().expect("health tracker lock");
             (
@@ -506,7 +505,7 @@ mod tests {
             let mut inner = tracker.inner.lock().expect("lock");
             let pending = tracker.apply_probe_results(&mut inner, &[(bad_url.clone(), true)]);
             drop(inner);
-            tracker.fire_callbacks(pending);
+            tracker.fire_callbacks(&pending);
         }
 
         // The 3rd round should have fired the callback
@@ -537,7 +536,7 @@ mod tests {
         let mut inner = tracker.inner.lock().expect("lock");
         let pending = tracker.apply_probe_results(&mut inner, &[(base_url, true)]);
         drop(inner);
-        tracker.fire_callbacks(pending);
+        tracker.fire_callbacks(&pending);
 
         assert!(!fired.load(Ordering::SeqCst));
     }
@@ -561,7 +560,7 @@ mod tests {
             state.reachable = true;
             let pending = tracker.apply_probe_results(&mut inner, &[(url.clone(), true)]);
             drop(inner);
-            tracker.fire_callbacks(pending);
+            tracker.fire_callbacks(&pending);
         }
         assert_eq!(count.load(Ordering::SeqCst), 1);
 
@@ -584,7 +583,7 @@ mod tests {
             state.reachable = true;
             let pending = tracker.apply_probe_results(&mut inner, &[(url.clone(), true)]);
             drop(inner);
-            tracker.fire_callbacks(pending);
+            tracker.fire_callbacks(&pending);
         }
         assert_eq!(count.load(Ordering::SeqCst), 2);
     }
@@ -655,7 +654,7 @@ mod tests {
             let mut inner = tracker.inner.lock().expect("lock");
             let pending = tracker.apply_probe_results(&mut inner, &[(url.clone(), true)]);
             drop(inner);
-            tracker.fire_callbacks(pending);
+            tracker.fire_callbacks(&pending);
         }
 
         // Should have fired once (on the transition from 0 to 1 reachable)

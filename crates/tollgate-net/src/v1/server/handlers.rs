@@ -65,7 +65,7 @@ fn get_origin(headers: &HeaderMap) -> Option<String> {
         .get(header::ORIGIN)
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_owned())
+        .map(std::borrow::ToOwned::to_owned)
 }
 
 /// Check whether the given Origin URL refers to a local/private origin.
@@ -531,15 +531,20 @@ async fn handle_balance(
         (usage, rem)
     };
 
-    let json = serde_json::json!({
+    let mut json = serde_json::json!({
         "status": 1,
         "session_active": true,
-        "metric": session.metric,
         "usage": usage,
         "allotment": session.allotment,
         "remaining": remaining,
         "start_time": session.start_time,
     });
+
+    if !session.metric.is_empty() {
+        json.as_object_mut()
+            .unwrap()
+            .insert("metric".to_owned(), serde_json::Value::String(session.metric.clone()));
+    }
 
     cors_response(
         json_response(
@@ -599,14 +604,11 @@ struct LnInvoiceRequest {
 #[derive(serde::Serialize)]
 struct LnInvoiceResponse {
     status: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    quote: Option<String>,
+    quote: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     invoice: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mint_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    amount: Option<u64>,
+    mint_url: String,
+    amount: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     expiry: Option<u64>,
     state: String,
@@ -627,10 +629,10 @@ struct LnInvoiceQuery {
 fn ln_error_response(http_status: StatusCode, error: &str) -> Response {
     let resp = LnInvoiceResponse {
         status: 0,
-        quote: None,
+        quote: String::new(),
         invoice: None,
-        mint_url: None,
-        amount: None,
+        mint_url: String::new(),
+        amount: 0,
         expiry: None,
         state: String::new(),
         access_granted: false,
@@ -761,10 +763,10 @@ async fn handle_post_ln_invoice(
 
     let resp = LnInvoiceResponse {
         status: 1,
-        quote: Some(info.quote_id),
+        quote: info.quote_id,
         invoice: Some(info.invoice),
-        mint_url: Some(mint_url),
-        amount: Some(info.amount),
+        mint_url,
+        amount: info.amount,
         expiry: Some(info.expiry),
         state: "UNPAID".to_owned(),
         access_granted: false,
@@ -973,10 +975,10 @@ async fn handle_get_ln_invoice(
     let resp = if record.session_granted {
         LnInvoiceResponse {
             status: 1,
-            quote: Some(record.quote_id),
+            quote: record.quote_id,
             invoice: None,
-            mint_url: Some(record.mint_url),
-            amount: Some(record.amount),
+            mint_url: record.mint_url,
+            amount: record.amount,
             expiry: None,
             state: "ISSUED".to_owned(),
             access_granted: true,
@@ -992,10 +994,10 @@ async fn handle_get_ln_invoice(
         };
         LnInvoiceResponse {
             status: 1,
-            quote: Some(record.quote_id),
+            quote: record.quote_id,
             invoice: None,
-            mint_url: Some(record.mint_url),
-            amount: Some(record.amount),
+            mint_url: record.mint_url,
+            amount: record.amount,
             expiry: None,
             state: state_str.to_owned(),
             access_granted: false,

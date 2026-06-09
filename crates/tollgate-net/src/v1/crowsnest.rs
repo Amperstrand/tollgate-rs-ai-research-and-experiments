@@ -235,6 +235,7 @@ mod tests {
 
     // ── Mock server helpers ──────────────────────────────────────────
 
+    #[allow(dead_code)]
     struct TestServerState {
         keys: Keys,
         payments_received: u64,
@@ -242,6 +243,7 @@ mod tests {
         allotment: u64,
     }
 
+    #[allow(dead_code)]
     impl TestServerState {
         fn new(keys: Keys) -> Self {
             Self {
@@ -253,6 +255,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     async fn get_advertisement(
         State(state): State<Arc<Mutex<TestServerState>>>,
     ) -> impl IntoResponse {
@@ -287,6 +290,7 @@ mod tests {
         axum::Json(serde_json::to_value(event).expect("serialize ad event"))
     }
 
+    #[allow(dead_code)]
     async fn post_payment(State(state): State<Arc<Mutex<TestServerState>>>) -> impl IntoResponse {
         let mut s = state.lock().expect("lock");
         s.payments_received += 1;
@@ -311,12 +315,14 @@ mod tests {
         axum::Json(serde_json::to_value(event).expect("serialize session event"))
     }
 
+    #[allow(dead_code)]
     async fn get_usage(State(state): State<Arc<Mutex<TestServerState>>>) -> impl IntoResponse {
         let mut s = state.lock().expect("lock");
         s.usage += 5000;
         format!("{}/{}", s.usage, s.allotment)
     }
 
+    #[allow(dead_code)]
     fn test_app(state: Arc<Mutex<TestServerState>>) -> Router {
         Router::new()
             .route("/", get(get_advertisement).post(post_payment))
@@ -324,6 +330,7 @@ mod tests {
             .with_state(state)
     }
 
+    #[allow(dead_code)]
     async fn start_test_server(
         state: Arc<Mutex<TestServerState>>,
     ) -> (String, tokio::task::JoinHandle<()>) {

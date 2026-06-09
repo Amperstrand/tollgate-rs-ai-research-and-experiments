@@ -210,7 +210,7 @@ impl<W: Wallet> V1Client<W> {
 
         if max_affordable == 0 || balance_sats == 0 {
             tracing::info!("No Cashu balance, attempting Lightning payment");
-            return self.connect_via_lightning(&ad, &pricing, steps).await;
+            return self.connect_via_lightning(&ad, pricing, steps).await;
         }
 
         // Step 6: Create token and send
@@ -267,7 +267,7 @@ impl<W: Wallet> V1Client<W> {
         println!("BOLT11 Invoice:");
         println!("{}", resp.invoice.as_ref().unwrap_or(&String::new()));
         println!("\nPlease pay this invoice using your Lightning wallet and wait for the server to grant access.");
-        println!("Quote ID: {}", quote);
+        println!("Quote ID: {quote}");
         println!("Expires in: {} seconds", resp.expiry.unwrap_or(0));
 
         let timeout = tokio::time::Duration::from_secs(300); // 5 minutes
@@ -392,7 +392,7 @@ impl<W: Wallet> V1Client<W> {
 
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(poll_interval) => {}
+                () = tokio::time::sleep(poll_interval) => {}
                 _ = tokio::signal::ctrl_c() => {
                     tracing::info!("Received shutdown signal, stopping client...");
                     return Ok(());

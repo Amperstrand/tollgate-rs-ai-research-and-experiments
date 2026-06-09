@@ -194,7 +194,7 @@ impl TollGateHttpClient {
         };
         let response = self
             .client
-            .post(&format!("{}/ln-invoice", self.base_url))
+            .post(format!("{}/ln-invoice", self.base_url))
             .header("Content-Type", "application/json")
             .json(&request)
             .send()

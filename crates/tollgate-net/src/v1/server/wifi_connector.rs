@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use super::uci_ops::{execute_shell, render_shell, UciOp, UciOpBuilder};
+use super::uci_ops::{execute_shell, UciOp, UciOpBuilder};
 use super::wifi_scanner::{CommandExecutor, EncryptionType, SystemCommandExecutor, WifiScanError};
 
 /// Errors from WiFi connector operations.
@@ -152,8 +152,8 @@ impl WifiConnector {
 
         // Wait for the STA to get an IP
         // Go v1 uses "ifup wwan" + DHCP wait with cross-radio nudge
-        let _ifup_ops = UciOpBuilder::new().shell("ifup wwan").build();
-        execute_shell(&_ifup_ops).await;
+        let ifup_ops = UciOpBuilder::new().shell("ifup wwan").build();
+        execute_shell(&ifup_ops).await;
 
         // Determine the STA interface name
         let iface = self.find_sta_interface(radio).await?;
@@ -327,11 +327,11 @@ impl WifiConnector {
         ];
 
         // Only set encryption and key if encryption is not "none"
-        if *encryption != EncryptionType::None {
+        if *encryption == EncryptionType::None {
+            values.push(("encryption", "none"));
+        } else {
             values.push(("encryption", encryption.to_uci_value()));
             values.push(("key", password));
-        } else {
-            values.push(("encryption", "none"));
         }
 
         UciOpBuilder::new()
@@ -440,12 +440,12 @@ impl WifiConnector {
             for line in output.stdout.lines() {
                 let line = line.trim();
                 if let Some(iface) = line.strip_prefix("Interface ") {
-                    current_iface = iface.to_owned();
+                    iface.clone_into(&mut current_iface);
                 }
-                if line.contains("type managed") || line.contains("type STA") {
-                    if !current_iface.is_empty() {
-                        return Ok(current_iface);
-                    }
+                if (line.contains("type managed") || line.contains("type STA"))
+                    && !current_iface.is_empty()
+                {
+                    return Ok(current_iface);
                 }
             }
         }
@@ -621,6 +621,7 @@ impl Default for WifiConnector {
 
 #[cfg(test)]
 mod tests {
+    use super::super::uci_ops::render_shell;
     use super::*;
 
     #[test]
@@ -656,7 +657,7 @@ mod tests {
                 .iter()
                 .filter_map(|(k, v)| match v {
                     super::super::uci_ops::OpValue::Single(s) => Some((k.as_str(), s.as_str())),
-                    _ => None,
+                    super::super::uci_ops::OpValue::List(_) => None,
                 })
                 .collect();
             assert_eq!(value_map.get("device"), Some(&"radio0"));
@@ -686,12 +687,12 @@ mod tests {
                 .iter()
                 .filter_map(|(k, v)| match v {
                     super::super::uci_ops::OpValue::Single(s) => Some((k.as_str(), s.as_str())),
-                    _ => None,
+                    super::super::uci_ops::OpValue::List(_) => None,
                 })
                 .collect();
             assert_eq!(value_map.get("encryption"), Some(&"none"));
             // No key for open networks
-            assert!(value_map.get("key").is_none());
+            assert!(!value_map.contains_key("key"));
         } else {
             panic!("expected Add op");
         }

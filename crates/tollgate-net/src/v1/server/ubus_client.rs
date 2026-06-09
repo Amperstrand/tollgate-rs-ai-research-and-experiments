@@ -392,7 +392,7 @@ impl UbusClient {
 
         // Check for JSON-RPC level error
         if let Some(error) = rpc_response.error {
-            let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+            let code = error.get("code").and_then(serde_json::Value::as_i64).unwrap_or(-1);
             let message = error
                 .get("message")
                 .and_then(|m| m.as_str())
@@ -433,7 +433,7 @@ impl UbusClient {
         Ok(result_arr
             .get(1)
             .cloned()
-            .unwrap_or(serde_json::Value::Object(Default::default())))
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::default())))
     }
 }
 
@@ -446,6 +446,7 @@ impl UbusClient {
 /// # Errors
 /// Returns individual [`UciOpError`] per failed op without stopping
 /// execution of subsequent ops.
+#[allow(clippy::too_many_lines)]
 pub async fn execute_ubus(client: &UbusClient, ops: &[UciOp]) -> Vec<Result<(), UciOpError>> {
     let mut results = Vec::with_capacity(ops.len());
 
@@ -569,6 +570,7 @@ pub async fn execute_ubus(client: &UbusClient, ops: &[UciOp]) -> Vec<Result<(), 
 }
 
 #[cfg(test)]
+#[allow(clippy::similar_names)]
 mod tests {
     use super::*;
 

@@ -15,6 +15,7 @@ impl FileConfig {
         }
     }
 
+    #[must_use]
     pub fn with_identities_path(mut self, path: PathBuf) -> Self {
         self.identities_path = Some(path);
         self
@@ -130,6 +131,7 @@ impl CliConfig for FileConfig {
 // Dot-path schema validation (matches Go's validateAgainstSchema)
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_lines)]
 fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
     let parts: Vec<&str> = key.split('.').collect();
     if parts.is_empty() {
@@ -163,7 +165,7 @@ fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
         }
 
         let mut found = false;
-        for schema_item in current_schema.iter() {
+        for schema_item in current_schema {
             if schema_item.json_key == *part {
                 field = Some(schema_item);
                 found = true;
@@ -178,9 +180,8 @@ fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
         }
     }
 
-    let field = match field {
-        Some(f) => f,
-        None => return Err(format!("unknown config key {key:?}")),
+    let Some(field) = field else {
+        return Err(format!("unknown config key {key:?}"));
     };
 
     // Reject container types
@@ -204,15 +205,11 @@ fn validate_against_schema(key: &str, value: &str) -> Result<(), String> {
 
     // Type-specific validation
     match field.field_type.as_str() {
-        "string" | "duration" => {
-            if field.field_type == "duration" {
-                parse_go_duration(value)?;
-            }
+        "duration" => {
+            parse_go_duration(value)?;
         }
-        "bool" => {
-            if value != "true" && value != "false" {
-                return Err(format!("invalid bool value {value:?}"));
-            }
+        "bool" if value != "true" && value != "false" => {
+            return Err(format!("invalid bool value {value:?}"));
         }
         "uint64" => {
             let n: u64 = value
@@ -343,7 +340,10 @@ fn parse_go_duration(s: &str) -> Result<(), String> {
             }
         };
 
-        total_ns += (n * multiplier as f64) as i64;
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            total_ns += (n * multiplier as f64) as i64;
+        }
     }
 
     if total_ns <= 0 {
@@ -691,7 +691,7 @@ mod tests {
     fn dot_path_set_rejects_container_type() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
-        std::fs::write(&path, r#"{"accepted_mints":[]}"#.to_owned()).unwrap();
+        std::fs::write(&path, r#"{"accepted_mints":[]}"#).unwrap();
         let cfg = FileConfig::new(path);
         let err = cfg.set_value("accepted_mints", "[]").unwrap_err();
         assert!(err.contains("container type"));
