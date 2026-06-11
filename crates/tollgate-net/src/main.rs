@@ -88,8 +88,8 @@ enum Commands {
         /// Path to Nostr key file (loads or generates new keys)
         #[arg(long)]
         keys: Option<String>,
-        /// Valve backend: "stub" (default) or "nds" (NoDogSplash, requires --features nds)
-        #[arg(long, default_value = "stub", value_name = "nds|stub")]
+        /// Valve backend: "stub" (default), "noop", or "nds" (NoDogSplash, requires --features nds)
+        #[arg(long, default_value = "stub", value_name = "stub|noop|nds")]
         valve: String,
         /// Path to ndsctl binary (only used with --valve nds, default: auto-detect)
         #[arg(long)]
@@ -363,6 +363,11 @@ async fn main() {
 
             #[allow(clippy::single_match_else)]
             let valve: Arc<dyn Valve + Send + Sync> = match valve.as_str() {
+                "noop" => {
+                    tracing::info!("Using noop valve (RADIUS deployment, enforcement via Session-Timeout + CoA)");
+                    Arc::new(v1::server::NoopValve)
+                        as Arc<dyn Valve + Send + Sync>
+                }
                 "nds" => {
                     #[cfg(feature = "nds")]
                     {

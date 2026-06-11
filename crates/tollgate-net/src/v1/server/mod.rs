@@ -81,7 +81,7 @@ pub use upstream_manager::{
     Blacklist, CircuitBreaker, ManagerState, ScanCycleResult, ScanReason, SwitchCandidate,
     UpstreamError, UpstreamManager, UpstreamManagerConfig,
 };
-pub use valve::{ClientStats, StubValve, Valve, ValveError};
+pub use valve::{ClientStats, NoopValve, StubValve, Valve, ValveError};
 pub use wifi_connector::{WifiConnectError, WifiConnector};
 pub use wifi_scanner::{
     CommandExecutor, CommandOutput, EncryptionType, ScanResult, SystemCommandExecutor,

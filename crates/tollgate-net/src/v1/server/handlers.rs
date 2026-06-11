@@ -222,20 +222,30 @@ async fn handle_post_payment(
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let (origin, is_local) = resolve_origin(&headers).await;
 
-    let mac = match state.mac_resolver.resolve(&ip) {
-        Ok(mac) => mac,
-        Err(e) => {
-            tracing::warn!("MAC resolution failed for {ip}: {e}");
-            return notice_response(
-                "error",
-                "mac_resolution_failed",
-                &format!("cannot resolve MAC for {ip}"),
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &state.config,
-                origin.as_deref(),
-                is_local,
-                None,
-            );
+    let mac = if let Some(header_mac) = headers
+        .get("x-tollgate-mac")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        tracing::debug!("Using MAC from X-TollGate-MAC header: {header_mac}");
+        header_mac.to_owned()
+    } else {
+        match state.mac_resolver.resolve(&ip) {
+            Ok(mac) => mac,
+            Err(e) => {
+                tracing::warn!("MAC resolution failed for {ip}: {e}");
+                return notice_response(
+                    "error",
+                    "mac_resolution_failed",
+                    &format!("cannot resolve MAC for {ip}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &state.config,
+                    origin.as_deref(),
+                    is_local,
+                    None,
+                );
+            }
         }
     };
 
@@ -376,14 +386,24 @@ async fn handle_usage(
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let (origin, is_local) = resolve_origin(&headers).await;
 
-    let mac = match state.mac_resolver.resolve(&ip) {
-        Ok(mac) => mac,
-        Err(_) => {
-            return cors_response(
-                text_response(StatusCode::INTERNAL_SERVER_ERROR, "-1/-1".to_owned()),
-                origin.as_deref(),
-                is_local,
-            )
+    let mac = if let Some(header_mac) = headers
+        .get("x-tollgate-mac")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        tracing::debug!("Using MAC from X-TollGate-MAC header: {header_mac}");
+        header_mac.to_owned()
+    } else {
+        match state.mac_resolver.resolve(&ip) {
+            Ok(mac) => mac,
+            Err(_) => {
+                return cors_response(
+                    text_response(StatusCode::INTERNAL_SERVER_ERROR, "-1/-1".to_owned()),
+                    origin.as_deref(),
+                    is_local,
+                )
+            }
         }
     };
 
@@ -1136,5 +1156,338 @@ mod tests {
         assert!(resp.headers().get("access-control-allow-origin").is_none());
         assert!(resp.headers().get("access-control-allow-methods").is_some());
         assert!(resp.headers().get("access-control-allow-headers").is_some());
+    }
+
+    // ======================================================================
+    // X-TollGate-MAC header integration tests
+    // ======================================================================
+
+    use axum::body::Body;
+    use axum::http::Request;
+
+    use super::super::{
+        AcceptedMint, InMemoryLightningQuoteStore, InMemorySessionStore, MacResolveError,
+        MacResolver, MerchantProvider, NoopValve, StubMacResolver,
+    };
+
+    use crate::mock::MockWallet;
+    use http_body_util::BodyExt;
+    use tollgate_core::wallet::Wallet;
+    use tower::ServiceExt;
+
+    /// A MAC resolver that always fails — used to verify header override.
+    struct FailingMacResolver;
+    impl MacResolver for FailingMacResolver {
+        fn resolve(&self, ip: &str) -> Result<String, MacResolveError> {
+            Err(MacResolveError::NotFound(ip.to_owned()))
+        }
+    }
+
+    /// Build a minimal `ServerState` for testing with the given MAC resolver.
+    fn make_server_state(resolver: Arc<dyn MacResolver + Send + Sync>) -> Arc<ServerState> {
+        let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
+        let merchant = Arc::new(MerchantProvider::new(wallet));
+        let nostr_keys = Keys::generate();
+        let config = V1ServerConfig {
+            metric: "milliseconds".to_owned(),
+            step_size: 60_000,
+            accepted_mints: vec![AcceptedMint {
+                url: "https://test.example.com".to_owned(),
+                price_per_step: 1,
+                unit: "sat".to_owned(),
+                min_steps: 1,
+            }],
+            nostr_keys,
+            port: 2121,
+        };
+        let advertisement = merchant::build_advertisement(&config).expect("build ad");
+        Arc::new(ServerState {
+            merchant,
+            config,
+            sessions: Arc::new(InMemorySessionStore::new()),
+            mac_resolver: resolver,
+            valve: Arc::new(NoopValve),
+            mint_quote_wallet: None,
+            lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
+            advertisement,
+        })
+    }
+
+    /// Build a `ServerState` with the default `StubMacResolver("00:11:22:33:44:55")`.
+    fn test_server_state() -> Arc<ServerState> {
+        make_server_state(Arc::new(StubMacResolver::new("00:11:22:33:44:55")))
+    }
+
+    /// Encode an amount as an 8-byte big-endian mock token.
+    fn mock_token(amount: u64) -> Vec<u8> {
+        amount.to_be_bytes().to_vec()
+    }
+
+    /// Build a POST / request with a body and an optional X-TollGate-MAC header.
+    fn make_post_request(token: Vec<u8>, mac_header: Option<&str>) -> Request<Body> {
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let mut builder = Request::builder().method("POST").uri("/");
+        if let Some(mac) = mac_header {
+            builder = builder.header("x-tollgate-mac", mac);
+        }
+        let mut req = builder.body(Body::from(token)).unwrap();
+        req.extensions_mut().insert(ConnectInfo(addr));
+        req
+    }
+
+    /// Build a GET /usage request with an optional X-TollGate-MAC header.
+    fn make_usage_request(mac_header: Option<&str>) -> Request<Body> {
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let mut builder = Request::builder().method("GET").uri("/usage");
+        if let Some(mac) = mac_header {
+            builder = builder.header("x-tollgate-mac", mac);
+        }
+        let mut req = builder.body(Body::from("")).unwrap();
+        req.extensions_mut().insert(ConnectInfo(addr));
+        req
+    }
+
+    /// Read the full response body as a String.
+    async fn read_body(response: Response) -> String {
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    // ---- handle_post_payment tests ----
+
+    #[tokio::test]
+    async fn test_post_payment_with_mac_header() {
+        let state = test_server_state();
+        let app = build_router(state);
+        let req = make_post_request(mock_token(8), Some("aa:bb:cc:dd:ee:ff"));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_post_payment_without_mac_header_uses_resolver() {
+        let state = test_server_state();
+        let app = build_router(state);
+        // No X-TollGate-MAC header → falls back to StubMacResolver
+        let req = make_post_request(mock_token(8), None);
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_post_payment_empty_mac_header_falls_back() {
+        let state = test_server_state();
+        let app = build_router(state);
+        // Empty header value → falls back to resolver
+        let req = make_post_request(mock_token(8), Some(""));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_post_payment_whitespace_mac_header_falls_back() {
+        let state = test_server_state();
+        let app = build_router(state);
+        // Whitespace-only header value → trimmed to empty → falls back to resolver
+        let req = make_post_request(mock_token(8), Some("   "));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_post_payment_trimmed_mac_header() {
+        let state = test_server_state();
+
+        // POST with padded header " aa:bb:cc:dd:ee:ff "
+        let app = build_router(state.clone());
+        let req = make_post_request(mock_token(8), Some(" aa:bb:cc:dd:ee:ff "));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET /usage with the trimmed MAC should find the session
+        let app2 = build_router(state);
+        let req = make_usage_request(Some("aa:bb:cc:dd:ee:ff"));
+        let response = app2.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_ne!(body, "-1/-1", "session should exist under trimmed MAC");
+    }
+
+    #[tokio::test]
+    async fn test_post_payment_header_overrides_failing_resolver() {
+        let state = make_server_state(Arc::new(FailingMacResolver));
+
+        // Without header → resolver fails → 500
+        let app = build_router(state.clone());
+        let req = make_post_request(mock_token(8), None);
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        // With header → bypasses failing resolver → succeeds
+        let app2 = build_router(state);
+        let req = make_post_request(mock_token(8), Some("aa:bb:cc:dd:ee:ff"));
+        let response = app2.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_post_payment_zero_amount_token() {
+        let state = test_server_state();
+        let app = build_router(state);
+        // Token with amount 0 → MockWallet rejects → 400
+        let req = make_post_request(mock_token(0), Some("aa:bb:cc:dd:ee:ff"));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ---- handle_usage tests ----
+
+    #[tokio::test]
+    async fn test_usage_with_mac_header_no_session() {
+        let state = test_server_state();
+        let app = build_router(state);
+        let req = make_usage_request(Some("aa:bb:cc:dd:ee:ff"));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "-1/-1");
+    }
+
+    #[tokio::test]
+    async fn test_usage_without_mac_header_no_session() {
+        let state = test_server_state();
+        let app = build_router(state);
+        // Falls back to StubMacResolver ("00:11:22:33:44:55") → no session → "-1/-1"
+        let req = make_usage_request(None);
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "-1/-1");
+    }
+
+    #[tokio::test]
+    async fn test_usage_empty_mac_header_falls_back() {
+        let state = test_server_state();
+        let app = build_router(state);
+        // Empty header → falls back to resolver → no session → "-1/-1"
+        let req = make_usage_request(Some(""));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "-1/-1");
+    }
+
+    // ---- integration tests ----
+
+    #[tokio::test]
+    async fn test_post_then_usage_with_mac_header() {
+        let state = test_server_state();
+        let mac = "aa:bb:cc:dd:ee:ff";
+
+        // POST to create session
+        let app = build_router(state.clone());
+        let req = make_post_request(mock_token(8), Some(mac));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET /usage with same MAC → should find session (non-negative)
+        let app2 = build_router(state);
+        let req = make_usage_request(Some(mac));
+        let response = app2.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_ne!(body, "-1/-1", "session should be active");
+        assert!(body.contains('/'), "usage should be formatted as elapsed/allotment");
+        assert!(!body.starts_with('-'), "usage value should be non-negative");
+    }
+
+    #[tokio::test]
+    async fn test_post_then_usage_different_mac() {
+        let state = test_server_state();
+
+        // POST with MAC "aa:bb:cc:dd:ee:ff"
+        let app = build_router(state.clone());
+        let req = make_post_request(mock_token(8), Some("aa:bb:cc:dd:ee:ff"));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET /usage with different MAC → no matching session → "-1/-1"
+        let app2 = build_router(state);
+        let req = make_usage_request(Some("99:88:77:66:55:44"));
+        let response = app2.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "-1/-1");
+    }
+
+    // ---- edge cases ----
+
+    #[tokio::test]
+    async fn test_header_case_insensitive() {
+        let state = test_server_state();
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+
+        // "X-TollGate-MAC" (mixed case)
+        let app = build_router(state.clone());
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("X-TollGate-MAC", "aa:bb:cc:dd:ee:ff")
+            .body(Body::from(mock_token(8)))
+            .unwrap();
+        req.extensions_mut().insert(ConnectInfo(addr));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // "X-TOLLGATE-MAC" (all caps)
+        let app2 = build_router(state);
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("X-TOLLGATE-MAC", "bb:cc:dd:ee:ff:00")
+            .body(Body::from(mock_token(8)))
+            .unwrap();
+        req.extensions_mut().insert(ConnectInfo(addr));
+        let response = app2.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_post_payment_multiple_tokens_same_mac() {
+        let state = test_server_state();
+        let mac = "aa:bb:cc:dd:ee:ff";
+
+        // First POST: amount=8 → allotment = 8 * 60000 = 480000
+        let app = build_router(state.clone());
+        let req = make_post_request(mock_token(8), Some(mac));
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check usage — allotment should be 480000
+        let app_usage1 = build_router(state.clone());
+        let req = make_usage_request(Some(mac));
+        let response = app_usage1.oneshot(req).await.unwrap();
+        let body1 = read_body(response).await;
+        let allotment1: u64 = body1.split('/').nth(1).unwrap().parse().unwrap();
+        assert_eq!(allotment1, 480_000);
+
+        // Second POST: amount=4 → adds 240000 → total allotment = 720000
+        let app2 = build_router(state.clone());
+        let req = make_post_request(mock_token(4), Some(mac));
+        let response = app2.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Check usage — allotment should be extended to 720000
+        let app_usage2 = build_router(state);
+        let req = make_usage_request(Some(mac));
+        let response = app_usage2.oneshot(req).await.unwrap();
+        let body2 = read_body(response).await;
+        let allotment2: u64 = body2.split('/').nth(1).unwrap().parse().unwrap();
+        assert_eq!(allotment2, 720_000);
     }
 }

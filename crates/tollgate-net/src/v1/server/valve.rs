@@ -150,6 +150,29 @@ impl Valve for StubValve {
 }
 
 // ---------------------------------------------------------------------------
+// NoopValve — for RADIUS deployments (enforcement via Session-Timeout + CoA)
+// ---------------------------------------------------------------------------
+
+/// A no-op valve for RADIUS deployments where traffic enforcement is handled
+/// externally via Session-Timeout and Change-of-Authorization (CoA) messages.
+///
+/// All operations succeed silently — no iptables/nftables/ndsctl interaction.
+pub struct NoopValve;
+
+#[async_trait]
+impl Valve for NoopValve {
+    async fn open_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+        tracing::debug!(mac = mac_address, "NOOP: open_gate (RADIUS enforcement)");
+        Ok(())
+    }
+
+    async fn close_gate(&self, mac_address: &str) -> Result<(), ValveError> {
+        tracing::debug!(mac = mac_address, "NOOP: close_gate (RADIUS enforcement)");
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // NdsValve — feature-gated behind "nds"
 // ---------------------------------------------------------------------------
 
