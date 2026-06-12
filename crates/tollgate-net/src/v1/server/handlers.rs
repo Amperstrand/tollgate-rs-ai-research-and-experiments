@@ -261,6 +261,8 @@ async fn handle_post_payment(
         }
     };
 
+    let mac = mac.to_lowercase().replace('-', ":").replace('.', ":");
+
     let token = extract_payment_token(&body);
 
     let wallet = state.merchant.get();
@@ -419,6 +421,8 @@ async fn handle_usage(
         }
     };
 
+    let mac = mac.to_lowercase().replace('-', ":").replace('.', ":");
+
     let session = match state.sessions.get(&mac).await.ok().flatten() {
         Some(s) => s,
         None => {
@@ -523,6 +527,8 @@ async fn handle_balance(
             );
         }
     };
+
+    let mac = mac.to_lowercase().replace('-', ":").replace('.', ":");
 
     let session = match state.sessions.get(&mac).await.ok().flatten() {
         Some(s) => s,
