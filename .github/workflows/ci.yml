@@ -385,6 +385,145 @@ jobs:
           echo "::error::Spilman E2E unilateral close test failed (exit code ${{ steps.run-tests.outputs.exit_code }})"
           exit ${{ steps.run-tests.outputs.exit_code }}
 
+  delegated-mode-e2e:
+    name: "Delegated Mode E2E (v1 API contract for tollgate-auth)"
+    runs-on: ubuntu-latest
+    needs: [check]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "delegated-e2e"
+
+      - name: Build tollgate-net
+        run: cargo build -p tollgate-net --release
+
+      - name: "Test 1: POST / with X-TollGate-MAC returns Nostr kind 1022"
+        id: test-post
+        run: |
+          EXIT_CODE=0
+          ./target/release/tollgate-net v1-server --port 2121 --wallet mock --valve noop > server.log 2>&1 &
+          SERVER_PID=$!
+          sleep 3
+
+          if ! curl -sf http://127.0.0.1:2121/ > /dev/null; then
+            echo "::error::v1 server failed to start"
+            cat server.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "v1 server running on port 2121"
+
+          TOKEN=$(printf '\x00\x00\x00\x00\x00\x00\x00\x08mock-token-payload')
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:2121/ \
+            -H "Content-Type: text/plain" \
+            -H "X-TollGate-MAC: aa:bb:cc:dd:ee:ff" \
+            --data-binary "$TOKEN")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response body (first 500 chars): ${BODY:0:500}"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Expected HTTP 200, got $HTTP_CODE"
+            cat server.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          if ! echo "$BODY" | grep -q '"kind"'; then
+            echo "::error::Response does not contain Nostr event (no 'kind' field)"
+            cat server.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          KIND=$(echo "$BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('kind','missing'))" 2>/dev/null)
+          if [ "$KIND" != "1022" ]; then
+            echo "::error::Expected Nostr kind 1022, got '$KIND'"
+            cat server.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "PASS: POST / returned kind 1022 (allotment event)"
+
+          ALLOTMENT=$(echo "$BODY" | python3 -c "
+          import sys, json
+          event = json.load(sys.stdin)
+          for tag in event.get('tags', []):
+              if tag and tag[0] == 'allotment':
+                  print(tag[1])
+                  break
+          " 2>/dev/null)
+          if [ -z "$ALLOTMENT" ]; then
+            echo "::error::Response missing allotment tag"
+            cat server.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "PASS: allotment = ${ALLOTMENT}ms"
+
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+
+      - name: "Test 2: GET /usage with X-TollGate-MAC returns used/allotment"
+        id: test-usage
+        run: |
+          EXIT_CODE=0
+          ./target/release/tollgate-net v1-server --port 2122 --wallet mock --valve noop > server2.log 2>&1 &
+          SERVER_PID=$!
+          sleep 3
+
+          curl -sf http://127.0.0.1:2122/ > /dev/null || {
+            echo "::error::v1 server (port 2122) failed to start"
+            cat server2.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          }
+
+          USAGE=$(curl -s -H "X-TollGate-MAC: aa:bb:cc:dd:ee:ff" http://127.0.0.1:2122/usage)
+          echo "Usage response: $USAGE"
+
+          if [ -z "$USAGE" ]; then
+            echo "::error::GET /usage returned empty response"
+            cat server2.log
+            kill $SERVER_PID 2>/dev/null || true
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "PASS: GET /usage returned '$USAGE'"
+
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+          echo "exit_code=0" >> "$GITHUB_OUTPUT"
+
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: delegated-e2e-logs
+          path: |
+            server.log
+            server2.log
+          retention-days: 7
+
+      - name: Check test results
+        if: steps.test-post.outputs.exit_code != '0' || steps.test-usage.outputs.exit_code != '0'
+        run: |
+          echo "::error::Delegated mode E2E tests failed (POST: ${{ steps.test-post.outputs.exit_code }}, GET /usage: ${{ steps.test-usage.outputs.exit_code }})"
+          exit 1
+
   build-pages:
     name: Build Protocol Trace Pages
     if: github.ref == 'refs/heads/experimental'
