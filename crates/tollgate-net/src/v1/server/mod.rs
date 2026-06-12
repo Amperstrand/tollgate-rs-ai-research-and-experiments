@@ -19,6 +19,7 @@ pub mod merchant_provider;
 pub mod mint_health_tracker;
 pub mod mint_quote_wallet;
 pub mod payout;
+pub mod session_api;
 pub mod session_store;
 pub mod ubus_client;
 pub mod uci_ops;

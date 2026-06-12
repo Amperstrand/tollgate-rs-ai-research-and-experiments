@@ -39,6 +39,7 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
                 .post(handle_post_ln_invoice)
                 .options(handle_options),
         )
+        .nest("/v1", super::session_api::build_session_router())
         .with_state(state)
         // Go v1 parity: cap request body at 1MB via http.MaxBytesReader(w, r.Body, 1<<20)
         .layer(DefaultBodyLimit::max(1_048_576))
@@ -191,6 +192,17 @@ async fn open_gate_for_session(
         valve.open_gate(mac).await?;
     }
     Ok(())
+}
+
+/// Public wrapper so `session_api` can reuse the same valve-open logic.
+pub async fn open_gate_for_session_pub(
+    valve: &dyn super::Valve,
+    mac: &str,
+    metric: &str,
+    start_time: i64,
+    allotment: u64,
+) -> Result<(), super::ValveError> {
+    open_gate_for_session(valve, mac, metric, start_time, allotment).await
 }
 
 async fn rollback_session(
