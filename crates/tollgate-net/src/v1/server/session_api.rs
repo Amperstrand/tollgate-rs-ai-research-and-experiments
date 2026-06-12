@@ -203,12 +203,19 @@ pub fn build_session_router() -> axum::Router<Arc<ServerState>> {
 // Handlers
 // ---------------------------------------------------------------------------
 
+/// Normalize MAC address to lowercase with colon separators.
+/// FreeRADIUS sends uppercase (B6-95-54-46-E0-27), session store uses lowercase.
+fn normalize_mac(mac: &str) -> String {
+    mac.to_lowercase().replace('-', ":").replace('.', ":")
+}
+
 /// GET /v1/sessions/{mac}
 #[allow(clippy::too_many_lines)]
 async fn handle_get_session(
     State(state): State<Arc<ServerState>>,
     Path(mac): Path<String>,
 ) -> Response {
+    let mac = normalize_mac(&mac);
     let session = match state.sessions.get(&mac).await {
         Ok(Some(s)) => s,
         Ok(None) => {
@@ -250,6 +257,7 @@ async fn handle_post_usage(
     if !check_api_key(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
+    let mac = normalize_mac(&mac);
 
     let session = match state.sessions.get(&mac).await {
         Ok(Some(s)) => s,
@@ -328,6 +336,7 @@ async fn handle_post_topup(
     if !check_api_key(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
+    let mac = normalize_mac(&mac);
 
     // Verify session exists
     let existing = match state.sessions.get(&mac).await {
@@ -450,8 +459,8 @@ async fn handle_delete_session(
     if !check_api_key(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
+    let mac = normalize_mac(&mac);
 
-    // Remove session
     match state.sessions.remove(&mac).await {
         Ok(Some(_)) => {}
         Ok(None) => {
@@ -497,7 +506,7 @@ async fn handle_post_bootstrap(
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
 
-    let mac = req.mac;
+    let mac = normalize_mac(&req.mac);
     let metric = req.metric.unwrap_or_else(|| state.config.metric.clone());
 
     // Redeem token
