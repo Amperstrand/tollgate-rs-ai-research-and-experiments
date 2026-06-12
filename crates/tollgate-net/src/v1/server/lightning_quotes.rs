@@ -285,6 +285,7 @@ pub fn spawn_quote_monitor(quote_id: String, state: Arc<ServerState>) -> JoinHan
                     start_time: now,
                     metric: state.config.metric.clone(),
                     allotment,
+                    last_external_usage: None,
                 };
                 let _ = state.sessions.insert(s).await;
             }

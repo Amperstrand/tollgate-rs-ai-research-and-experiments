@@ -111,12 +111,24 @@ pub struct V1ServerConfig {
     pub port: u16,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// External usage snapshot from RADIUS accounting or similar sources.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExternalUsageSnapshot {
+    pub input_octets: u64,
+    pub output_octets: u64,
+    pub session_time: u64,
+    pub reported_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CustomerSession {
     pub mac_address: String,
     pub start_time: i64,
     pub metric: String,
     pub allotment: u64,
+    /// `#[serde(default)]` preserves backward-compat with existing serialized data.
+    #[serde(default)]
+    pub last_external_usage: Option<ExternalUsageSnapshot>,
 }
 
 pub struct ServerState {

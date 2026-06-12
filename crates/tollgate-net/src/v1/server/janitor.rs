@@ -88,6 +88,7 @@ mod tests {
             start_time: 100,
             metric: "milliseconds".to_owned(),
             allotment: 1000,
+            last_external_usage: None,
         };
         store.insert(expired).await.unwrap();
 
@@ -100,6 +101,7 @@ mod tests {
             start_time: now,
             metric: "milliseconds".to_owned(),
             allotment: 3_600_000,
+            last_external_usage: None,
         };
         store.insert(active.clone()).await.unwrap();
 

@@ -69,6 +69,7 @@ pub async fn add_allotment(
             start_time: now,
             metric: metric.to_owned(),
             allotment,
+            last_external_usage: None,
         };
         let cloned = s.clone();
         sessions.insert(s).await.map_err(|e| e.to_string())?;

@@ -128,6 +128,7 @@ mod tests {
             start_time: 0,
             metric: "bytes".to_owned(),
             allotment: 1000,
+            last_external_usage: None,
         };
         store.insert(session).await.unwrap();
 
@@ -156,6 +157,7 @@ mod tests {
             start_time: 0,
             metric: "milliseconds".to_owned(),
             allotment: 1000,
+            last_external_usage: None,
         };
         store.insert(session.clone()).await.unwrap();
 
@@ -180,6 +182,7 @@ mod tests {
             start_time: 0,
             metric: "bytes".to_owned(),
             allotment: 1000,
+            last_external_usage: None,
         };
         store.insert(session).await.unwrap();
 

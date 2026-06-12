@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::merchant;
 use super::merchant_provider::add_allotment;
-use super::{CustomerSession, ServerState};
+use super::{CustomerSession, ExternalUsageSnapshot, ServerState};
 
 // ---------------------------------------------------------------------------
 // Request types
@@ -125,11 +125,15 @@ async fn build_session_response(
         };
         (rem, level.to_owned())
     } else {
-        let usage = state
-            .valve
-            .get_client_usage_since_baseline(&session.mac_address)
-            .await
-            .unwrap_or(0);
+        let usage = if let Some(ref ext) = session.last_external_usage {
+            ext.input_octets + ext.output_octets
+        } else {
+            state
+                .valve
+                .get_client_usage_since_baseline(&session.mac_address)
+                .await
+                .unwrap_or(0)
+        };
         let rem = session.allotment as i64 - usage as i64;
         let level = if rem <= 0 {
             "suspended"
@@ -224,7 +228,11 @@ async fn handle_get_session(
         }
     };
 
-    let resp = build_session_response(&session, &state, None).await;
+    let last_usage_update = session
+        .last_external_usage
+        .as_ref()
+        .map(|u| u.reported_at.to_string());
+    let resp = build_session_response(&session, &state, last_usage_update.as_deref()).await;
     json_response(
         StatusCode::OK,
         serde_json::to_string(&resp).unwrap_or_default(),
@@ -272,15 +280,28 @@ async fn handle_post_usage(
         "External usage report received"
     );
 
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let snapshot = ExternalUsageSnapshot {
+        input_octets: report.input_octets.unwrap_or(0),
+        output_octets: report.output_octets.unwrap_or(0),
+        session_time: report.session_time.unwrap_or(0),
+        reported_at: now_secs,
+    };
+
+    let mut updated_session = session.clone();
+    updated_session.last_external_usage = Some(snapshot);
+    if let Err(e) = state.sessions.update(&mac, updated_session).await {
+        tracing::error!("Failed to update external usage for {mac}: {e}");
+    }
+
     // Use the provided timestamp or generate one
     let last_usage_update = report
         .timestamp
         .or_else(|| {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            Some(now.to_string())
+            Some(now_secs.to_string())
         });
 
     let resp = build_session_response(

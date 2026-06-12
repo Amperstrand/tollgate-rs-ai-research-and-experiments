@@ -136,6 +136,7 @@ impl SqliteSessionStore {
             start_time: row.get(1)?,
             metric: row.get(2)?,
             allotment: row.get(3)?,
+            last_external_usage: None,
         })
     }
 }
@@ -229,6 +230,7 @@ mod tests {
             start_time: start,
             metric: metric.to_owned(),
             allotment,
+            last_external_usage: None,
         }
     }
 

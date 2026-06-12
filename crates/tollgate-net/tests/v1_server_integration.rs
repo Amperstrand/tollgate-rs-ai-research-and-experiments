@@ -339,6 +339,7 @@ async fn v1_server_restores_prior_session_on_valve_failure() {
         start_time: 1000,
         metric: "milliseconds".to_owned(),
         allotment: 60_000,
+        last_external_usage: None,
     };
     sessions.insert(prior.clone()).await.unwrap();
 
