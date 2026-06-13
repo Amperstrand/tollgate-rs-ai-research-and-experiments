@@ -372,7 +372,7 @@ async fn handle_post_payment(
         );
     }
 
-    match merchant::build_session_event(&session, &state.config, &mac) {
+    match merchant::build_session_event(&session, &state.config, &mac, amount.0, "cashu") {
         Ok(json) => cors_response(
             json_response(StatusCode::OK, json),
             origin.as_deref(),

@@ -77,8 +77,10 @@ pub fn build_session_event(
     session: &CustomerSession,
     config: &V1ServerConfig,
     customer_identifier: &str,
+    amount_sat: u64,
+    token_type: &str,
 ) -> Result<String, nostr::event::builder::Error> {
-    let tags = Tags::from_list(vec![
+    let mut tags: Vec<Tag> = vec![
         Tag::custom(
             TagKind::Custom("p".into()),
             [customer_identifier.to_owned()],
@@ -96,10 +98,26 @@ pub fn build_session_event(
             TagKind::Custom("start-time".into()),
             [session.start_time.to_string()],
         ),
-    ]);
+        Tag::custom(
+            TagKind::Custom("amount_sat".into()),
+            [amount_sat.to_string()],
+        ),
+        Tag::custom(
+            TagKind::Custom("token_type".into()),
+            [token_type.to_owned()],
+        ),
+    ];
+
+    if amount_sat > 0 {
+        let effective_rate = session.allotment / 1000 / amount_sat;
+        tags.push(Tag::custom(
+            TagKind::Custom("effective_rate".into()),
+            [effective_rate.to_string()],
+        ));
+    }
 
     let event = EventBuilder::new(Kind::Custom(1022), "")
-        .tags(tags)
+        .tags(Tags::from_list(tags))
         .sign_with_keys(&config.nostr_keys)?;
 
     Ok(event.as_json())
