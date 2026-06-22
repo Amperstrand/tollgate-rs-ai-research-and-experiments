@@ -1,0 +1,10 @@
+# Gateway config for the protocol-disconnect test.
+# No mint needed — we only test Disconnect handling, no payment path.
+listen: "0.0.0.0:4747"
+unit: "bytes"
+# sets-only avoids installing a drop-policy chain that needs extra capabilities.
+firewall: sets-only
+products:
+  - pricing_scale: 1000
+    price_per_second: 0
+    price_per_unit: 1
