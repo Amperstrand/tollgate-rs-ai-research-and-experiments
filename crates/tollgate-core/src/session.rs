@@ -3,7 +3,9 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use tollgate_protocol::{BootstrapAck, BootstrapToken, MessageType};
+use tollgate_protocol::{
+    Accept, BootstrapAck, BootstrapToken, Disconnect, MessageType, PriceSheet, Reject,
+};
 
 use crate::access::AccessLevel;
 use crate::action::Action;
@@ -39,6 +41,11 @@ struct PeerSession {
     last_counters: Option<Counters>,
     /// When `last_counters` was taken.
     last_meter_at: Millis,
+    /// The last PriceSheet received from this peer, if any. The host inspects
+    /// this to decide whether to accept or reject — core does not negotiate.
+    last_price_sheet: Option<PriceSheet>,
+    /// The product this peer last accepted (set on receipt of an Accept).
+    accepted_product: Option<[u8; 32]>,
 }
 
 impl PeerSession {
@@ -48,6 +55,8 @@ impl PeerSession {
             balance: 0,
             last_counters: None,
             last_meter_at: Millis(0),
+            last_price_sheet: None,
+            accepted_product: None,
         }
     }
 }
@@ -95,16 +104,73 @@ impl Session {
                 // turns a BootstrapToken (0x07) into a token-verification request
                 // carrying the actual Cashu token bytes.
                 // TODO: handle Announce, PriceSheet, Accept, MeteringReport, etc.
-                if let Some(MessageType::BootstrapToken) = tollgate_protocol::peek_type(&bytes) {
-                    if let Ok(msg) = BootstrapToken::decode(&bytes) {
-                        if let Some(peer_session) = self.peers.get_mut(&peer) {
-                            peer_session.phase = PeerPhase::BootstrapPending;
-                            actions.push(Action::VerifyBootstrapToken {
-                                peer,
-                                token: msg.token_bytes(),
-                            });
+                match tollgate_protocol::peek_type(&bytes) {
+                    Some(MessageType::BootstrapToken) => {
+                        if let Ok(msg) = BootstrapToken::decode(&bytes) {
+                            if let Some(peer_session) = self.peers.get_mut(&peer) {
+                                peer_session.phase = PeerPhase::BootstrapPending;
+                                actions.push(Action::VerifyBootstrapToken {
+                                    peer,
+                                    token: msg.token_bytes(),
+                                });
+                            }
                         }
                     }
+                    Some(MessageType::Reject) => {
+                        // A Reject rolls back any pending negotiation: the peer
+                        // goes back to `New` (unless already torn down). If the
+                        // peer was somehow `Active`, revoke access and metering.
+                        // The decoded body is intentionally dropped — core has no
+                        // policy engine yet; the host observes the state change.
+                        if let Ok(_reject) = Reject::decode(&bytes) {
+                            if let Some(peer_session) = self.peers.get_mut(&peer) {
+                                if peer_session.phase != PeerPhase::Closed {
+                                    let was_active = peer_session.phase == PeerPhase::Active;
+                                    peer_session.phase = PeerPhase::New;
+                                    if was_active {
+                                        actions.push(Action::SetAccess {
+                                            peer,
+                                            level: AccessLevel::None,
+                                        });
+                                        actions.push(Action::StopMetering { peer });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(MessageType::Disconnect) => {
+                        // Orderly teardown — same cleanup as `PeerDisconnected`.
+                        if Disconnect::decode(&bytes).is_ok() {
+                            if let Some(peer_session) = self.peers.get_mut(&peer) {
+                                peer_session.phase = PeerPhase::Closed;
+                            }
+                            actions.push(Action::SetAccess {
+                                peer,
+                                level: AccessLevel::None,
+                            });
+                            actions.push(Action::StopMetering { peer });
+                            self.peers.remove(&peer);
+                        }
+                    }
+                    Some(MessageType::PriceSheet) => {
+                        // Store the offer for the host to inspect; core does not
+                        // auto-accept or auto-reject. No actions emitted.
+                        if let Ok(sheet) = PriceSheet::decode(&bytes) {
+                            if let Some(peer_session) = self.peers.get_mut(&peer) {
+                                peer_session.last_price_sheet = Some(sheet);
+                            }
+                        }
+                    }
+                    Some(MessageType::Accept) => {
+                        // Record the accepted product id; no actions emitted.
+                        if let Ok(accept) = Accept::decode(&bytes) {
+                            if let Some(peer_session) = self.peers.get_mut(&peer) {
+                                peer_session.accepted_product =
+                                    accept.product_id.as_slice().try_into().ok();
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -197,6 +263,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     use tollgate_protocol::PublicKey;
 
     fn peer(byte: u8) -> PeerId {
@@ -366,5 +433,186 @@ mod tests {
                 .any(|a| matches!(a, Action::StopMetering { .. }))
         );
         assert_eq!(session.peer_count(), 0);
+    }
+
+    #[test]
+    fn reject_transitions_pending_peer_to_new() {
+        let mut session = Session::new();
+        let p = peer(4);
+        session.handle(Event::PeerConnected { peer: p }, Millis(0));
+
+        // Drive the peer into BootstrapPending, as a token-bearing client would.
+        let token_frame = tollgate_protocol::BootstrapToken::new(b"cashuBtoken".to_vec()).encode();
+        session.handle(
+            Event::MessageReceived {
+                peer: p,
+                bytes: token_frame,
+            },
+            Millis(1),
+        );
+        assert_eq!(
+            session.peers.get(&p).unwrap().phase,
+            PeerPhase::BootstrapPending
+        );
+
+        // A Reject rolls the negotiation back to New without side-effect actions.
+        let reject_frame = Reject::new(
+            MessageType::BootstrapToken,
+            tollgate_protocol::RejectReason::ProtocolVersionUnsupported,
+        )
+        .encode();
+        let actions = session.handle(
+            Event::MessageReceived {
+                peer: p,
+                bytes: reject_frame,
+            },
+            Millis(2),
+        );
+        assert!(actions.is_empty());
+        assert_eq!(session.peers.get(&p).unwrap().phase, PeerPhase::New);
+    }
+
+    #[test]
+    fn reject_revokes_access_for_active_peer() {
+        let mut session = Session::new();
+        let p = peer(6);
+        session.handle(Event::PeerConnected { peer: p }, Millis(0));
+        session.handle(
+            Event::BootstrapVerified {
+                peer: p,
+                amount: 5000,
+                ok: true,
+            },
+            Millis(1),
+        );
+        assert_eq!(session.peers.get(&p).unwrap().phase, PeerPhase::Active);
+
+        // An active peer that gets rejected must lose access and drop to New.
+        let reject_frame = Reject::new(
+            MessageType::PriceSheet,
+            tollgate_protocol::RejectReason::PriceTooHigh,
+        )
+        .encode();
+        let actions = session.handle(
+            Event::MessageReceived {
+                peer: p,
+                bytes: reject_frame,
+            },
+            Millis(2),
+        );
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::SetAccess {
+                level: AccessLevel::None,
+                ..
+            }
+        )));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::StopMetering { .. }))
+        );
+        assert_eq!(session.peers.get(&p).unwrap().phase, PeerPhase::New);
+    }
+
+    #[test]
+    fn disconnect_cleans_up_peer() {
+        let mut session = Session::new();
+        let p = peer(5);
+        session.handle(Event::PeerConnected { peer: p }, Millis(0));
+
+        let disconnect_frame =
+            tollgate_protocol::Disconnect::new(tollgate_protocol::RejectReason::Other).encode();
+        let actions = session.handle(
+            Event::MessageReceived {
+                peer: p,
+                bytes: disconnect_frame,
+            },
+            Millis(1),
+        );
+
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::SetAccess {
+                level: AccessLevel::None,
+                ..
+            }
+        )));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::StopMetering { .. }))
+        );
+        assert_eq!(session.peer_count(), 0);
+    }
+
+    #[test]
+    fn price_sheet_is_stored_on_receipt() {
+        use tollgate_protocol::{IntervalRange, MintOption, PriceSheet, ProductEntry};
+
+        let mut session = Session::new();
+        let p = peer(8);
+        session.handle(Event::PeerConnected { peer: p }, Millis(0));
+
+        let product = ProductEntry::new(
+            [9u8; 32],
+            vec![],
+            1000,
+            vec![MintOption::new(
+                [1u8; 32],
+                "https://mint.example",
+                10,
+                1,
+                "sat",
+            )],
+        );
+        let sheet = PriceSheet::new(vec![product], IntervalRange::new(1000, 5000));
+        let actions = session.handle(
+            Event::MessageReceived {
+                peer: p,
+                bytes: sheet.encode(),
+            },
+            Millis(1),
+        );
+
+        // No actions emitted — host decides whether to accept or reject.
+        assert!(actions.is_empty());
+
+        let stored = session
+            .peers
+            .get(&p)
+            .unwrap()
+            .last_price_sheet
+            .as_ref()
+            .expect("price sheet stored");
+        assert_eq!(stored.products.len(), 1);
+        assert_eq!(stored.products[0].product_id.as_slice(), &[9u8; 32]);
+        assert_eq!(stored.interval, IntervalRange::new(1000, 5000));
+    }
+
+    #[test]
+    fn accept_is_stored_on_receipt() {
+        use tollgate_protocol::{Accept, IntervalRange};
+
+        let mut session = Session::new();
+        let p = peer(9);
+        session.handle(Event::PeerConnected { peer: p }, Millis(0));
+
+        let accept = Accept::new([7u8; 32], [3u8; 32], IntervalRange::new(2000, 6000), vec![]);
+        let actions = session.handle(
+            Event::MessageReceived {
+                peer: p,
+                bytes: accept.encode(),
+            },
+            Millis(1),
+        );
+
+        // No actions emitted — just state update.
+        assert!(actions.is_empty());
+
+        assert_eq!(
+            session.peers.get(&p).unwrap().accepted_product,
+            Some([7u8; 32])
+        );
     }
 }
