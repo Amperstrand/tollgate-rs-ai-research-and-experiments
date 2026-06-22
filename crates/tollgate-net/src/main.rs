@@ -9,6 +9,7 @@ mod client;
 mod config;
 mod driver;
 mod server;
+mod v1;
 mod wallet;
 
 use std::path::PathBuf;
@@ -57,6 +58,16 @@ enum Command {
         #[arg(long, default_value_t = 8)]
         amount: u64,
     },
+    /// Run the v1 HTTP/JSON compatibility server (Go v1 API on port 2121).
+    V1Serve {
+        /// Override the listen address (default: 127.0.0.1:2121).
+        #[arg(long)]
+        listen: Option<String>,
+        /// Override the mint URL (default: taken from config or
+        /// <https://testnut.cashu.exchange>).
+        #[arg(long)]
+        mint: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -76,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Serve { listen } => serve(cfg, identity, listen).await,
         Command::Connect { peer } => connect(&cfg, &identity, &peer).await,
         Command::Pay { peer, mint, amount } => pay(&cfg, &identity, &peer, &mint, amount).await,
+        Command::V1Serve { listen, mint } => v1_serve(cfg, identity, listen, mint).await,
     }
 }
 
@@ -161,4 +173,48 @@ async fn pay(
         );
     }
     Ok(())
+}
+
+async fn v1_serve(
+    cfg: config::Config,
+    identity: Arc<config::Identity>,
+    listen: Option<String>,
+    mint_override: Option<String>,
+) -> anyhow::Result<()> {
+    let listen = listen.unwrap_or_else(|| "127.0.0.1:2121".to_string());
+
+    let mints: Vec<String> = mint_override.clone().map(|m| vec![m]).unwrap_or_else(|| {
+        if cfg.mints.is_empty() {
+            vec!["https://testnut.cashu.exchange".to_string()]
+        } else {
+            cfg.mints.clone()
+        }
+    });
+
+    let wallet = wallet::BootstrapWallet::new(mints.clone());
+    let adapter = adapter::IpAdapter::new();
+    if let Err(e) = adapter.init(cfg.firewall.installs_forward_chain()) {
+        tracing::warn!(err = %e, "firewall init failed; access may not be enforced (need root?)");
+    }
+
+    let primary_mint = mints.first().cloned().unwrap_or_default();
+    let v1_config = v1::V1Config {
+        metric: "milliseconds".to_string(),
+        step_size: 60_000,
+        price_per_step: 1,
+        unit: "sat".to_string(),
+        mint_url: primary_mint,
+        min_steps: 1,
+        tips: (1..=10).map(|i| i.to_string()).collect(),
+    };
+
+    tracing::info!(
+        pubkey = %identity.pubkey_hex(),
+        %listen,
+        mints = ?mints,
+        "starting v1 HTTP/JSON server",
+    );
+
+    let server = v1::V1Server::new(&identity, wallet, adapter, v1_config)?;
+    server.serve(&listen).await
 }
