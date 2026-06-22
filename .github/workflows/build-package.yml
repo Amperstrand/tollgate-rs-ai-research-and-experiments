@@ -16,14 +16,13 @@ jobs:
     outputs:
       package_version: ${{ steps.determine-package-version.outputs.package_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - id: commit-hash
         shell: bash
-        run: |
-          echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set package_version variable
         id: determine-package-version
@@ -37,9 +36,9 @@ jobs:
             echo "package_version=${SANITIZED_BRANCH}.${COMMIT_HEIGHT}.${{ steps.commit-hash.outputs.short }}" >> "$GITHUB_OUTPUT"
           fi
 
-  # Cross-compile + package in a single matrix. MIPS (mipsel-unknown-linux-musl)
-  # may fail due to upstream Rust musl target instability — fail-fast: false
-  # ensures x86_64 and aarch64 still produce .ipk artifacts even if MIPS goes red.
+  # Cross-compile + package. Uses `cross` (Docker-based) for targets that need
+  # a C cross-compiler (secp256k1-sys). x86_64-unknown-linux-musl is the
+  # primary target — it's what the GCP cloud lab deploys to OpenWrt QEMU.
   build-and-package:
     needs: [determine-version]
     runs-on: ubuntu-latest
@@ -47,35 +46,53 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Primary: x86_64 musl (cloud lab, x86 routers)
           - target: x86_64-unknown-linux-musl
             arch: x86_64
-            toolchain: stable
+            use_cross: false
+          # Secondary: aarch64 musl (GL-MT3000, Raspberry Pi)
+          # Uses `cross` because secp256k1-sys needs a musl C cross-compiler
+          # that Ubuntu doesn't ship natively.
           - target: aarch64-unknown-linux-musl
             arch: aarch64_cortex-a53
-            toolchain: stable
-          - target: mipsel-unknown-linux-musl
-            arch: mipsel_24kc
-            toolchain: nightly
+            use_cross: true
 
     steps:
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: stable
 
       - name: Add cross-compilation target
         run: rustup target add ${{ matrix.target }}
+
+      # Install musl-tools for x86_64 native musl cross-compilation.
+      # This provides `musl-gcc` which secp256k1-sys needs.
+      - name: Install musl tools (x86_64 only)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # For aarch64 and other non-x86 musl targets, use `cross` (Docker-based).
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross
 
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "cross-${{ matrix.target }}"
 
       - name: Build binary
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
         run: |
           set -euo pipefail
-          echo "Building ${{ env.BINARY_NAME }} for ${{ matrix.target }} (${{ matrix.toolchain }})"
-          cargo build --release --target ${{ matrix.target }} -p tollgate-net --bin ${{ env.BINARY_NAME }}
+          echo "Building ${{ env.BINARY_NAME }} for ${{ matrix.target }}"
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p tollgate-net --bin ${{ env.BINARY_NAME }}
+          else
+            cargo build --release --target ${{ matrix.target }} -p tollgate-net --bin ${{ env.BINARY_NAME }}
+          fi
           ls -lh target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
 
       - name: Stage payload
@@ -84,12 +101,10 @@ jobs:
           PAYLOAD="$(mktemp -d)"
           echo "PAYLOAD=$PAYLOAD" >> "$GITHUB_ENV"
 
-          # Install the binary as /usr/bin/tollgate
           install -D -m 0755 \
             "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" \
             "$PAYLOAD/usr/bin/tollgate"
 
-          # Install init script, firewall config, and upgrade keep list
           install -D -m 0755 \
             packaging/files/etc/init.d/tollgate-wrt \
             "$PAYLOAD/etc/init.d/tollgate-wrt"
@@ -100,9 +115,7 @@ jobs:
             packaging/files/lib/upgrade/keep.d/tollgate \
             "$PAYLOAD/lib/upgrade/keep.d/tollgate"
 
-          # Install LICENSE as package documentation
-          install -D -m 0644 \
-            LICENSE \
+          install -D -m 0644 LICENSE \
             "$PAYLOAD/usr/share/doc/${{ env.PACKAGE_NAME }}/LICENSE"
 
           echo "Payload tree:"
@@ -137,8 +150,7 @@ jobs:
         run: |
           echo "### Built: \`${{ env.PACKAGE_FILENAME }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Architecture | \`${{ matrix.arch }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Rust target | \`${{ matrix.target }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cross tool | \`${{ matrix.use_cross && 'cross (Docker)' || 'musl-gcc (native)' }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | \`${{ needs.determine-version.outputs.package_version }}\` |" >> "$GITHUB_STEP_SUMMARY"
