@@ -1,0 +1,142 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [master, feat/*]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PACKAGE_NAME: "tollgate-wrt"
+  BINARY_NAME: "tollgate"
+
+jobs:
+  determine-version:
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.determine-package-version.outputs.package_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: commit-hash
+        shell: bash
+        run: |
+          echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set package_version variable
+        id: determine-package-version
+        shell: bash
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "package_version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            SANITIZED_BRANCH=$(echo "${GITHUB_REF_NAME}" | sed 's/\//-/g')
+            COMMIT_HEIGHT=$(git rev-list --count HEAD)
+            echo "package_version=${SANITIZED_BRANCH}.${COMMIT_HEIGHT}.${{ steps.commit-hash.outputs.short }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Cross-compile + package in a single matrix. MIPS (mipsel-unknown-linux-musl)
+  # may fail due to upstream Rust musl target instability — fail-fast: false
+  # ensures x86_64 and aarch64 still produce .ipk artifacts even if MIPS goes red.
+  build-and-package:
+    needs: [determine-version]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            toolchain: stable
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64_cortex-a53
+            toolchain: stable
+          - target: mipsel-unknown-linux-musl
+            arch: mipsel_24kc
+            toolchain: nightly
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cross-${{ matrix.target }}"
+
+      - name: Build binary
+        run: |
+          set -euo pipefail
+          echo "Building ${{ env.BINARY_NAME }} for ${{ matrix.target }} (${{ matrix.toolchain }})"
+          cargo build --release --target ${{ matrix.target }} -p tollgate-net --bin ${{ env.BINARY_NAME }}
+          ls -lh target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
+
+      - name: Stage payload
+        run: |
+          set -euo pipefail
+          PAYLOAD="$(mktemp -d)"
+          echo "PAYLOAD=$PAYLOAD" >> "$GITHUB_ENV"
+
+          # Install the binary as /usr/bin/tollgate
+          install -D -m 0755 \
+            "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" \
+            "$PAYLOAD/usr/bin/tollgate"
+
+          # Install init script, firewall config, and upgrade keep list
+          install -D -m 0755 \
+            packaging/files/etc/init.d/tollgate-wrt \
+            "$PAYLOAD/etc/init.d/tollgate-wrt"
+          install -D -m 0644 \
+            packaging/files/etc/config/firewall-tollgate \
+            "$PAYLOAD/etc/config/firewall-tollgate"
+          install -D -m 0644 \
+            packaging/files/lib/upgrade/keep.d/tollgate \
+            "$PAYLOAD/lib/upgrade/keep.d/tollgate"
+
+          # Install LICENSE as package documentation
+          install -D -m 0644 \
+            LICENSE \
+            "$PAYLOAD/usr/share/doc/${{ env.PACKAGE_NAME }}/LICENSE"
+
+          echo "Payload tree:"
+          find "$PAYLOAD" -type f | sort
+
+      - name: Build .ipk
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          PACKAGE_FILENAME="${{ env.PACKAGE_NAME }}_${{ needs.determine-version.outputs.package_version }}_${{ matrix.arch }}.ipk"
+          echo "PACKAGE_FILENAME=$PACKAGE_FILENAME" >> "$GITHUB_ENV"
+
+          env \
+            PKG_NAME="$PACKAGE_NAME" \
+            PKG_VERSION="${{ needs.determine-version.outputs.package_version }}" \
+            ARCH="${{ matrix.arch }}" \
+            MAINTAINER="Amperstrand" \
+            LICENSE="MIT" \
+            DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt (drop-in replacement for Go v1)" \
+            DEPENDS="+nodogsplash, +jq" \
+            PROVIDES="nodogsplash-files" \
+            REPLACES="nodogsplash, base-files, tollgate-wrt" \
+            packaging/build-ipk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_FILENAME }}
+          path: artifacts/*.ipk
+          retention-days: 14
+
+      - name: Summary
+        run: |
+          echo "### Built: \`${{ env.PACKAGE_FILENAME }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Architecture | \`${{ matrix.arch }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Rust target | \`${{ matrix.target }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`${{ needs.determine-version.outputs.package_version }}\` |" >> "$GITHUB_STEP_SUMMARY"
