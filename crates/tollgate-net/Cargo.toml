@@ -32,7 +32,15 @@ cashu = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
-sha2 = { workspace = true }
+
+# v1-compat: HTTP/JSON server on port 2121 (Go v1 protocol compatibility).
+# Optional — excluded from minimal/v2-only builds. ESP32 doesn't include
+# tollgate-net at all, so this has zero embedded impact.
+sha2 = { workspace = true, optional = true }
+
+[features]
+default = ["v1-compat"]
+v1-compat = ["dep:sha2"]
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

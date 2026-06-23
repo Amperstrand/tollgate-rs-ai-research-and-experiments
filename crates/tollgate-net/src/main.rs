@@ -9,6 +9,7 @@ mod client;
 mod config;
 mod driver;
 mod server;
+#[cfg(feature = "v1-compat")]
 mod v1;
 mod wallet;
 
@@ -59,6 +60,7 @@ enum Command {
         amount: u64,
     },
     /// Run the v1 HTTP/JSON compatibility server (Go v1 API on port 2121).
+    #[cfg(feature = "v1-compat")]
     V1Serve {
         /// Override the listen address (default: 127.0.0.1:2121).
         #[arg(long)]
@@ -87,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Serve { listen } => serve(cfg, identity, listen).await,
         Command::Connect { peer } => connect(&cfg, &identity, &peer).await,
         Command::Pay { peer, mint, amount } => pay(&cfg, &identity, &peer, &mint, amount).await,
+        #[cfg(feature = "v1-compat")]
         Command::V1Serve { listen, mint } => v1_serve(cfg, identity, listen, mint).await,
     }
 }
@@ -175,6 +178,7 @@ async fn pay(
     Ok(())
 }
 
+#[cfg(feature = "v1-compat")]
 async fn v1_serve(
     cfg: config::Config,
     identity: Arc<config::Identity>,
