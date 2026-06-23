@@ -1,8 +1,19 @@
 #!/bin/sh
 echo "Running TollGate post-installation..."
 
+# Run uci-defaults scripts (captive portal symlink, nodogsplash config)
+for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink; do
+    if [ -x "$script" ]; then
+        echo "Running $script ..."
+        "$script" || echo "Warning: $script exited with code $?"
+    fi
+done
+
 # Reload firewall to pick up port 2121 rule
 /etc/init.d/firewall reload 2>/dev/null || true
+
+# Restart nodogsplash to pick up the new portal site
+/etc/init.d/nodogsplash restart 2>/dev/null || true
 
 # Enable and start the service
 if [ -x /etc/init.d/tollgate-wrt ]; then

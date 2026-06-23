@@ -365,7 +365,11 @@ async fn handle_whoami(
     let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
     let (origin, is_local) = resolve_origin(&headers);
     let mac_raw = resolve_mac_from_headers(&headers, &ip);
-    let mac = if mac_raw.matches(':').count() == 5 { mac_raw } else { String::new() };
+    let mac = if mac_raw.matches(':').count() == 5 {
+        mac_raw
+    } else {
+        String::new()
+    };
     cors_response(
         text_response(StatusCode::OK, format!("mac={mac}")),
         origin.as_deref(),
