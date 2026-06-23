@@ -197,6 +197,11 @@ async fn handle_post_payment(
         .parse()
         .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     state.adapter.allow(client_ip);
+
+    if mac.matches(':').count() == 5 {
+        ndsctl_auth(&mac);
+    }
+
     tracing::info!(%mac, %client_ip, allotment, amount_sat, "payment accepted");
 
     let event = build_session_event(&session, &state, &mac, amount_sat, &secret_key);
@@ -571,6 +576,59 @@ pub fn resolve_mac(ip: &str) -> String {
     resolve_mac_from_leases(ip).unwrap_or_else(|| ip.to_lowercase())
 }
 
+fn ndsctl_auth(mac: &str) {
+    for attempt in 1..=3u32 {
+        let result = std::process::Command::new("ndsctl")
+            .arg("auth")
+            .arg(mac)
+            .output();
+        match result {
+            Ok(out) if out.status.success() => {
+                tracing::info!(%mac, attempt, "ndsctl auth success");
+                return;
+            }
+            Ok(out) => {
+                tracing::debug!(
+                    %mac, attempt,
+                    rc = ?out.status.code(),
+                    stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                    "ndsctl auth failed, retrying"
+                );
+            }
+            Err(e) => {
+                tracing::debug!(%mac, attempt, err = %e, "ndsctl not available");
+                return;
+            }
+        }
+        if attempt < 3 {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+    }
+    tracing::warn!(%mac, "ndsctl auth failed after 3 attempts");
+}
+
+fn ndsctl_deauth(mac: &str) {
+    let result = std::process::Command::new("ndsctl")
+        .arg("deauth")
+        .arg(mac)
+        .output();
+    match result {
+        Ok(out) if out.status.success() => {
+            tracing::info!(%mac, "ndsctl deauth success");
+        }
+        Ok(out) => {
+            tracing::debug!(
+                %mac,
+                rc = ?out.status.code(),
+                "ndsctl deauth returned non-zero"
+            );
+        }
+        Err(e) => {
+            tracing::debug!(%mac, err = %e, "ndsctl not available for deauth");
+        }
+    }
+}
+
 /// Information extracted from a POST body: the Cashu token, plus optionally the
 /// customer's Nostr pubkey and MAC from a kind 21000 event wrapper.
 struct ExtractedPayment {
@@ -657,6 +715,9 @@ async fn expire_session(state: &V1State, mac: &str, ip: &str) {
         .parse()
         .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     state.adapter.deny(client_ip);
+    if mac.matches(':').count() == 5 {
+        ndsctl_deauth(mac);
+    }
     tracing::info!(%mac, %client_ip, "session expired");
 }
 
