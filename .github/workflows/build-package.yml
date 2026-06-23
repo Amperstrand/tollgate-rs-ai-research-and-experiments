@@ -115,6 +115,18 @@ jobs:
             packaging/files/lib/upgrade/keep.d/tollgate \
             "$PAYLOAD/lib/upgrade/keep.d/tollgate"
 
+          install -D -m 0755 \
+            packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink \
+            "$PAYLOAD/etc/uci-defaults/90-tollgate-captive-portal-symlink"
+
+          mkdir -p "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site"
+          cp -r packaging/files/tollgate-captive-portal-site/. \
+            "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site/"
+
+          install -D -m 0755 \
+            packaging/files/usr/bin/check_package_path \
+            "$PAYLOAD/usr/bin/check_package_path" 2>/dev/null || true
+
           install -D -m 0644 LICENSE \
             "$PAYLOAD/usr/share/doc/${{ env.PACKAGE_NAME }}/LICENSE"
 
