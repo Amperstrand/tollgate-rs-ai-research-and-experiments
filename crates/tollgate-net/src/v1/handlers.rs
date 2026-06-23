@@ -3,6 +3,7 @@
 //! Endpoints (mirroring the Go v1 server):
 //! - `GET  /`        → Nostr kind 10021 advertisement
 //! - `POST /`        → Cashu token → kind 1022 session or kind 21023 notice
+//! - `GET  /pay`     → alias of `GET /` (advertisement; Go v1 accepts payment via `X-Cashu` header)
 //! - `GET  /usage`   → text `"<used>/<allotment>"` or `"-1/-1"`
 //! - `GET  /balance` → JSON `{"remaining": …, "allotment": …, …}`
 //! - `GET  /whoami`  → text `"mac=<MAC>"`
@@ -56,6 +57,8 @@ pub struct V1State {
     pub adapter: IpAdapter,
     /// In-memory session store keyed by lowercase MAC.
     pub sessions: V1SessionStore,
+    /// Cashu tokens already redeemed — rejects immediate double-spend.
+    pub spent_tokens: tokio::sync::Mutex<std::collections::HashSet<String>>,
     /// Static pricing / advertisement config.
     pub config: V1Config,
 }
@@ -68,6 +71,10 @@ pub fn build_router(state: Arc<V1State>) -> Router {
             axum::routing::get(handle_get_details)
                 .post(handle_post_payment)
                 .options(handle_options),
+        )
+        .route(
+            "/pay",
+            axum::routing::get(handle_get_details).options(handle_options),
         )
         .route(
             "/usage",
@@ -135,6 +142,26 @@ async fn handle_post_payment(
     let mac = resolve_mac_from_headers(&headers, &ip);
 
     let payment = extract_payment_token(&body);
+    let token_str = payment.token.clone();
+
+    {
+        let spent = state.spent_tokens.lock().await;
+        if spent.contains(&token_str) {
+            tracing::warn!(%mac, "duplicate token rejected");
+            return cors_response(
+                notice_response(
+                    StatusCode::BAD_REQUEST,
+                    "duplicate-token",
+                    "Token already used",
+                    Some(&mac),
+                    &state,
+                    &secret_key,
+                ),
+                origin.as_deref(),
+                is_local,
+            );
+        }
+    }
 
     let amount_milli = match state.wallet.verify(&payment.token).await {
         Ok(amt) => amt,
@@ -155,6 +182,8 @@ async fn handle_post_payment(
             );
         }
     };
+
+    state.spent_tokens.lock().await.insert(token_str);
 
     let amount_sat = amount_milli / 1000;
     let allotment = calculate_allotment(amount_sat, &state.config);
@@ -515,18 +544,26 @@ fn resolve_mac_from_headers(headers: &HeaderMap, ip: &str) -> String {
     resolve_mac(ip)
 }
 
+/// Resolve IP → MAC via `/tmp/dhcp.leases` (OpenWrt format).
+///
+/// Each line is space-separated: `<timestamp> <MAC> <IP> <hostname> <client-id>`.
+/// Returns the lowercase, colon-separated MAC for the given IP, or `None` if
+/// the leases file is absent or the IP is not listed.
+pub fn resolve_mac_from_leases(ip: &str) -> Option<String> {
+    let contents = std::fs::read_to_string("/tmp/dhcp.leases").ok()?;
+    for line in contents.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[2] == ip {
+            return Some(parts[1].to_lowercase().replace('-', ":"));
+        }
+    }
+    None
+}
+
 /// Resolve IP → MAC via `/tmp/dhcp.leases` (OpenWrt format), or fall back to
 /// the raw IP as an identifier.
 pub fn resolve_mac(ip: &str) -> String {
-    if let Ok(contents) = std::fs::read_to_string("/tmp/dhcp.leases") {
-        for line in contents.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 && parts[2] == ip {
-                return parts[1].to_lowercase().replace('-', ":");
-            }
-        }
-    }
-    ip.to_lowercase()
+    resolve_mac_from_leases(ip).unwrap_or_else(|| ip.to_lowercase())
 }
 
 /// Information extracted from a POST body: the Cashu token, plus optionally the
