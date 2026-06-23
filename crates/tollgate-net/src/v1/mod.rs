@@ -58,6 +58,7 @@ impl V1Server {
             wallet,
             adapter,
             sessions: V1SessionStore::new(),
+            spent_tokens: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             config,
         });
 
