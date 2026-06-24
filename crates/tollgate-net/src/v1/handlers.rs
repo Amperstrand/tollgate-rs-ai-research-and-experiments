@@ -27,6 +27,9 @@ use crate::wallet::BootstrapWallet;
 use super::nostr::{KIND_ADVERTISEMENT, KIND_NOTICE, KIND_SESSION, build_event, event_to_json};
 use super::session::{V1Session, V1SessionStore, now_unix};
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use minicbor::Encoder;
+
 /// Static pricing / advertisement configuration for the v1 server.
 pub struct V1Config {
     /// Metering metric: `"milliseconds"` or `"bytes"`.
@@ -103,28 +106,132 @@ pub fn build_router(state: Arc<V1State>) -> Router {
 // Handlers
 // -----------------------------------------------------------------------
 
-/// `GET /` — return the precomputed advertisement (kind 10021).
-async fn handle_get_details(headers: HeaderMap, State(state): State<Arc<V1State>>) -> Response {
+/// `GET /pay` — NUT-24 endpoint. Without `X-Cashu` header, returns HTTP 402
+/// with a NUT-18 payment request in the `X-Cashu` response header. With a valid
+/// `X-Cashu` token, verifies the payment and returns the advertisement.
+async fn handle_get_details(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<Arc<V1State>>,
+) -> Response {
     let (origin, is_local) = resolve_origin(&headers);
+
+    if let Some(cashu_header) = headers.get("x-cashu").and_then(|v| v.to_str().ok()) {
+        if !cashu_header.is_empty() {
+            return handle_nut24_payment(
+                ConnectInfo(addr),
+                State(state),
+                headers,
+                cashu_header,
+                origin.as_deref(),
+                is_local,
+            )
+            .await;
+        }
+    }
+
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(&addr.to_string());
+    let post_endpoint = format!("http://{host}/");
+    let creqa = create_creqa(
+        state.config.price_per_step,
+        &state.config.unit,
+        &[state.config.mint_url.clone()],
+        "TollGate internet access",
+        &post_endpoint,
+    );
+
+    let mut response = json_response(
+        StatusCode::PAYMENT_REQUIRED,
+        serde_json::json!({
+            "error": "payment required",
+            "price": state.config.price_per_step,
+            "unit": &state.config.unit,
+            "mints": [&state.config.mint_url],
+        })
+        .to_string(),
+    );
+    if let Ok(hv) = HeaderValue::from_str(&creqa) {
+        response.headers_mut().insert("x-cashu", hv);
+    }
+    response.headers_mut().insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("X-Cashu"),
+    );
+    cors_response(response, origin.as_deref(), is_local)
+}
+
+/// Process an X-Cashu payment from a GET /pay NUT-24 retry.
+async fn handle_nut24_payment(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<V1State>>,
+    headers: HeaderMap,
+    token: &str,
+    origin: Option<&str>,
+    is_local: bool,
+) -> Response {
+    let ip = extract_client_ip(Some(&ConnectInfo(addr)), &headers);
+    let mac = resolve_mac_from_headers(&headers, &ip);
+
+    let amount_milli = match state.wallet.verify(token).await {
+        Ok(amt) => amt,
+        Err(e) => {
+            tracing::warn!(err = %e, %mac, "NUT-24 token rejected");
+            return cors_response(
+                json_response(
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": format!("payment rejected: {e}")}).to_string(),
+                ),
+                origin,
+                is_local,
+            );
+        }
+    };
+
+    state.spent_tokens.lock().await.insert(token.to_string());
+    let amount_sat = amount_milli / 1000;
+    let allotment = calculate_allotment(amount_sat, &state.config);
+    let session = state
+        .sessions
+        .top_up(&mac, &state.config.metric, allotment, amount_sat)
+        .await;
+    let client_ip: IpAddr = ip
+        .parse()
+        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    state.adapter.allow(client_ip);
+    tracing::info!(%mac, %client_ip, allotment, amount_sat, "NUT-24 payment accepted");
+
     cors_response(
         json_response(StatusCode::OK, state.advertisement.clone()),
-        origin.as_deref(),
+        origin,
         is_local,
     )
 }
 
 /// `GET /` or `GET /portal` — serve the captive portal HTML page.
 async fn handle_portal(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<V1State>>,
     headers: HeaderMap,
 ) -> Response {
     let (origin, is_local) = resolve_origin(&headers);
-    let html = portal_html(&state.config);
-    cors_response(
-        html_response(html),
-        origin.as_deref(),
-        is_local,
-    )
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(&addr.to_string());
+    let post_endpoint = format!("http://{host}/");
+    let creqa = create_creqa(
+        state.config.price_per_step,
+        &state.config.unit,
+        &[state.config.mint_url.clone()],
+        "TollGate internet access",
+        &post_endpoint,
+    );
+    let qr_svg = generate_qr_svg(&creqa);
+    let html = portal_html(&state.config, &creqa, &qr_svg);
+    cors_response(html_response(html), origin.as_deref(), is_local)
 }
 
 /// Catch-all fallback: serve portal HTML for GET (handles OS captive-portal
@@ -132,11 +239,12 @@ async fn handle_portal(
 /// like `/hotspot-detect.html`, `/generate_204`, `/connecttest.txt`).
 async fn handle_catch_all(
     method: Method,
+    connect_info: ConnectInfo<SocketAddr>,
     State(state): State<Arc<V1State>>,
     headers: HeaderMap,
 ) -> Response {
     if method == Method::GET {
-        handle_portal(State(state), headers).await
+        handle_portal(connect_info, State(state), headers).await
     } else {
         StatusCode::NOT_FOUND.into_response()
     }
@@ -538,6 +646,67 @@ fn calculate_allotment(amount_sat: u64, config: &V1Config) -> u64 {
     steps * config.step_size
 }
 
+/// Build a NUT-18 payment request encoded as `creqA` (CBOR + base64url).
+fn create_creqa(
+    amount: u64,
+    unit: &str,
+    mints: &[String],
+    description: &str,
+    post_endpoint: &str,
+) -> String {
+    let mut buf = Vec::new();
+    {
+        let mut e = Encoder::new(&mut buf);
+        e.map(6).ok();
+        e.str("a").ok();
+        e.u64(amount).ok();
+        e.str("u").ok();
+        e.str(unit).ok();
+        e.str("m").ok();
+        e.array(mints.len() as u64).ok();
+        for m in mints {
+            e.str(m).ok();
+        }
+        e.str("d").ok();
+        e.str(description).ok();
+        e.str("t").ok();
+        e.array(1).ok();
+        e.map(2).ok();
+        e.str("t").ok();
+        e.str("post").ok();
+        e.str("a").ok();
+        e.str(post_endpoint).ok();
+        e.str("s").ok();
+        e.bool(true).ok();
+    }
+    let b64 = URL_SAFE_NO_PAD.encode(&buf);
+    format!("creqA{b64}")
+}
+
+/// Generate a compact SVG QR code for the given string.
+fn generate_qr_svg(data: &str) -> String {
+    let code = qrcode::QrCode::new(data.as_bytes()).expect("QR data within length limit");
+    let width = code.width();
+    let scale = 8usize;
+    let dim = width * scale;
+    let mut svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{dim}" height="{dim}" viewBox="0 0 {dim} {dim}" shape-rendering="crispEdges"><rect width="{dim}" height="{dim}" fill="#fff"/>"#,
+    );
+    for y in 0..width {
+        for x in 0..width {
+            if code[(x, y)] == qrcode::types::Color::Dark {
+                svg.push_str(&format!(
+                    r#"<rect x="{}" y="{}" width="{scale}" height="{scale}"/>"#,
+                    x * scale,
+                    y * scale,
+                ));
+            }
+        }
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
 /// Format the per-step price for display on the portal page (e.g. "1 sat/1min").
 fn format_price(config: &V1Config) -> String {
     match config.metric.as_str() {
@@ -567,8 +736,11 @@ fn format_price(config: &V1Config) -> String {
 }
 
 /// Build the captive portal HTML page, substituting dynamic pricing values.
-fn portal_html(config: &V1Config) -> String {
-    PORTAL_HTML_TEMPLATE.replace("{{PRICE}}", &format_price(config))
+fn portal_html(config: &V1Config, creqa: &str, qr_svg: &str) -> String {
+    PORTAL_HTML_TEMPLATE
+        .replace("{{PRICE}}", &format_price(config))
+        .replace("{{CREQA}}", creqa)
+        .replace("{{QR_SVG}}", qr_svg)
 }
 
 const PORTAL_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
@@ -632,6 +804,11 @@ button:disabled{opacity:.5;cursor:wait}
 .ok{background:#0d2818;color:#4eefa0;border:1px solid #1a4d30}
 .err{background:#2d0a0a;color:#ff6b6b;border:1px solid #4d1a1a}
 .hint{margin-top:18px;font-size:11px;color:#444;text-align:center;line-height:1.5}
+.qr-section{text-align:center;margin-bottom:20px}
+.qr-section svg{max-width:220px;height:auto;border-radius:10px;border:1px solid #23233a}
+.qr-label{font-size:13px;color:#888;margin-top:10px}
+.divider{display:flex;align-items:center;gap:10px;margin:20px 0;color:#444;font-size:12px}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:#23233a}
 </style>
 </head>
 <body>
@@ -645,6 +822,11 @@ button:disabled{opacity:.5;cursor:wait}
     <div class="price-value">{{PRICE}}</div>
     <div class="price-label">per step</div>
   </div>
+  <div class="qr-section">
+    {{QR_SVG}}
+    <div class="qr-label">Scan with your Cashu wallet</div>
+  </div>
+  <div class="divider">or paste a token</div>
   <form id="pay-form">
     <label for="token">Cashu Token</label>
     <input type="text" id="token" name="token" placeholder="cashuB..." autocomplete="off" required>
@@ -944,7 +1126,11 @@ fn cors_response(mut response: Response, origin: Option<&str>, is_local: bool) -
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Content-Type, Authorization"),
+        HeaderValue::from_static("Content-Type, Authorization, X-Cashu"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("X-Cashu"),
     );
     response
 }
@@ -1130,9 +1316,35 @@ mod tests {
             min_steps: 1,
             tips: vec![],
         };
-        let html = portal_html(&config);
+        let html = portal_html(&config, "creqAtest123", "<svg/>");
         assert!(html.contains("1 sat/1min"));
-        assert!(html.contains("TollGate") || html.contains("Toll"));
+        assert!(html.contains("creqAtest123") || html.contains("svg"));
         assert!(html.contains("</html>"));
+    }
+
+    #[test]
+    fn create_creqa_starts_with_prefix() {
+        let mints = vec!["https://testnut.cashu.exchange".to_string()];
+        let creqa = create_creqa(1, "sat", &mints, "test", "http://10.0.0.1:2121/");
+        assert!(creqa.starts_with("creqA"));
+        assert!(creqa.len() > 20);
+    }
+
+    #[test]
+    fn create_creqa_decodes_to_valid_cbor() {
+        let mints = vec!["https://testnut.cashu.exchange".to_string()];
+        let creqa = create_creqa(1, "sat", &mints, "TollGate", "http://10.0.0.1:2121/");
+        let b64 = &creqa["creqA".len()..];
+        let bytes = URL_SAFE_NO_PAD.decode(b64).expect("valid base64url");
+        let mut d = minicbor::Decoder::new(&bytes);
+        assert!(d.map().is_ok(), "creqA payload must decode as CBOR map");
+    }
+
+    #[test]
+    fn generate_qr_svg_produces_valid_svg() {
+        let svg = generate_qr_svg("creqAtest123");
+        assert!(svg.starts_with("<svg"));
+        assert!(svg.contains("</svg>"));
+        assert!(svg.contains("rect"));
     }
 }
