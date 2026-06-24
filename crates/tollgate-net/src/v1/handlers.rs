@@ -696,7 +696,7 @@ fn generate_qr_svg(data: &str) -> String {
     let scale = 8usize;
     let dim = width * scale;
     let mut svg = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{dim}" height="{dim}" viewBox="0 0 {dim} {dim}" shape-rendering="crispEdges"><rect width="{dim}" height="{dim}" fill="#fff"/>"#,
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{dim}\" height=\"{dim}\" viewBox=\"0 0 {dim} {dim}\" shape-rendering=\"crispEdges\"><rect width=\"{dim}\" height=\"{dim}\" fill=\"white\"/>",
     );
     for y in 0..width {
         for x in 0..width {
