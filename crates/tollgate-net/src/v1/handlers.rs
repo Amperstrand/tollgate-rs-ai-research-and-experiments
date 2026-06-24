@@ -116,18 +116,21 @@ async fn handle_get_details(
 ) -> Response {
     let (origin, is_local) = resolve_origin(&headers);
 
-    if let Some(cashu_header) = headers.get("x-cashu").and_then(|v| v.to_str().ok()) {
-        if !cashu_header.is_empty() {
-            return handle_nut24_payment(
-                ConnectInfo(addr),
-                State(state),
-                headers,
-                cashu_header,
-                origin.as_deref(),
-                is_local,
-            )
-            .await;
-        }
+    if let Some(cashu_header) = headers
+        .get("x-cashu")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+    {
+        return handle_nut24_payment(
+            ConnectInfo(addr),
+            State(state),
+            headers,
+            &cashu_header,
+            origin.as_deref(),
+            is_local,
+        )
+        .await;
     }
 
     let addr_str = addr.to_string();
@@ -699,9 +702,11 @@ fn generate_qr_svg(data: &str) -> String {
         for x in 0..width {
             if code[(x, y)] == qrcode::types::Color::Dark {
                 svg.push_str(&format!(
-                    r#"<rect x="{}" y="{}" width="{scale}" height="{scale}"/>"#,
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>",
                     x * scale,
                     y * scale,
+                    scale,
+                    scale,
                 ));
             }
         }
