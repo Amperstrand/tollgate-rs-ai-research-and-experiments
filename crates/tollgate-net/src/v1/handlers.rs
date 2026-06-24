@@ -130,10 +130,12 @@ async fn handle_get_details(
         }
     }
 
+    let addr_str = addr.to_string();
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or(&addr.to_string());
+        .unwrap_or(&addr_str)
+        .to_string();
     let post_endpoint = format!("http://{host}/");
     let creqa = create_creqa(
         state.config.price_per_step,
@@ -217,10 +219,11 @@ async fn handle_portal(
     headers: HeaderMap,
 ) -> Response {
     let (origin, is_local) = resolve_origin(&headers);
+    let addr_str = addr.to_string();
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or(&addr.to_string());
+        .unwrap_or(&addr_str);
     let post_endpoint = format!("http://{host}/");
     let creqa = create_creqa(
         state.config.price_per_step,
