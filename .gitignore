@@ -35,3 +35,7 @@ __pycache__/
 skills
 memory-global
 memory-project/
+docs/private/
+.omo/
+.playwright-mcp/
+crates/tollgate-net/target/
