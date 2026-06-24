@@ -147,9 +147,8 @@ jobs:
             MAINTAINER="Amperstrand" \
             LICENSE="MIT" \
             DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt (drop-in replacement for Go v1)" \
-            DEPENDS="nodogsplash jq" \
-            PROVIDES="nodogsplash-files" \
-            REPLACES="nodogsplash base-files tollgate-wrt" \
+            DEPENDS="jq" \
+            REPLACES="tollgate-wrt" \
             packaging/build-ipk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
 
       - uses: actions/upload-artifact@v4
