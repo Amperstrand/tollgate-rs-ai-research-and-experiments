@@ -1,13 +1,15 @@
 //! Axum route handlers for the v1 HTTP/JSON TollGate API (port 2121).
 //!
 //! Endpoints (mirroring the Go v1 server):
-//! - `GET  /`        → Nostr kind 10021 advertisement
+//! - `GET  /`        → captive portal HTML page (triggers OS captive portal popup)
+//! - `GET  /portal`  → alias of `GET /` (captive portal HTML)
 //! - `POST /`        → Cashu token → kind 1022 session or kind 21023 notice
-//! - `GET  /pay`     → alias of `GET /` (advertisement; Go v1 accepts payment via `X-Cashu` header)
+//! - `GET  /pay`     → Nostr kind 10021 advertisement
 //! - `GET  /usage`   → text `"<used>/<allotment>"` or `"-1/-1"`
 //! - `GET  /balance` → JSON `{"remaining": …, "allotment": …, …}`
 //! - `GET  /whoami`  → text `"mac=<MAC>"`
 //! - `OPTIONS /`     → CORS preflight (empty 200)
+//! - `GET  /*` (fallback) → captive portal HTML (handles OS detection probes)
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -15,7 +17,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::{ConnectInfo, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use secp256k1::SecretKey;
 
@@ -68,9 +70,13 @@ pub fn build_router(state: Arc<V1State>) -> Router {
     Router::new()
         .route(
             "/",
-            axum::routing::get(handle_get_details)
+            axum::routing::get(handle_portal)
                 .post(handle_post_payment)
                 .options(handle_options),
+        )
+        .route(
+            "/portal",
+            axum::routing::get(handle_portal).options(handle_options),
         )
         .route(
             "/pay",
@@ -88,8 +94,8 @@ pub fn build_router(state: Arc<V1State>) -> Router {
             "/whoami",
             axum::routing::get(handle_whoami).options(handle_options),
         )
+        .fallback(handle_catch_all)
         .with_state(state)
-        // Go v1 parity: cap request body at 1 MB.
         .layer(DefaultBodyLimit::max(1_048_576))
 }
 
@@ -105,6 +111,35 @@ async fn handle_get_details(headers: HeaderMap, State(state): State<Arc<V1State>
         origin.as_deref(),
         is_local,
     )
+}
+
+/// `GET /` or `GET /portal` — serve the captive portal HTML page.
+async fn handle_portal(
+    State(state): State<Arc<V1State>>,
+    headers: HeaderMap,
+) -> Response {
+    let (origin, is_local) = resolve_origin(&headers);
+    let html = portal_html(&state.config);
+    cors_response(
+        html_response(html),
+        origin.as_deref(),
+        is_local,
+    )
+}
+
+/// Catch-all fallback: serve portal HTML for GET (handles OS captive-portal
+/// detection probes — Apple, Android, Microsoft, Firefox — which hit paths
+/// like `/hotspot-detect.html`, `/generate_204`, `/connecttest.txt`).
+async fn handle_catch_all(
+    method: Method,
+    State(state): State<Arc<V1State>>,
+    headers: HeaderMap,
+) -> Response {
+    if method == Method::GET {
+        handle_portal(State(state), headers).await
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
 }
 
 /// `POST /` — accept a Cashu token (raw or wrapped in a kind 21000 event),
@@ -197,10 +232,6 @@ async fn handle_post_payment(
         .parse()
         .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     state.adapter.allow(client_ip);
-
-    if mac.matches(':').count() == 5 {
-        ndsctl_auth(&mac);
-    }
 
     tracing::info!(%mac, %client_ip, allotment, amount_sat, "payment accepted");
 
@@ -507,6 +538,188 @@ fn calculate_allotment(amount_sat: u64, config: &V1Config) -> u64 {
     steps * config.step_size
 }
 
+/// Format the per-step price for display on the portal page (e.g. "1 sat/1min").
+fn format_price(config: &V1Config) -> String {
+    match config.metric.as_str() {
+        "milliseconds" => {
+            let seconds = config.step_size / 1000;
+            if seconds >= 3600 && seconds % 3600 == 0 {
+                format!("{} {}/{}h", config.price_per_step, config.unit, seconds / 3600)
+            } else if seconds >= 60 && seconds % 60 == 0 {
+                format!("{} {}/{}min", config.price_per_step, config.unit, seconds / 60)
+            } else {
+                format!("{} {}/{}s", config.price_per_step, config.unit, seconds)
+            }
+        }
+        "bytes" => {
+            if config.step_size >= 1_073_741_824 && config.step_size % 1_073_741_824 == 0 {
+                format!("{} {}/{}GB", config.price_per_step, config.unit, config.step_size / 1_073_741_824)
+            } else if config.step_size >= 1_048_576 && config.step_size % 1_048_576 == 0 {
+                format!("{} {}/{}MB", config.price_per_step, config.unit, config.step_size / 1_048_576)
+            } else if config.step_size >= 1024 && config.step_size % 1024 == 0 {
+                format!("{} {}/{}KB", config.price_per_step, config.unit, config.step_size / 1024)
+            } else {
+                format!("{} {}/{}B", config.price_per_step, config.unit, config.step_size)
+            }
+        }
+        _ => format!("{} {}/{} {}", config.price_per_step, config.unit, config.step_size, config.metric),
+    }
+}
+
+/// Build the captive portal HTML page, substituting dynamic pricing values.
+fn portal_html(config: &V1Config) -> String {
+    PORTAL_HTML_TEMPLATE.replace("{{PRICE}}", &format_price(config))
+}
+
+const PORTAL_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>TollGate — Internet Access</title>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  background:#0a0a0f;color:#e0e0e0;
+  display:flex;align-items:center;justify-content:center;
+  min-height:100vh;padding:20px;
+  -webkit-text-size-adjust:100%;
+}
+.card{
+  background:#12121d;border:1px solid #23233a;border-radius:18px;
+  padding:40px 32px;max-width:420px;width:100%;
+}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.brand-mark{
+  width:32px;height:32px;border-radius:9px;
+  background:linear-gradient(135deg,#f7931a,#ff5e3a);
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;color:#000;font-size:18px;flex-shrink:0;
+}
+.brand-name{font-size:24px;font-weight:700;letter-spacing:-.5px}
+.brand-name span{color:#f7931a}
+.tagline{color:#777;font-size:13px;margin-bottom:28px}
+.price-box{
+  background:#181828;border:1px solid #23233a;border-radius:14px;
+  padding:22px;text-align:center;margin-bottom:24px;
+}
+.price-value{font-size:34px;font-weight:800;color:#f7931a;letter-spacing:-1px}
+.price-label{font-size:13px;color:#777;margin-top:6px}
+label{display:block;font-size:12px;color:#888;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+input[type=text]{
+  width:100%;padding:15px 16px;
+  background:#0a0a0f;border:1px solid #2a2a3e;border-radius:12px;
+  color:#fff;font-size:14px;font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  outline:none;transition:border-color .2s;-webkit-appearance:none;
+}
+input[type=text]:focus{border-color:#f7931a}
+input[type=text]::placeholder{color:#444}
+button{
+  width:100%;padding:16px;margin-top:14px;
+  background:#f7931a;border:none;border-radius:12px;
+  color:#000;font-size:16px;font-weight:700;cursor:pointer;
+  transition:background .15s;-webkit-appearance:none;
+}
+button:hover{background:#ffa733}
+button:active{background:#e08410}
+button:disabled{opacity:.5;cursor:wait}
+#status{
+  margin-top:18px;padding:14px 16px;border-radius:12px;
+  font-size:14px;line-height:1.4;display:none;
+}
+.ok{background:#0d2818;color:#4eefa0;border:1px solid #1a4d30}
+.err{background:#2d0a0a;color:#ff6b6b;border:1px solid #4d1a1a}
+.hint{margin-top:18px;font-size:11px;color:#444;text-align:center;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <div class="brand-mark">T</div>
+    <div class="brand-name">Toll<span>Gate</span></div>
+  </div>
+  <div class="tagline">Pay-per-use internet access</div>
+  <div class="price-box">
+    <div class="price-value">{{PRICE}}</div>
+    <div class="price-label">per step</div>
+  </div>
+  <form id="pay-form">
+    <label for="token">Cashu Token</label>
+    <input type="text" id="token" name="token" placeholder="cashuB..." autocomplete="off" required>
+    <button type="submit" id="pay-btn">Pay and Connect</button>
+  </form>
+  <div id="status"></div>
+  <div class="hint">Paste a Cashu ecash token to activate your connection</div>
+</div>
+<script>
+(function(){
+  var form=document.getElementById("pay-form");
+  var btn=document.getElementById("pay-btn");
+  var status=document.getElementById("status");
+  var tokenInput=document.getElementById("token");
+  form.addEventListener("submit",function(e){
+    e.preventDefault();
+    var token=tokenInput.value.trim();
+    if(!token)return;
+    btn.disabled=true;
+    btn.textContent="Connecting...";
+    status.style.display="none";
+    fetch("/",{
+      method:"POST",
+      headers:{"Content-Type":"text/plain"},
+      body:token
+    }).then(function(r){
+      return r.text().then(function(t){return{ok:r.ok,text:t}});
+    }).then(function(res){
+      btn.disabled=false;
+      btn.textContent="Pay and Connect";
+      try{
+        var d=JSON.parse(res.text);
+        if(res.ok&&d.kind===1022){
+          var allotment=0,metric="milliseconds";
+          if(d.tags){
+            for(var i=0;i<d.tags.length;i++){
+              if(d.tags[i][0]==="allotment")allotment=parseInt(d.tags[i][1],10);
+              if(d.tags[i][0]==="metric")metric=d.tags[i][1];
+            }
+          }
+          var msg;
+          if(metric==="milliseconds"){
+            var mins=Math.floor(allotment/60000);
+            var secs=Math.floor((allotment%60000)/1000);
+            msg="Connected! "+mins+" min "+secs+" sec remaining";
+          }else{
+            msg="Connected! "+allotment+" "+metric+" remaining";
+          }
+          status.className="ok";
+          status.textContent=msg;
+          status.style.display="block";
+          form.style.display="none";
+        }else{
+          status.className="err";
+          status.textContent=(d.content)||"Payment rejected";
+          status.style.display="block";
+        }
+      }catch(ex){
+        status.className=res.ok?"ok":"err";
+        status.textContent=res.ok?"Connected!":(res.text||"Payment failed");
+        status.style.display="block";
+      }
+    }).catch(function(err){
+      btn.disabled=false;
+      btn.textContent="Pay and Connect";
+      status.className="err";
+      status.textContent="Network error: "+err.message;
+      status.style.display="block";
+    });
+  });
+})();
+</script>
+</body>
+</html>"#;
+
 /// Extract the client IP from `X-Forwarded-For` or `X-Real-IP`, falling back to
 /// the connection's source address.
 pub fn extract_client_ip(
@@ -574,59 +787,6 @@ pub fn resolve_mac_from_leases(ip: &str) -> Option<String> {
 /// the raw IP as an identifier.
 pub fn resolve_mac(ip: &str) -> String {
     resolve_mac_from_leases(ip).unwrap_or_else(|| ip.to_lowercase())
-}
-
-fn ndsctl_auth(mac: &str) {
-    for attempt in 1..=3u32 {
-        let result = std::process::Command::new("ndsctl")
-            .arg("auth")
-            .arg(mac)
-            .output();
-        match result {
-            Ok(out) if out.status.success() => {
-                tracing::info!(%mac, attempt, "ndsctl auth success");
-                return;
-            }
-            Ok(out) => {
-                tracing::debug!(
-                    %mac, attempt,
-                    rc = ?out.status.code(),
-                    stderr = %String::from_utf8_lossy(&out.stderr).trim(),
-                    "ndsctl auth failed, retrying"
-                );
-            }
-            Err(e) => {
-                tracing::debug!(%mac, attempt, err = %e, "ndsctl not available");
-                return;
-            }
-        }
-        if attempt < 3 {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-        }
-    }
-    tracing::warn!(%mac, "ndsctl auth failed after 3 attempts");
-}
-
-fn ndsctl_deauth(mac: &str) {
-    let result = std::process::Command::new("ndsctl")
-        .arg("deauth")
-        .arg(mac)
-        .output();
-    match result {
-        Ok(out) if out.status.success() => {
-            tracing::info!(%mac, "ndsctl deauth success");
-        }
-        Ok(out) => {
-            tracing::debug!(
-                %mac,
-                rc = ?out.status.code(),
-                "ndsctl deauth returned non-zero"
-            );
-        }
-        Err(e) => {
-            tracing::debug!(%mac, err = %e, "ndsctl not available for deauth");
-        }
-    }
 }
 
 /// Information extracted from a POST body: the Cashu token, plus optionally the
@@ -715,9 +875,6 @@ async fn expire_session(state: &V1State, mac: &str, ip: &str) {
         .parse()
         .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     state.adapter.deny(client_ip);
-    if mac.matches(':').count() == 5 {
-        ndsctl_deauth(mac);
-    }
     tracing::info!(%mac, %client_ip, "session expired");
 }
 
@@ -806,6 +963,18 @@ fn json_response(status: StatusCode, body: String) -> Response {
 
 fn text_response(status: StatusCode, body: impl Into<String>) -> Response {
     (status, body.into()).into_response()
+}
+
+fn html_response(body: String) -> Response {
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        )],
+        body,
+    )
+        .into_response()
 }
 
 /// Placeholder secret key for the error-in-error path (never used for signing).
@@ -914,5 +1083,56 @@ mod tests {
             classify_payment_error("network timeout"),
             "payment-processing-failed",
         );
+    }
+
+    #[test]
+    fn format_price_milliseconds() {
+        let config = V1Config {
+            metric: "milliseconds".into(),
+            step_size: 60_000,
+            price_per_step: 1,
+            unit: "sat".into(),
+            mint_url: "https://testnut.cashu.exchange".into(),
+            min_steps: 1,
+            tips: vec![],
+        };
+        assert_eq!(format_price(&config), "1 sat/1min");
+
+        let config_hour = V1Config {
+            step_size: 3_600_000,
+            ..config
+        };
+        assert_eq!(format_price(&config_hour), "1 sat/1h");
+    }
+
+    #[test]
+    fn format_price_bytes() {
+        let config = V1Config {
+            metric: "bytes".into(),
+            step_size: 1_048_576,
+            price_per_step: 5,
+            unit: "sat".into(),
+            mint_url: "https://testnut.cashu.exchange".into(),
+            min_steps: 1,
+            tips: vec![],
+        };
+        assert_eq!(format_price(&config), "5 sat/1MB");
+    }
+
+    #[test]
+    fn portal_html_contains_price() {
+        let config = V1Config {
+            metric: "milliseconds".into(),
+            step_size: 60_000,
+            price_per_step: 1,
+            unit: "sat".into(),
+            mint_url: "https://testnut.cashu.exchange".into(),
+            min_steps: 1,
+            tips: vec![],
+        };
+        let html = portal_html(&config);
+        assert!(html.contains("1 sat/1min"));
+        assert!(html.contains("TollGate") || html.contains("Toll"));
+        assert!(html.contains("</html>"));
     }
 }

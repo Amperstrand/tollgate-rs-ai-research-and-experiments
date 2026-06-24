@@ -194,11 +194,15 @@ mod nft {
         if install_forward_chain {
             ruleset.push_str(&format!(
                 "add chain inet {t} forward {{ type filter hook forward priority 0; policy drop; }}\n\
+                 add rule inet {t} forward udp dport 53 accept\n\
+                 add rule inet {t} forward tcp dport 53 accept\n\
                  add rule inet {t} forward ct state established,related accept\n\
                  add rule inet {t} forward ip saddr @paid_peers_v4 accept\n\
                  add rule inet {t} forward ip daddr @paid_peers_v4 accept\n\
                  add rule inet {t} forward ip6 saddr @paid_peers_v6 accept\n\
-                 add rule inet {t} forward ip6 daddr @paid_peers_v6 accept\n",
+                 add rule inet {t} forward ip6 daddr @paid_peers_v6 accept\n\
+                 add chain inet {t} prerouting {{ type nat hook prerouting priority -100; }}\n\
+                 add rule inet {t} prerouting ip saddr != @paid_peers_v4 tcp dport 80 dnat ip to 127.0.0.1:2121\n",
                 t = NFT_TABLE
             ));
         }
