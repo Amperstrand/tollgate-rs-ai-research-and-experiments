@@ -144,6 +144,7 @@ impl Config {
 /// The node's signing identity (a secp256k1 keypair).
 pub struct Identity {
     pub public_key: secp256k1::PublicKey,
+    #[cfg_attr(not(feature = "v1-compat"), allow(dead_code))]
     secret_key: secp256k1::SecretKey,
 }
 
@@ -186,12 +187,14 @@ impl Identity {
     }
 
     /// The secret key, for signing (used by the v1 Nostr event builder).
+    #[cfg_attr(not(feature = "v1-compat"), allow(dead_code))]
     pub fn secret_key(&self) -> &secp256k1::SecretKey {
         &self.secret_key
     }
 
     /// The x-only (BIP-340) public key as lowercase hex (32 bytes → 64 chars),
     /// used as the `pubkey` field in Nostr events.
+    #[cfg_attr(not(feature = "v1-compat"), allow(dead_code))]
     pub fn xonly_pubkey_hex(&self) -> String {
         let secp = secp256k1::Secp256k1::new();
         let (xonly, _) = self.secret_key.public_key(&secp).x_only_public_key();
