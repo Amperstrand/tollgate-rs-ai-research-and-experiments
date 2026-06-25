@@ -11,7 +11,7 @@
 //! - `OPTIONS /`     → CORS preflight (empty 200)
 //! - `GET  /*` (fallback) → captive portal HTML (handles OS detection probes)
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 
 fn is_captive_probe_host(host: &str) -> bool {
     const PROBE_DOMAINS: &[&str] = &[
@@ -228,7 +228,7 @@ async fn handle_nut24_payment(
     state.spent_tokens.lock().await.insert(token.to_string());
     let amount_sat = amount_milli / 1000;
     let allotment = calculate_allotment(amount_sat, &state.config);
-    let session = state
+    let _session = state
         .sessions
         .top_up(&mac, &state.config.metric, allotment, amount_sat)
         .await;
