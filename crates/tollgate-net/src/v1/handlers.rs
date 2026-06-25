@@ -11,7 +11,33 @@
 //! - `OPTIONS /`     → CORS preflight (empty 200)
 //! - `GET  /*` (fallback) → captive portal HTML (handles OS detection probes)
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+fn is_captive_probe_host(host: &str) -> bool {
+    const PROBE_DOMAINS: &[&str] = &[
+        "captive.apple.com",
+        "connectivitycheck.gstatic.com",
+        "www.msftconnecttest.com",
+        "www.msftncsi.com",
+        "detectportal.firefox.com",
+        "clients3.google.com",
+        "wifi.vodafone.com",
+        "nmcheck.gnome.org",
+    ];
+    let host_part = host.split(':').next().unwrap_or(host);
+    PROBE_DOMAINS.iter().any(|d| host_part == *d)
+}
+
+fn derive_gateway_ip(client_ip: IpAddr) -> String {
+    match client_ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            format!("{}.{}.{}.1", octets[0], octets[1], octets[2])
+        }
+        IpAddr::V6(_) => "fe80::1".to_string(),
+    }
+}
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -133,13 +159,17 @@ async fn handle_get_details(
         .await;
     }
 
-    let addr_str = addr.to_string();
+    let addr_str = addr.ip().to_string();
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or(&addr_str)
-        .to_string();
-    let post_endpoint = format!("http://{host}/");
+        .unwrap_or(&addr_str);
+    let post_endpoint = if is_captive_probe_host(host) {
+        let gateway = derive_gateway_ip(addr.ip());
+        format!("http://{}:2121/", gateway)
+    } else {
+        format!("http://{host}/")
+    };
     let creqa = create_creqa(
         state.config.price_per_step,
         &state.config.unit,
@@ -222,12 +252,17 @@ async fn handle_portal(
     headers: HeaderMap,
 ) -> Response {
     let (origin, is_local) = resolve_origin(&headers);
-    let addr_str = addr.to_string();
+    let addr_str = addr.ip().to_string();
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
         .unwrap_or(&addr_str);
-    let post_endpoint = format!("http://{host}/");
+    let post_endpoint = if is_captive_probe_host(host) {
+        let gateway = derive_gateway_ip(addr.ip());
+        format!("http://{}:2121/", gateway)
+    } else {
+        format!("http://{host}/")
+    };
     let creqa = create_creqa(
         state.config.price_per_step,
         &state.config.unit,
