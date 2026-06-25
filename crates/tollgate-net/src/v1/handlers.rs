@@ -27,7 +27,7 @@ use crate::wallet::BootstrapWallet;
 use super::nostr::{KIND_ADVERTISEMENT, KIND_NOTICE, KIND_SESSION, build_event, event_to_json};
 use super::session::{V1Session, V1SessionStore, now_unix};
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use minicbor::Encoder;
 
 /// Static pricing / advertisement configuration for the v1 server.
@@ -660,10 +660,25 @@ fn create_creqa(
     description: &str,
     post_endpoint: &str,
 ) -> String {
+    let id = format!("{:016x}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis());
     let mut buf = Vec::new();
     {
         let mut e = Encoder::new(&mut buf);
-        e.map(6).ok();
+        e.map(7).ok();
+        e.str("t").ok();
+        e.array(1).ok();
+        e.map(3).ok();
+        e.str("t").ok();
+        e.str("post").ok();
+        e.str("a").ok();
+        e.str(post_endpoint).ok();
+        e.str("g").ok();
+        e.null().ok();
+        e.str("i").ok();
+        e.str(&id).ok();
         e.str("a").ok();
         e.u64(amount).ok();
         e.str("u").ok();
@@ -675,17 +690,10 @@ fn create_creqa(
         }
         e.str("d").ok();
         e.str(description).ok();
-        e.str("t").ok();
-        e.array(1).ok();
-        e.map(2).ok();
-        e.str("t").ok();
-        e.str("post").ok();
-        e.str("a").ok();
-        e.str(post_endpoint).ok();
         e.str("s").ok();
         e.bool(true).ok();
     }
-    let b64 = URL_SAFE_NO_PAD.encode(&buf);
+    let b64 = STANDARD.encode(&buf);
     format!("creqA{b64}")
 }
 
@@ -1343,7 +1351,7 @@ mod tests {
         let mints = vec!["https://testnut.cashu.exchange".to_string()];
         let creqa = create_creqa(1, "sat", &mints, "TollGate", "http://10.0.0.1:2121/");
         let b64 = &creqa["creqA".len()..];
-        let bytes = URL_SAFE_NO_PAD.decode(b64).expect("valid base64url");
+        let bytes = STANDARD.decode(b64).expect("valid base64");
         let mut d = minicbor::Decoder::new(&bytes);
         assert!(d.map().is_ok(), "creqA payload must decode as CBOR map");
     }
