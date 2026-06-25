@@ -10,6 +10,8 @@ mod config;
 mod control_server;
 mod driver;
 mod server;
+#[cfg(feature = "v1-compat")]
+mod v1;
 mod wallet;
 
 use std::path::PathBuf;
@@ -95,6 +97,13 @@ enum Command {
         #[arg(long)]
         meter_upstream: bool,
     },
+    #[cfg(feature = "v1-compat")]
+    V1Serve {
+        #[arg(long)]
+        listen: Option<String>,
+        #[arg(long)]
+        mint: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -136,6 +145,8 @@ async fn main() -> anyhow::Result<()> {
             };
             consume(&cfg, &identity, &peer, &mint, opts).await
         }
+        #[cfg(feature = "v1-compat")]
+        Command::V1Serve { listen, mint } => v1_serve(cfg, identity, listen, mint).await,
     }
 }
 
@@ -292,6 +303,51 @@ async fn consume(
         "consuming: pay then auto-top-up"
     );
     client::consume(peer, identity, &cfg.unit, mint, opts).await
+}
+
+#[cfg(feature = "v1-compat")]
+async fn v1_serve(
+    cfg: config::Config,
+    identity: Arc<config::Identity>,
+    listen: Option<String>,
+    mint_override: Option<String>,
+) -> anyhow::Result<()> {
+    let listen = listen.unwrap_or_else(|| "127.0.0.1:2121".to_string());
+
+    let mints: Vec<String> = mint_override.clone().map(|m| vec![m]).unwrap_or_else(|| {
+        if cfg.mints.is_empty() {
+            vec!["https://testnut.cashu.exchange".to_string()]
+        } else {
+            cfg.mints.clone()
+        }
+    });
+
+    let wallet = wallet::BootstrapWallet::new(mints.clone());
+    let adapter = adapter::IpAdapter::new();
+    if let Err(e) = adapter.init(cfg.firewall.installs_forward_chain()) {
+        tracing::warn!(err = %e, "firewall init failed; access may not be enforced (need root?)");
+    }
+
+    let primary_mint = mints.first().cloned().unwrap_or_default();
+    let v1_config = v1::V1Config {
+        metric: "milliseconds".to_string(),
+        step_size: 60_000,
+        price_per_step: 1,
+        unit: "sat".to_string(),
+        mint_url: primary_mint,
+        min_steps: 1,
+        tips: (1..=10).map(|i| i.to_string()).collect(),
+    };
+
+    tracing::info!(
+        pubkey = %identity.pubkey_hex(),
+        %listen,
+        mints = ?mints,
+        "starting v1 HTTP/JSON server",
+    );
+
+    let server = v1::V1Server::new(&identity, wallet, adapter, v1_config)?;
+    server.serve(&listen).await
 }
 
 #[cfg(test)]

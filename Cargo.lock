@@ -1495,6 +1495,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2342,17 +2348,21 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "cashu",
  "clap",
  "dirs",
  "hex",
+ "minicbor",
+ "qrcode",
  "ratatui",
  "reqwest",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "thiserror",
  "tokio",
  "tollgate-core",

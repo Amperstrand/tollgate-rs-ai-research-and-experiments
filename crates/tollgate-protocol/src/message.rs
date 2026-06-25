@@ -426,6 +426,193 @@ impl PriceSheet {
     }
 }
 
+pub enum RejectReason {
+    PriceTooHigh = 0x01,
+    MintNotAccepted = 0x02,
+    UnitNotAccepted = 0x03,
+    MeteringIntervalOutOfRange = 0x04,
+    ChannelFundingInvalid = 0x05,
+    BalanceVerificationFailed = 0x06,
+    TransitLossToleranceExceeded = 0x07,
+    ProductChangedRenegotiationRequired = 0x08,
+    ProtocolVersionUnsupported = 0x09,
+    Other = 0xFF,
+}
+
+impl RejectReason {
+    pub const fn as_u8(self) -> u8 { self as u8 }
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        Some(match value {
+            0x01 => Self::PriceTooHigh, 0x02 => Self::MintNotAccepted,
+            0x03 => Self::UnitNotAccepted, 0x04 => Self::MeteringIntervalOutOfRange,
+            0x05 => Self::ChannelFundingInvalid, 0x06 => Self::BalanceVerificationFailed,
+            0x07 => Self::TransitLossToleranceExceeded,
+            0x08 => Self::ProductChangedRenegotiationRequired,
+            0x09 => Self::ProtocolVersionUnsupported, 0xFF => Self::Other,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct Disconnect {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub reason_code: u8,
+}
+
+impl Disconnect {
+    pub fn new(reason: RejectReason) -> Self {
+        Self { type_tag: MessageType::Disconnect.as_u8(), reason_code: reason.as_u8() }
+    }
+    pub fn reason(&self) -> Option<RejectReason> { RejectReason::from_u8(self.reason_code) }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("Disconnect encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct Accept {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub product_id: ByteArray<32>,
+    #[n(2)] pub option_id: ByteArray<32>,
+    #[n(3)] pub interval_ms: (u32, u32),
+    #[n(4)] pub channel_funding: ByteVec,
+}
+
+impl Accept {
+    pub fn new(product_id: [u8; 32], option_id: [u8; 32], min_ms: u32, max_ms: u32, funding: Vec<u8>) -> Self {
+        Self { type_tag: MessageType::Accept.as_u8(), product_id: ByteArray::from(product_id),
+            option_id: ByteArray::from(option_id), interval_ms: (min_ms, max_ms),
+            channel_funding: ByteVec::from(funding) }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("Accept encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct ChannelReady {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub channel_id: ByteArray<32>,
+    #[n(2)] pub direction: u8,
+}
+
+impl ChannelReady {
+    pub const DIR_A_TO_B: u8 = 0;
+    pub const DIR_B_TO_A: u8 = 1;
+    pub fn new(channel_id: [u8; 32], direction: u8) -> Self {
+        Self { type_tag: MessageType::ChannelReady.as_u8(), channel_id: ByteArray::from(channel_id), direction }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("ChannelReady encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct BalanceUpdate {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub channel_id: ByteArray<32>,
+    #[n(2)] pub cumulative_balance: u64,
+    #[n(3)] pub balance_signature: ByteArray<64>,
+    #[n(4)] pub net_amount: u64,
+}
+
+impl BalanceUpdate {
+    pub fn new(ch_id: [u8; 32], balance: u64, sig: [u8; 64], net: u64) -> Self {
+        Self { type_tag: MessageType::BalanceUpdate.as_u8(), channel_id: ByteArray::from(ch_id),
+            cumulative_balance: balance, balance_signature: ByteArray::from(sig), net_amount: net }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("BalanceUpdate encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct BalanceAck {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub channel_id: ByteArray<32>,
+    #[n(2)] pub accepted_balance: u64,
+}
+
+impl BalanceAck {
+    pub fn new(ch_id: [u8; 32], balance: u64) -> Self {
+        Self { type_tag: MessageType::BalanceAck.as_u8(), channel_id: ByteArray::from(ch_id), accepted_balance: balance }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("BalanceAck encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct RolloverInit {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub old_channel_id: ByteArray<32>,
+    #[n(2)] pub new_channel_funding: ByteVec,
+}
+
+impl RolloverInit {
+    pub fn new(old: [u8; 32], funding: Vec<u8>) -> Self {
+        Self { type_tag: MessageType::RolloverInit.as_u8(), old_channel_id: ByteArray::from(old), new_channel_funding: ByteVec::from(funding) }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("RolloverInit encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct RolloverReady {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub old_channel_id: ByteArray<32>,
+    #[n(2)] pub new_channel_id: ByteArray<32>,
+}
+
+impl RolloverReady {
+    pub fn new(old: [u8; 32], new_id: [u8; 32]) -> Self {
+        Self { type_tag: MessageType::RolloverReady.as_u8(), old_channel_id: ByteArray::from(old), new_channel_id: ByteArray::from(new_id) }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("RolloverReady encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct ChannelClose {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub channel_id: ByteArray<32>,
+    #[n(2)] pub final_balance: u64,
+    #[n(3)] pub final_signature: ByteArray<64>,
+    #[n(4)] pub reason: u8,
+}
+
+impl ChannelClose {
+    pub const REASON_NORMAL: u8 = 0;
+    pub const REASON_PRICE_REJECTED: u8 = 1;
+    pub const REASON_PEER_LEAVING: u8 = 2;
+    pub fn new(ch_id: [u8; 32], balance: u64, sig: [u8; 64], reason: u8) -> Self {
+        Self { type_tag: MessageType::ChannelClose.as_u8(), channel_id: ByteArray::from(ch_id),
+            final_balance: balance, final_signature: ByteArray::from(sig), reason }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("ChannelClose encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[cbor(map)]
+pub struct CloseAck {
+    #[n(0)] pub type_tag: u8,
+    #[n(1)] pub channel_id: ByteArray<32>,
+    #[n(2)] pub accepted_balance: u64,
+}
+
+impl CloseAck {
+    pub fn new(ch_id: [u8; 32], balance: u64) -> Self {
+        Self { type_tag: MessageType::CloseAck.as_u8(), channel_id: ByteArray::from(ch_id), accepted_balance: balance }
+    }
+    pub fn encode(&self) -> Vec<u8> { minicbor::to_vec(self).expect("CloseAck encodes infallibly") }
+    pub fn decode(bytes: &[u8]) -> Result<Self, minicbor::decode::Error> { minicbor::decode(bytes) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

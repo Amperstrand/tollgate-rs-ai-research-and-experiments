@@ -32,8 +32,16 @@ cashu = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
-# tolltop TUI (also pulls crossterm as its default backend).
 ratatui = "0.29"
+
+sha2 = { workspace = true, optional = true }
+minicbor = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+qrcode = { workspace = true, optional = true }
+
+[features]
+default = ["v1-compat"]
+v1-compat = ["dep:sha2", "dep:minicbor", "dep:base64", "dep:qrcode"]
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
