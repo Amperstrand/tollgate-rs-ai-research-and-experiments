@@ -1,5 +1,8 @@
 #!/bin/sh
 mkdir -p /etc/tollgate
+/etc/init.d/tollgate-wrt stop 2>/dev/null || true
+killall tollgate 2>/dev/null || true
+sleep 1
 opkg remove tollgate-wrt 2>/dev/null || true
 rm -f /usr/bin/tollgate 2>/dev/null || true
 exit 0

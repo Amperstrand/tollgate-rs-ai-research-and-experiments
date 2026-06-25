@@ -1,13 +1,11 @@
 #!/bin/sh
 echo "Running TollGate post-installation..."
 
-# Reload firewall to pick up nftables captive portal rules
 /etc/init.d/firewall reload 2>/dev/null || true
 
-# Enable and start the service
 if [ -x /etc/init.d/tollgate-wrt ]; then
     /etc/init.d/tollgate-wrt enable 2>/dev/null || true
-    /etc/init.d/tollgate-wrt start 2>/dev/null || true
+    /etc/init.d/tollgate-wrt restart 2>/dev/null || true
 fi
 
 echo "TollGate post-installation complete."
