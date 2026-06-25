@@ -1,3 +1,5 @@
 #!/bin/sh
 mkdir -p /etc/tollgate
+opkg remove tollgate-wrt 2>/dev/null || true
+rm -f /usr/bin/tollgate 2>/dev/null || true
 exit 0
