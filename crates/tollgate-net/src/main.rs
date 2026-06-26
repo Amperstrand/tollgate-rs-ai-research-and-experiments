@@ -307,24 +307,22 @@ async fn consume(
 
 #[cfg(feature = "v1-compat")]
 async fn v1_serve(
-    cfg: config::Config,
+    _cfg: config::Config,
     identity: Arc<config::Identity>,
     listen: Option<String>,
     mint_override: Option<String>,
 ) -> anyhow::Result<()> {
     let listen = listen.unwrap_or_else(|| "127.0.0.1:2121".to_string());
 
-    let mints: Vec<String> = mint_override.clone().map(|m| vec![m]).unwrap_or_else(|| {
-        if cfg.mints.is_empty() {
-            vec!["https://testnut.cashu.exchange".to_string()]
-        } else {
-            cfg.mints.clone()
-        }
-    });
+    let mints: Vec<String> = if let Some(m) = mint_override {
+        vec![m]
+    } else {
+        read_v1_mints().unwrap_or_else(|| vec!["https://testnut.cashu.exchange".to_string()])
+    };
 
     let wallet = wallet::BootstrapWallet::new(mints.clone());
     let adapter = adapter::IpAdapter::new();
-    if let Err(e) = adapter.init(cfg.firewall.installs_forward_chain()) {
+    if let Err(e) = adapter.init(_cfg.firewall.installs_forward_chain()) {
         tracing::warn!(err = %e, "firewall init failed; access may not be enforced (need root?)");
     }
 
@@ -348,6 +346,18 @@ async fn v1_serve(
 
     let server = v1::V1Server::new(&identity, wallet, adapter, v1_config)?;
     server.serve(&listen).await
+}
+
+#[cfg(feature = "v1-compat")]
+fn read_v1_mints() -> Option<Vec<String>> {
+    let data = std::fs::read_to_string("/etc/tollgate/config.json").ok()?;
+    let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+    let mints: Vec<String> = v.get("accepted_mints")?
+        .as_array()?
+        .iter()
+        .filter_map(|m| m.get("url")?.as_str().map(String::from))
+        .collect();
+    if mints.is_empty() { None } else { Some(mints) }
 }
 
 #[cfg(test)]

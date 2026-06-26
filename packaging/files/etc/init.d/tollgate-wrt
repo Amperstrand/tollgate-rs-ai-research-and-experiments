@@ -9,26 +9,8 @@ EXTRA_HELP="        status          Check service status"
 start_service() {
     mkdir -p /etc/tollgate /var/lib/tollgate
 
-    # Build args from /etc/tollgate/config.json (Go v1 compat format)
-    CONFIG_FILE="/etc/tollgate/config.json"
-    MINT_ARGS=""
-
-    if [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
-        MINTS=$(jq -r '.accepted_mints[].url // empty' "$CONFIG_FILE" 2>/dev/null)
-        for mint in $MINTS; do
-            MINT_ARGS="$MINT_ARGS --mint $mint"
-        done
-    fi
-
-    # Fallback if no config or no mints found
-    if [ -z "$MINT_ARGS" ]; then
-        MINT_ARGS="--mint https://testnut.cashu.exchange"
-    fi
-
-    echo "Starting tollgate v1-serve $MINT_ARGS" > /tmp/tollgate-start.log
-
     procd_open_instance
-    procd_set_param command /usr/bin/tollgate v1-serve $MINT_ARGS
+    procd_set_param command /usr/bin/tollgate v1-serve
     procd_set_param directory /
     procd_set_param stdout 1
     procd_set_param stderr 1
