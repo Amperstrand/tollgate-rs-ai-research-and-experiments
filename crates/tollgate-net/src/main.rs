@@ -119,11 +119,15 @@ async fn main() -> anyhow::Result<()> {
     let cfg = config::Config::load(cli.config.as_deref())?;
     let identity = Arc::new(config::Identity::load_or_generate(&cfg)?);
 
-    match cli.command.unwrap_or(Command::Serve { listen: None }) {
-        Command::Serve { listen } => serve(cfg, identity, listen).await,
-        Command::Connect { peer } => connect(&cfg, &identity, &peer).await,
-        Command::Pay { peer, mint, amount } => pay(&cfg, &identity, &peer, &mint, amount).await,
-        Command::Consume {
+    match cli.command {
+        #[cfg(feature = "v1-compat")]
+        None => v1_serve(cfg, identity, None, None).await,
+        #[cfg(not(feature = "v1-compat"))]
+        None => serve(cfg, identity, None).await,
+        Some(Command::Serve { listen }) => serve(cfg, identity, listen).await,
+        Some(Command::Connect { peer }) => connect(&cfg, &identity, &peer).await,
+        Some(Command::Pay { peer, mint, amount }) => pay(&cfg, &identity, &peer, &mint, amount).await,
+        Some(Command::Consume {
             peer,
             mint,
             amount,
@@ -133,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
             understate_received_pct,
             meter_iface,
             meter_upstream,
-        } => {
+        }) => {
             let opts = client::ConsumeOpts {
                 amount_sat: amount,
                 topup_sat: topup,
@@ -146,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
             consume(&cfg, &identity, &peer, &mint, opts).await
         }
         #[cfg(feature = "v1-compat")]
-        Command::V1Serve { listen, mint } => v1_serve(cfg, identity, listen, mint).await,
+        Some(Command::V1Serve { listen, mint }) => v1_serve(cfg, identity, listen, mint).await,
     }
 }
 

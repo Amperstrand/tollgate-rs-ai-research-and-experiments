@@ -103,7 +103,7 @@ jobs:
 
           install -D -m 0755 \
             "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" \
-            "$PAYLOAD/usr/bin/tollgate"
+            "$PAYLOAD/usr/bin/tollgate-wrt"
 
           install -D -m 0755 \
             packaging/files/etc/init.d/tollgate-wrt \
