@@ -14,8 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use nostr::prelude::*;
 
 use super::merchant;
@@ -30,6 +30,10 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
                 .options(handle_options),
         )
         .route("/pay", get(handle_get_details).options(handle_options))
+        .route(
+            "/verify",
+            post(handle_verify_token).options(handle_options),
+        )
         .route("/usage", get(handle_usage).options(handle_options))
         .route("/whoami", get(handle_whoami).options(handle_options))
         .route("/balance", get(handle_balance).options(handle_options))
@@ -43,6 +47,93 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .with_state(state)
         // Go v1 parity: cap request body at 1MB via http.MaxBytesReader(w, r.Body, 1<<20)
         .layer(DefaultBodyLimit::max(1_048_576))
+}
+
+#[derive(serde::Deserialize)]
+struct VerifyRequest {
+    token: String,
+}
+
+#[derive(serde::Serialize)]
+struct VerifyResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    amount: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// `POST /verify` — stateless Cashu token verification for non-Rust services.
+///
+/// Decodes and validates a Cashu token, then redeems it via the mint. The mint
+/// is the authority for spent/replay (the `receive` is the atomic spent check),
+/// so callers must not keep their own spent ledger as the security boundary.
+/// On success the proofs have been received (swapped) and the sat amount is
+/// returned. This lets e.g. Go SSH/OCPI glue verify Cashu without a `cdk-cli`
+/// subprocess, so Cashu handling can move out of Go.
+async fn handle_verify_token(
+    State(state): State<Arc<ServerState>>,
+    body: String,
+) -> Response {
+    let req: VerifyRequest = match serde_json::from_str(body.trim()) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(VerifyResponse {
+                    ok: false,
+                    amount: None,
+                    code: Some("verify-error-bad-request"),
+                    error: Some(format!("invalid request body: {e}")),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let wallet = state.merchant.get();
+    let receive = wallet.receive_token(req.token.as_bytes());
+    match tokio::time::timeout(std::time::Duration::from_secs(30), receive).await {
+        Ok(Ok(amount)) => (
+            StatusCode::OK,
+            Json(VerifyResponse {
+                ok: true,
+                amount: Some(amount.0),
+                code: None,
+                error: None,
+            }),
+        )
+            .into_response(),
+        Ok(Err(e)) => {
+            let code = classify_payment_error(&e.to_string());
+            tracing::warn!("/verify: token rejected: {e}");
+            (
+                StatusCode::BAD_REQUEST,
+                Json(VerifyResponse {
+                    ok: false,
+                    amount: None,
+                    code: Some(code),
+                    error: Some(e.to_string()),
+                }),
+            )
+                .into_response()
+        }
+        Err(_) => {
+            tracing::warn!("/verify: timed out after 30s");
+            (
+                StatusCode::REQUEST_TIMEOUT,
+                Json(VerifyResponse {
+                    ok: false,
+                    amount: None,
+                    code: Some("verify-error-timeout"),
+                    error: Some("verification timed out".to_string()),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 fn json_response(status: StatusCode, body: String) -> Response {
