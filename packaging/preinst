@@ -1,0 +1,6 @@
+#!/bin/sh
+mkdir -p /etc/tollgate
+/etc/init.d/tollgate-wrt stop 2>/dev/null || true
+killall tollgate-wrt 2>/dev/null || true
+sleep 1
+exit 0

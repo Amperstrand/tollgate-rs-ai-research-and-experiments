@@ -10,6 +10,8 @@ mod config;
 mod control_server;
 mod driver;
 mod server;
+#[cfg(feature = "v1-compat")]
+mod v1;
 mod wallet;
 
 use std::path::PathBuf;
@@ -95,6 +97,13 @@ enum Command {
         #[arg(long)]
         meter_upstream: bool,
     },
+    #[cfg(feature = "v1-compat")]
+    V1Serve {
+        #[arg(long)]
+        listen: Option<String>,
+        #[arg(long)]
+        mint: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -110,11 +119,15 @@ async fn main() -> anyhow::Result<()> {
     let cfg = config::Config::load(cli.config.as_deref())?;
     let identity = Arc::new(config::Identity::load_or_generate(&cfg)?);
 
-    match cli.command.unwrap_or(Command::Serve { listen: None }) {
-        Command::Serve { listen } => serve(cfg, identity, listen).await,
-        Command::Connect { peer } => connect(&cfg, &identity, &peer).await,
-        Command::Pay { peer, mint, amount } => pay(&cfg, &identity, &peer, &mint, amount).await,
-        Command::Consume {
+    match cli.command {
+        #[cfg(feature = "v1-compat")]
+        None => v1_serve(cfg, identity, None, None).await,
+        #[cfg(not(feature = "v1-compat"))]
+        None => serve(cfg, identity, None).await,
+        Some(Command::Serve { listen }) => serve(cfg, identity, listen).await,
+        Some(Command::Connect { peer }) => connect(&cfg, &identity, &peer).await,
+        Some(Command::Pay { peer, mint, amount }) => pay(&cfg, &identity, &peer, &mint, amount).await,
+        Some(Command::Consume {
             peer,
             mint,
             amount,
@@ -124,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
             understate_received_pct,
             meter_iface,
             meter_upstream,
-        } => {
+        }) => {
             let opts = client::ConsumeOpts {
                 amount_sat: amount,
                 topup_sat: topup,
@@ -136,6 +149,8 @@ async fn main() -> anyhow::Result<()> {
             };
             consume(&cfg, &identity, &peer, &mint, opts).await
         }
+        #[cfg(feature = "v1-compat")]
+        Some(Command::V1Serve { listen, mint }) => v1_serve(cfg, identity, listen, mint).await,
     }
 }
 
@@ -292,6 +307,61 @@ async fn consume(
         "consuming: pay then auto-top-up"
     );
     client::consume(peer, identity, &cfg.unit, mint, opts).await
+}
+
+#[cfg(feature = "v1-compat")]
+async fn v1_serve(
+    _cfg: config::Config,
+    identity: Arc<config::Identity>,
+    listen: Option<String>,
+    mint_override: Option<String>,
+) -> anyhow::Result<()> {
+    let listen = listen.unwrap_or_else(|| "127.0.0.1:2121".to_string());
+
+    let mints: Vec<String> = if let Some(m) = mint_override {
+        vec![m]
+    } else {
+        read_v1_mints().unwrap_or_else(|| vec!["https://testnut.cashu.exchange".to_string()])
+    };
+
+    let wallet = wallet::BootstrapWallet::new(mints.clone());
+    let adapter = adapter::IpAdapter::new();
+    if let Err(e) = adapter.init(_cfg.firewall.installs_forward_chain()) {
+        tracing::warn!(err = %e, "firewall init failed; access may not be enforced (need root?)");
+    }
+
+    let primary_mint = mints.first().cloned().unwrap_or_default();
+    let v1_config = v1::V1Config {
+        metric: "milliseconds".to_string(),
+        step_size: 60_000,
+        price_per_step: 1,
+        unit: "sat".to_string(),
+        mint_url: primary_mint,
+        min_steps: 1,
+        tips: (1..=10).map(|i| i.to_string()).collect(),
+    };
+
+    tracing::info!(
+        pubkey = %identity.pubkey_hex(),
+        %listen,
+        mints = ?mints,
+        "starting v1 HTTP/JSON server",
+    );
+
+    let server = v1::V1Server::new(&identity, wallet, adapter, v1_config)?;
+    server.serve(&listen).await
+}
+
+#[cfg(feature = "v1-compat")]
+fn read_v1_mints() -> Option<Vec<String>> {
+    let data = std::fs::read_to_string("/etc/tollgate/config.json").ok()?;
+    let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+    let mints: Vec<String> = v.get("accepted_mints")?
+        .as_array()?
+        .iter()
+        .filter_map(|m| m.get("url")?.as_str().map(String::from))
+        .collect();
+    if mints.is_empty() { None } else { Some(mints) }
 }
 
 #[cfg(test)]

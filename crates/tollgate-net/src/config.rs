@@ -199,7 +199,7 @@ impl Config {
 /// The node's signing identity (a secp256k1 keypair).
 pub struct Identity {
     pub public_key: secp256k1::PublicKey,
-    #[allow(dead_code)]
+    #[cfg_attr(not(feature = "v1-compat"), allow(dead_code))]
     secret_key: secp256k1::SecretKey,
 }
 
@@ -239,6 +239,18 @@ impl Identity {
     /// The compressed public key as lowercase hex (33 bytes → 66 chars).
     pub fn pubkey_hex(&self) -> String {
         hex::encode(self.public_key.serialize())
+    }
+
+    #[cfg(feature = "v1-compat")]
+    pub fn secret_key(&self) -> &secp256k1::SecretKey {
+        &self.secret_key
+    }
+
+    #[cfg(feature = "v1-compat")]
+    pub fn xonly_pubkey_hex(&self) -> String {
+        let secp = secp256k1::Secp256k1::new();
+        let (xonly, _) = self.secret_key.public_key(&secp).x_only_public_key();
+        xonly.to_string()
     }
 }
 

@@ -1,0 +1,187 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [master, feat/*]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PACKAGE_NAME: "tollgate-wrt"
+  BINARY_NAME: "tollgate"
+
+jobs:
+  determine-version:
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.determine-package-version.outputs.package_version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: commit-hash
+        shell: bash
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set package_version variable
+        id: determine-package-version
+        shell: bash
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "package_version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            SANITIZED_BRANCH=$(echo "${GITHUB_REF_NAME}" | sed 's/\//-/g')
+            COMMIT_HEIGHT=$(git rev-list --count HEAD)
+            echo "package_version=${SANITIZED_BRANCH}.${COMMIT_HEIGHT}.${{ steps.commit-hash.outputs.short }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Cross-compile + package. Uses `cross` (Docker-based) for targets that need
+  # a C cross-compiler (secp256k1-sys). x86_64-unknown-linux-musl is the
+  # primary target — it's what the GCP cloud lab deploys to OpenWrt QEMU.
+  build-and-package:
+    needs: [determine-version]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Primary: x86_64 musl (cloud lab, x86 routers)
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            use_cross: false
+          # Secondary: aarch64 musl (GL-MT3000, Raspberry Pi)
+          # Uses `cross` because secp256k1-sys needs a musl C cross-compiler
+          # that Ubuntu doesn't ship natively.
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64_cortex-a53
+            use_cross: true
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Add cross-compilation target
+        run: rustup target add ${{ matrix.target }}
+
+      # Install musl-tools for x86_64 native musl cross-compilation.
+      # This provides `musl-gcc` which secp256k1-sys needs.
+      - name: Install musl tools (x86_64 only)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # For aarch64 and other non-x86 musl targets, use `cross` (Docker-based).
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cross-${{ matrix.target }}"
+
+      - name: Build binary
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: |
+          set -euo pipefail
+          echo "Building ${{ env.BINARY_NAME }} for ${{ matrix.target }}"
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p tollgate-net --bin ${{ env.BINARY_NAME }}
+          else
+            cargo build --release --target ${{ matrix.target }} -p tollgate-net --bin ${{ env.BINARY_NAME }}
+          fi
+          ls -lh target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
+
+      - name: Stage payload
+        run: |
+          set -euo pipefail
+          PAYLOAD="$(mktemp -d)"
+          echo "PAYLOAD=$PAYLOAD" >> "$GITHUB_ENV"
+
+          install -D -m 0755 \
+            "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" \
+            "$PAYLOAD/usr/bin/tollgate-wrt"
+
+          install -D -m 0755 \
+            packaging/files/etc/init.d/tollgate-wrt \
+            "$PAYLOAD/etc/init.d/tollgate-wrt"
+          install -D -m 0644 \
+            packaging/files/etc/config/firewall-tollgate \
+            "$PAYLOAD/etc/config/firewall-tollgate"
+          install -D -m 0644 \
+            packaging/files/lib/upgrade/keep.d/tollgate \
+            "$PAYLOAD/lib/upgrade/keep.d/tollgate"
+
+          mkdir -p "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site"
+          cp -r packaging/files/tollgate-captive-portal-site/. \
+            "$PAYLOAD/etc/tollgate/tollgate-captive-portal-site/"
+
+          install -D -m 0755 \
+            packaging/files/usr/bin/check_package_path \
+            "$PAYLOAD/usr/bin/check_package_path" 2>/dev/null || true
+
+          install -D -m 0644 LICENSE \
+            "$PAYLOAD/usr/share/doc/${{ env.PACKAGE_NAME }}/LICENSE"
+
+          echo "Payload tree:"
+          find "$PAYLOAD" -type f | sort
+
+      - name: Build .ipk
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          PACKAGE_FILENAME="${{ env.PACKAGE_NAME }}_${{ needs.determine-version.outputs.package_version }}_${{ matrix.arch }}.ipk"
+          echo "PACKAGE_FILENAME=$PACKAGE_FILENAME" >> "$GITHUB_ENV"
+
+          env \
+            PKG_NAME="$PACKAGE_NAME" \
+            PKG_VERSION="${{ needs.determine-version.outputs.package_version }}" \
+            ARCH="${{ matrix.arch }}" \
+            MAINTAINER="Amperstrand" \
+            LICENSE="MIT" \
+            DESCRIPTION="TollGate v2 — Rust payment router for OpenWrt (drop-in replacement for Go v1)" \
+            DEPENDS="" \
+            REPLACES="tollgate-wrt" \
+            packaging/build-ipk.sh "$PAYLOAD" "artifacts/$PACKAGE_FILENAME"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_FILENAME }}
+          path: artifacts/*.ipk
+          retention-days: 14
+
+      - name: Publish to Blossom + Nostr
+        if: github.event_name == 'push' && matrix.arch == 'x86_64'
+        env:
+          BOT_NSEC: ${{ secrets.BOT_NSEC_HEX }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BOT_NSEC" ]; then echo "BOT_NSEC_HEX not set — skipping publish"; exit 0; fi
+          curl -sL https://github.com/fiatjaf/nak/releases/download/v0.20.0/nak-v0.20.0-linux-amd64 -o /tmp/nak
+          chmod +x /tmp/nak
+          IPK=$(ls artifacts/*.ipk | head -1)
+          SHA=$(sha256sum "$IPK" | awk '{print $1}')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TS=$(date +%s)
+          for server in blossom.psbt.me blossom.primal.net blossom1.orangesync.tech; do
+            /tmp/nak blossom upload --server "https://$server" --sec "$BOT_NSEC" "$IPK" && echo "  uploaded to $server" || echo "  $server failed: $(cat /tmp/nak-err 2>/dev/null || echo unknown)"
+          done
+          CONTENT=$(python3 -c "import json; print(json.dumps({'sha256':'$SHA','filename':'$(basename $IPK)','urls':['https://blossom.psbt.me/$SHA','https://blossom.primal.net/$SHA','https://blossom1.orangesync.tech/$SHA'],'architecture':'x86_64','format':'ipk','compression':'none'}))")
+          /tmp/nak event -k 30078 --sec "$BOT_NSEC" -q \
+            -t "t=tollgate-build" \
+            -d "tollgate-build/${SHORT_SHA}-${TS}/x86_64/ipk/none" \
+            -t "r=${SHORT_SHA}-${TS}" \
+            -c "$CONTENT" \
+            wss://relay.damus.io wss://nos.lol wss://relay1.orangesync.tech wss://relay2.orangesync.tech
+
+      - name: Summary
+        run: |
+          echo "### Built: \`${{ env.PACKAGE_FILENAME }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Architecture | \`${{ matrix.arch }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Rust target | \`${{ matrix.target }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cross tool | \`${{ matrix.use_cross && 'cross (Docker)' || 'musl-gcc (native)' }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`${{ needs.determine-version.outputs.package_version }}\` |" >> "$GITHUB_STEP_SUMMARY"
