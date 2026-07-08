@@ -154,7 +154,7 @@ jobs:
           retention-days: 14
 
       - name: Publish to Blossom + Nostr
-        if: github.event_name == 'push' && matrix.arch == 'x86_64' && contains(fromJson('["experimental","master"]'), github.ref_name)
+        if: github.event_name == 'push' && matrix.arch == 'x86_64'
         env:
           BOT_NSEC: ${{ secrets.BOT_NSEC_HEX }}
         run: |
