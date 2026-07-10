@@ -167,7 +167,7 @@ jobs:
           SHORT_SHA=$(git rev-parse --short HEAD)
           TS=$(date +%s)
           for server in blossom.psbt.me blossom.primal.net blossom1.orangesync.tech; do
-            /tmp/nak blossom upload --server "https://$server" --sec "$BOT_NSEC" "$IPK" && echo "  uploaded to $server" || echo "  $server failed: $(cat /tmp/nak-err 2>/dev/null || echo unknown)"
+            /tmp/nak blossom upload --server "https://$server" --sec "$BOT_NSEC" "$IPK" < /dev/null && echo "  uploaded to $server" || echo "  $server failed"
           done
           CONTENT=$(python3 -c "import json; print(json.dumps({'sha256':'$SHA','filename':'$(basename $IPK)','urls':['https://blossom.psbt.me/$SHA','https://blossom.primal.net/$SHA','https://blossom1.orangesync.tech/$SHA'],'architecture':'x86_64','format':'ipk','compression':'none'}))")
           /tmp/nak event -k 30078 --sec "$BOT_NSEC" -q \
