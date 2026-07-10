@@ -316,7 +316,7 @@ async fn v1_serve(
     listen: Option<String>,
     mint_override: Option<String>,
 ) -> anyhow::Result<()> {
-    let listen = listen.unwrap_or_else(|| "127.0.0.1:2121".to_string());
+    let listen = listen.unwrap_or_else(|| "0.0.0.0:2121".to_string());
 
     let mints: Vec<String> = if let Some(m) = mint_override {
         vec![m]
