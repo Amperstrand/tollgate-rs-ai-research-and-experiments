@@ -12,9 +12,10 @@ start_service() {
     # Enable route_localnet so DNAT to 127.0.0.1:2121 works for captive portal
     echo 1 > /proc/sys/net/ipv4/conf/all/route_localnet 2>/dev/null || true
 
-    # Accept port 2121 and 80 in iptables (nodogsplash's ndsRTR chain blocks them otherwise)
-    iptables -C INPUT -p tcp --dport 2121 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 2121 -j ACCEPT
-    iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+    # Accept ports 2121 and 80 in ndsRTR chain (nodogsplash's INPUT filter)
+    # ndsRTR has a catch-all REJECT that blocks traffic before our INPUT rules
+    iptables -C ndsRTR -p tcp --dport 2121 -j ACCEPT 2>/dev/null || iptables -I ndsRTR 12 -p tcp --dport 2121 -j ACCEPT 2>/dev/null || true
+    iptables -C ndsRTR -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I ndsRTR 12 -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
 
     procd_open_instance
     procd_set_param command /usr/bin/tollgate-wrt
