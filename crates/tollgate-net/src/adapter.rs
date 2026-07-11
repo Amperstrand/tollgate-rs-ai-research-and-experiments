@@ -279,7 +279,11 @@ mod nft {
                  add rule inet {t} forward ip6 saddr @paid_peers_v6 accept\n\
                  add rule inet {t} forward ip6 daddr @paid_peers_v6 accept\n\
                  add chain inet {t} prerouting {{ type nat hook prerouting priority -100; }}\n\
-                 add rule inet {t} prerouting ip saddr != @paid_peers_v4 tcp dport 80 dnat ip to 127.0.0.1:2121\n",
+                 add rule inet {t} prerouting ip saddr != @paid_peers_v4 tcp dport 80 dnat ip to 127.0.0.1:2121\n\
+                 add chain inet {t} postrouting {{ type nat hook postrouting priority 100; }}\n\
+                 add rule inet {t} postrouting ip daddr 127.0.0.1 tcp dport 2121 masquerade\n\
+                 add chain inet {t} input {{ type filter hook input priority 0; policy accept; }}\n\
+                 add rule inet {t} input tcp dport 2121 accept\n",
                 t = NFT_TABLE
             ));
         }
