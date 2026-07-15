@@ -439,4 +439,143 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
+
+    #[tokio::test]
+    async fn advertisement_has_metric_and_step_size_tags() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(Request::builder().method("GET").uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let tags = json["tags"].as_array().unwrap();
+        let has_metric = tags.iter().any(|t| t.as_array().unwrap().first().unwrap() == "metric");
+        let has_step = tags.iter().any(|t| t.as_array().unwrap().first().unwrap() == "step_size");
+        assert!(has_metric, "advertisement must have metric tag");
+        assert!(has_step, "advertisement must have step_size tag");
+    }
+
+    #[tokio::test]
+    async fn advertisement_has_price_per_step_tag() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(Request::builder().method("GET").uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let tags = json["tags"].as_array().unwrap();
+        let has_price = tags.iter().any(|t| {
+            t.as_array().unwrap().first().unwrap() == "price_per_step"
+        });
+        assert!(has_price, "advertisement must have price_per_step tag");
+    }
+
+    #[tokio::test]
+    async fn post_payment_rejects_empty_body() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn post_payment_accepts_json_token_format() {
+        let app = build_router(test_driver(), test_config());
+        let body = serde_json::json!({"token": "cashuBnotreal"}).to_string();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            resp.status() == StatusCode::BAD_REQUEST
+                || resp.status() == StatusCode::PAYMENT_REQUIRED,
+            "expected 400 or 402 for invalid token in JSON, got {}",
+            resp.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn get_pay_alias_returns_advertisement() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(Request::builder().method("GET").uri("/pay").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["kind"], 10021);
+    }
+
+    #[tokio::test]
+    async fn whoami_returns_mac_format_with_connectinfo() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/whoami")
+                    .extension(ConnectInfo(SocketAddr::from(([192, 168, 1, 100], 12345))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), 1024).await.unwrap().to_vec(),
+        )
+        .unwrap();
+        assert!(body.starts_with("mac="), "whoami must return 'mac=...' format, got: {body}");
+    }
+
+    #[tokio::test]
+    async fn usage_returns_404_for_unknown_peer() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/usage")
+                    .extension(ConnectInfo(SocketAddr::from(([10, 0, 0, 1], 8080))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn balance_returns_404_for_unknown_peer() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/balance")
+                    .extension(ConnectInfo(SocketAddr::from(([10, 0, 0, 2], 8080))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
 }
