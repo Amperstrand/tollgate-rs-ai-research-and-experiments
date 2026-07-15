@@ -51,6 +51,7 @@ netlink-packet-core = { version = "0.8", optional = true }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 mockall = "0.13"
+mockito = "1"
 
 [lints]
 workspace = true

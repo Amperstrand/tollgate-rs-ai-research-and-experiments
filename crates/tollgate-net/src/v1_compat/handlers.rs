@@ -156,21 +156,19 @@ async fn handle_whoami(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)));
-    let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
-        Some(h) => h,
-        None => return (StatusCode::BAD_REQUEST, "unknown").into_response(),
-    };
-    let mac_hex = &peer_hex[2..14];
-    let mac = format!(
-        "{}:{}:{}:{}:{}:{}",
-        &mac_hex[0..2],
-        &mac_hex[2..4],
-        &mac_hex[4..6],
-        &mac_hex[6..8],
-        &mac_hex[8..10],
-        &mac_hex[10..12],
-    );
-    (StatusCode::OK, format!("mac={mac}")).into_response()
+    let ip_str = client_ip.map(|ip| ip.to_string()).unwrap_or_default();
+
+    let resolver = crate::v1_compat::mac_resolver::DhcpLeasesResolver;
+    if let Ok(mac) = crate::v1_compat::mac_resolver::MacResolver::resolve(&resolver, &ip_str) {
+        return (StatusCode::OK, format!("mac={mac}")).into_response();
+    }
+
+    let stub = crate::v1_compat::mac_resolver::StubMacResolver::default();
+    if let Ok(mac) = crate::v1_compat::mac_resolver::MacResolver::resolve(&stub, &ip_str) {
+        return (StatusCode::OK, format!("mac={mac}")).into_response();
+    }
+
+    (StatusCode::BAD_REQUEST, "unknown").into_response()
 }
 
 async fn handle_balance(
