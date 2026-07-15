@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 
+use sha2::Digest;
 use tollgate_net::status::{NodeStatus, PeerStatus};
 use tollgate_protocol::{BootstrapAck, BootstrapToken, MessageType, peek_type};
 
@@ -8,12 +9,13 @@ use crate::v1_compat::mac_resolver::{DhcpLeasesResolver, MacResolver, StubMacRes
 
 pub fn mac_to_peer_hex(mac: &str) -> String {
     let clean = mac.replace([':', '-'], "");
-    let mut padded = String::with_capacity(66);
-    padded.push_str("02");
-    padded.push_str(&clean);
-    let remaining = 66 - padded.len();
-    padded.push_str(&"0".repeat(remaining));
-    padded
+    let seed = format!("tollgate-v1-compat/{clean}");
+    let hash = sha2::Sha256::digest(seed.as_bytes());
+    let secret = secp256k1::SecretKey::from_slice(&hash)
+        .expect("SHA256 output is always a valid secp256k1 scalar");
+    let secp = secp256k1::Secp256k1::new();
+    let pubkey = secret.public_key(&secp);
+    hex::encode(pubkey.serialize())
 }
 
 pub async fn resolve_peer_hex(ip: Option<IpAddr>) -> Option<String> {

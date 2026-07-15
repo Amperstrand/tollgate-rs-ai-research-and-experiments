@@ -33,6 +33,7 @@ cashu = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
+sha2 = { workspace = true }
 # tolltop TUI (also pulls crossterm as its default backend).
 ratatui = "0.29"
 nostr = { workspace = true, optional = true }
