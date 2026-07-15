@@ -134,7 +134,7 @@ pub enum NetworkMonitorError {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum EventType {
+pub(crate) enum EventType {
     InterfaceUp,
     InterfaceDown,
     AddressAdded,

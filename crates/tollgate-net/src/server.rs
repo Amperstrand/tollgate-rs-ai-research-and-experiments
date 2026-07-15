@@ -57,6 +57,7 @@ pub fn build_v1_config(v1: &crate::config::V1CompatConfig) -> std::sync::Arc<cra
     Arc::new(V1ServerConfig { metric, step_size, accepted_mints, nostr_keys })
 }
 
+#[cfg_attr(not(feature = "v1-compat"), allow(unused_variables))]
 pub fn router(driver: Driver, cfg: &crate::config::Config) -> Router {
     #[cfg(feature = "v1-compat")]
     let v1_driver = driver.clone();
