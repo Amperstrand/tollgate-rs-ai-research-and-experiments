@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -194,20 +194,106 @@ async fn handle_balance(
     }
 }
 
-async fn handle_post_ln_invoice() -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "LN invoice support requires CDK wallet (Phase 3b pending)",
-    )
-        .into_response()
+async fn handle_post_ln_invoice(
+    axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
+    body: String,
+) -> Response {
+    let amount: u64 = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("amount").and_then(|a| a.as_u64()))
+        .unwrap_or(8);
+
+    let mint_url = config
+        .accepted_mints
+        .first()
+        .map(|m| m.url.as_str())
+        .unwrap_or("http://localhost:3338");
+
+    let wallet = match crate::v1_compat::wallet::CdkWallet::new(mint_url, [0u8; 64]).await {
+        Ok(w) => w,
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("wallet init failed: {e}"),
+            )
+                .into_response()
+        }
+    };
+
+    match wallet.request_mint_quote(amount, mint_url).await {
+        Ok(info) => {
+            let json = serde_json::json!({
+                "status": 0,
+                "quote": info.quote_id,
+                "invoice": info.invoice,
+                "amount": info.amount,
+                "expiry": info.expiry,
+            });
+            (
+                StatusCode::OK,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("mint quote failed: {e}"),
+        )
+            .into_response(),
+    }
 }
 
-async fn handle_get_ln_invoice() -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "LN invoice support requires CDK wallet (Phase 3b pending)",
-    )
-        .into_response()
+async fn handle_get_ln_invoice(
+    axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let quote_id = match params.get("quote") {
+        Some(id) => id.as_str(),
+        None => return (StatusCode::BAD_REQUEST, "missing quote parameter").into_response(),
+    };
+
+    let mint_url = config
+        .accepted_mints
+        .first()
+        .map(|m| m.url.as_str())
+        .unwrap_or("http://localhost:3338");
+
+    let wallet = match crate::v1_compat::wallet::CdkWallet::new(mint_url, [0u8; 64]).await {
+        Ok(w) => w,
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("wallet init failed: {e}"),
+            )
+                .into_response()
+        }
+    };
+
+    match wallet.check_mint_quote_status(quote_id).await {
+        Ok(state) => {
+            let state_str = match state {
+                crate::v1_compat::wallet::QuoteState::Unpaid => "UNPAID",
+                crate::v1_compat::wallet::QuoteState::Paid => "PAID",
+                crate::v1_compat::wallet::QuoteState::Issued => "ISSUED",
+            };
+            let json = serde_json::json!({
+                "quote": quote_id,
+                "state": state_str,
+            });
+            (
+                StatusCode::OK,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("quote check failed: {e}"),
+        )
+            .into_response(),
+    }
 }
 
 fn extract_ip(headers: &HeaderMap) -> Option<std::net::IpAddr> {
@@ -318,7 +404,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_ln_invoice_returns_501() {
+    async fn post_ln_invoice_attempts_wallet_init() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -330,7 +416,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        assert!(
+            resp.status() == StatusCode::SERVICE_UNAVAILABLE
+                || resp.status() == StatusCode::INTERNAL_SERVER_ERROR,
+            "expected 503/500 from wallet init failure, got {}",
+            resp.status()
+        );
     }
 
     #[tokio::test]
