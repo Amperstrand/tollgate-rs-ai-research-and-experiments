@@ -225,7 +225,7 @@ async fn serve(
         });
     }
 
-    server::serve(&cfg.listen, driver).await
+    server::serve(&cfg.listen, driver, &cfg).await
 }
 
 async fn connect(
@@ -355,23 +355,11 @@ async fn v1_consume(
 
     tracing::info!(gateway = %base_url, "v1 client configured; starting consume loop");
 
-    loop {
-        tracing::info!(gateway = %base_url, "fetching advertisement from upstream");
-        let http = v1_compat::http_client::TollGateHttpClient::new_with_base_url(&base_url);
-        match http.fetch_advertisement().await {
-            Ok(ad) => {
-                tracing::info!(
-                    metric = ?ad.metric(),
-                    options = ad.pricing_options().len(),
-                    "received advertisement"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(err = %e, "failed to fetch advertisement; retrying");
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-    }
+    let mut client = v1_compat::client::V1Client::new(config);
+    client.run(std::sync::Arc::new(wallet)).await
+        .map_err(|e| anyhow::anyhow!("v1 client error: {e}"))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
