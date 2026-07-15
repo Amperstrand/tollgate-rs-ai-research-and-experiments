@@ -3,6 +3,12 @@
 //! Feature-gated behind `v1-compat`. Provides HTTP endpoints that mirror the
 //! Go v1 TollGate router API, translating v1 requests into Driver operations.
 
+// Library modules ported from experimental-v1-archive. Many functions and
+// types are not yet wired into the active code paths (handlers use only the
+// adapter functions; client/session/usage modules are for future CLI wiring).
+// Dead-code silencing is intentional until incremental wiring completes.
+#![allow(dead_code)]
+
 pub mod pricing;
 
 pub mod mac_resolver;
