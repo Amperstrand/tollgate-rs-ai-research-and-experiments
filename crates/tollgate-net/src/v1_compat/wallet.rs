@@ -551,7 +551,6 @@ impl CdkWallet {
     /// Get unspent proofs serialized as JSON.
     ///
     /// Returns proofs in standard Cashu JSON format.
-    #[cfg(feature = "spilman")]
     #[allow(clippy::missing_errors_doc)]
     pub async fn unspent_proofs_json(&self) -> anyhow::Result<String> {
         let proofs = self

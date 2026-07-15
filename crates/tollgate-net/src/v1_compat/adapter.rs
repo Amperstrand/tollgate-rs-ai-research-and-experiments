@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 use sha2::Digest;
-use tollgate_net::status::{NodeStatus, PeerStatus};
+use tollgate_net::status::PeerStatus;
 use tollgate_protocol::{BootstrapAck, BootstrapToken, MessageType, peek_type};
 
 use crate::driver::Driver;

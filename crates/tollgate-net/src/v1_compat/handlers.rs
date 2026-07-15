@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
 use std::net::SocketAddr;
 

@@ -11,7 +11,6 @@
 //! Uses concrete [`CdkWallet`](super::wallet::CdkWallet) instead of a
 //! generic `W: Wallet`.
 
-use std::fmt::Write;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
