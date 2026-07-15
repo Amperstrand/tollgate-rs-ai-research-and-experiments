@@ -17,6 +17,7 @@ path = "src/main.rs"
 tollgate-core = { workspace = true }
 tollgate-protocol = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
@@ -34,9 +35,34 @@ serde_json = { workspace = true }
 bytes = { workspace = true }
 # tolltop TUI (also pulls crossterm as its default backend).
 ratatui = "0.29"
+nostr = { workspace = true, optional = true }
+cdk = { workspace = true, optional = true }
+cdk-sqlite = { workspace = true, optional = true }
+url = { version = "2", optional = true }
+# openwrt platform dependencies
+async-trait = { version = "0.1", optional = true }
+futures = { version = "0.3", optional = true }
+ipnetwork = { version = "0.20", optional = true }
+rtnetlink = { version = "0.21", optional = true }
+netlink-packet-route = { version = "0.30", optional = true }
+netlink-packet-core = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+mockall = "0.13"
 
 [lints]
 workspace = true
+
+[features]
+default = []
+v1-compat = ["dep:nostr", "dep:cdk", "dep:cdk-sqlite", "dep:url"]
+openwrt = [
+    "tokio/process",
+    "dep:async-trait",
+    "dep:futures",
+    "dep:ipnetwork",
+    "dep:rtnetlink",
+    "dep:netlink-packet-route",
+    "dep:netlink-packet-core",
+]
