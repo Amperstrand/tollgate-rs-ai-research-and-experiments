@@ -12,6 +12,12 @@ mod driver;
 mod server;
 mod wallet;
 
+#[cfg(feature = "v1-compat")]
+mod v1_compat;
+
+#[cfg(feature = "openwrt")]
+mod openwrt;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -95,6 +101,22 @@ enum Command {
         #[arg(long)]
         meter_upstream: bool,
     },
+    #[cfg(feature = "v1-compat")]
+    /// Pay an upstream Go v1 TollGate router using Cashu tokens (v1 compat mode).
+    V1Consume {
+        /// Gateway address (e.g. "192.168.1.1:2121").
+        #[arg(long)]
+        gateway: String,
+        /// Mint URL to draw Cashu tokens on.
+        #[arg(long)]
+        mint: String,
+        /// Initial token amount in sats.
+        #[arg(long, default_value_t = 8)]
+        amount: u64,
+        /// Seconds between usage polls.
+        #[arg(long, default_value_t = 5)]
+        interval: u64,
+    },
 }
 
 #[tokio::main]
@@ -135,6 +157,10 @@ async fn main() -> anyhow::Result<()> {
                 meter_upstream,
             };
             consume(&cfg, &identity, &peer, &mint, opts).await
+        }
+        #[cfg(feature = "v1-compat")]
+        Command::V1Consume { gateway, mint, amount, interval } => {
+            v1_consume(&gateway, &mint, amount, interval).await
         }
     }
 }
@@ -292,6 +318,60 @@ async fn consume(
         "consuming: pay then auto-top-up"
     );
     client::consume(peer, identity, &cfg.unit, mint, opts).await
+}
+
+#[cfg(feature = "v1-compat")]
+async fn v1_consume(
+    gateway: &str,
+    mint: &str,
+    amount: u64,
+    interval: u64,
+) -> anyhow::Result<()> {
+    use v1_compat::client::V1ClientConfig;
+    use v1_compat::wallet::CdkWallet;
+
+    tracing::info!(%gateway, %mint, amount, interval, "v1 consume: paying upstream Go router");
+
+    let wallet = CdkWallet::new(mint, [0u8; 64]).await
+        .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
+
+    let base_url = if gateway.starts_with("http") {
+        gateway.to_string()
+    } else {
+        format!("http://{gateway}")
+    };
+
+    let config = V1ClientConfig {
+        gateway_ip: base_url.clone(),
+        mac_address: "00:00:00:00:00:00".to_string(),
+        our_mint_urls: vec![mint.to_string()],
+        unit: "sat".to_string(),
+        max_price_per_ms: 0.0,
+        max_price_per_byte: 0.0,
+        preferred_allotment: amount * 60_000,
+        poll_interval_secs: interval,
+        renewal_threshold: 0.2,
+    };
+
+    tracing::info!(gateway = %base_url, "v1 client configured; starting consume loop");
+
+    loop {
+        tracing::info!(gateway = %base_url, "fetching advertisement from upstream");
+        let http = v1_compat::http_client::TollGateHttpClient::new_with_base_url(&base_url);
+        match http.fetch_advertisement().await {
+            Ok(ad) => {
+                tracing::info!(
+                    metric = ?ad.metric(),
+                    options = ad.pricing_options().len(),
+                    "received advertisement"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, "failed to fetch advertisement; retrying");
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+    }
 }
 
 #[cfg(test)]

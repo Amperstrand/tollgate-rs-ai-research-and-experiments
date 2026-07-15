@@ -21,7 +21,6 @@ pub async fn serve(listen: &str, driver: Driver) -> anyhow::Result<()> {
     let app = router(driver);
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
-    // ConnectInfo gives each handler the peer's source address for firewall gating.
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -30,11 +29,36 @@ pub async fn serve(listen: &str, driver: Driver) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn router(driver: Driver) -> Router {
-    Router::new()
+pub fn router(driver: Driver) -> Router {
+    #[cfg(feature = "v1-compat")]
+    let v1_driver = driver.clone();
+
+    let base = Router::new()
         .route("/tollgate/v1/exchange", axum::routing::post(http_exchange))
         .route("/tollgate/v1/ws", get(ws_upgrade))
-        .with_state(driver)
+        .with_state(driver);
+
+    #[cfg(feature = "v1-compat")]
+    {
+        use std::sync::Arc;
+        use crate::v1_compat::merchant::AcceptedMint;
+        let config = Arc::new(crate::v1_compat::merchant::V1ServerConfig {
+            metric: "milliseconds".to_string(),
+            step_size: 60_000,
+            accepted_mints: vec![AcceptedMint {
+                url: "http://localhost:3338".to_string(),
+                price_per_step: 1,
+                unit: "sat".to_string(),
+                min_steps: 1,
+            }],
+            nostr_keys: nostr::key::Keys::generate(),
+        });
+        base.merge(crate::v1_compat::build_v1_router(v1_driver, config))
+    }
+    #[cfg(not(feature = "v1-compat"))]
+    {
+        base
+    }
 }
 
 /// HTTP polling transport. The request body is zero or more length-prefixed
