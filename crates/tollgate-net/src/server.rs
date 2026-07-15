@@ -17,8 +17,8 @@ use tollgate_protocol::{Announce, MessageType, decode_frames, encode_frame, peek
 
 use crate::driver::Driver;
 
-pub async fn serve(listen: &str, driver: Driver) -> anyhow::Result<()> {
-    let app = router(driver);
+pub async fn serve(listen: &str, driver: Driver, cfg: &crate::config::Config) -> anyhow::Result<()> {
+    let app = router(driver, cfg);
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
     axum::serve(
@@ -29,7 +29,35 @@ pub async fn serve(listen: &str, driver: Driver) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn router(driver: Driver) -> Router {
+#[cfg(feature = "v1-compat")]
+pub fn build_v1_config(v1: &crate::config::V1CompatConfig) -> std::sync::Arc<crate::v1_compat::merchant::V1ServerConfig> {
+    use std::sync::Arc;
+    use crate::v1_compat::merchant::{AcceptedMint, V1ServerConfig};
+    let metric = if v1.metric.is_empty() { "milliseconds".to_string() } else { v1.metric.clone() };
+    let step_size = if v1.step_size == 0 { 60_000 } else { v1.step_size };
+    let accepted_mints: Vec<AcceptedMint> = if v1.accepted_mints.is_empty() {
+        vec![AcceptedMint {
+            url: "http://localhost:3338".to_string(),
+            price_per_step: 1,
+            unit: "sat".to_string(),
+            min_steps: 1,
+        }]
+    } else {
+        v1.accepted_mints.iter().map(|m| AcceptedMint {
+            url: if m.url.is_empty() { "http://localhost:3338".to_string() } else { m.url.clone() },
+            price_per_step: if m.price_per_step == 0 { 1 } else { m.price_per_step },
+            unit: if m.unit.is_empty() { "sat".to_string() } else { m.unit.clone() },
+            min_steps: if m.min_steps == 0 { 1 } else { m.min_steps },
+        }).collect()
+    };
+    let nostr_keys = match &v1.nostr_secret_key {
+        Some(hex) => nostr::key::Keys::parse(hex).unwrap_or_else(|_| nostr::key::Keys::generate()),
+        None => nostr::key::Keys::generate(),
+    };
+    Arc::new(V1ServerConfig { metric, step_size, accepted_mints, nostr_keys })
+}
+
+pub fn router(driver: Driver, cfg: &crate::config::Config) -> Router {
     #[cfg(feature = "v1-compat")]
     let v1_driver = driver.clone();
 
@@ -40,20 +68,8 @@ pub fn router(driver: Driver) -> Router {
 
     #[cfg(feature = "v1-compat")]
     {
-        use std::sync::Arc;
-        use crate::v1_compat::merchant::AcceptedMint;
-        let config = Arc::new(crate::v1_compat::merchant::V1ServerConfig {
-            metric: "milliseconds".to_string(),
-            step_size: 60_000,
-            accepted_mints: vec![AcceptedMint {
-                url: "http://localhost:3338".to_string(),
-                price_per_step: 1,
-                unit: "sat".to_string(),
-                min_steps: 1,
-            }],
-            nostr_keys: nostr::key::Keys::generate(),
-        });
-        base.merge(crate::v1_compat::build_v1_router(v1_driver, config))
+        let v1_config = build_v1_config(&cfg.v1_compat);
+        base.merge(crate::v1_compat::build_v1_router(v1_driver, v1_config))
     }
     #[cfg(not(feature = "v1-compat"))]
     {
@@ -170,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn announce_establishes_peer_and_returns_ok() {
-        let app = router(test_driver());
+        let app = router(test_driver(), &crate::config::Config::default());
 
         let pk = tollgate_protocol::PublicKey::from_bytes([2u8; 33]);
         let announce = Announce::new(1, pk, "bytes", 0).encode();
@@ -192,7 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_framing_is_rejected() {
-        let app = router(test_driver());
+        let app = router(test_driver(), &crate::config::Config::default());
 
         // A length prefix claiming 9 bytes but with no body.
         let resp = app

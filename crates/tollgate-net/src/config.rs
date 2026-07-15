@@ -44,6 +44,7 @@ pub struct Config {
     /// auto-tops-up each, tracking them as upstream peers (the mesh's inbound
     /// direction — what `tolltop` shows with a `↑` direction).
     pub upstreams: Vec<UpstreamConfig>,
+    pub v1_compat: V1CompatConfig,
 }
 
 impl Default for Config {
@@ -58,6 +59,7 @@ impl Default for Config {
             control_socket: PathBuf::from("/tmp/tollgate.sock"),
             metering_interval_secs: 5,
             upstreams: Vec::new(),
+            v1_compat: V1CompatConfig::default(),
         }
     }
 }
@@ -118,6 +120,36 @@ pub struct UpstreamConfig {
     /// independent receive-side count that stays correct when several upstreams
     /// share an interface. Requires NET_ADMIN. Takes priority over `meter_iface`.
     pub meter_upstream: bool,
+}
+
+/// v1 Go-router compatibility server configuration.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct V1CompatConfig {
+    pub metric: String,
+    pub step_size: u64,
+    pub accepted_mints: Vec<V1AcceptedMint>,
+    pub nostr_secret_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct V1AcceptedMint {
+    pub url: String,
+    pub price_per_step: u64,
+    pub unit: String,
+    pub min_steps: u64,
+}
+
+impl Default for V1AcceptedMint {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            price_per_step: 1,
+            unit: "sat".to_string(),
+            min_steps: 1,
+        }
+    }
 }
 
 impl Default for UpstreamConfig {
