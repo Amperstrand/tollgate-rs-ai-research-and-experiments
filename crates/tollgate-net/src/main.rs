@@ -119,6 +119,10 @@ enum Command {
         /// Seconds between usage polls.
         #[arg(long, default_value_t = 5)]
         interval: u64,
+        /// Use Spilman payment channels instead of bootstrap tokens.
+        #[cfg(feature = "spilman")]
+        #[arg(long)]
+        spilman: bool,
     },
     #[cfg(feature = "v1-compat")]
     /// Pay upstream Go v1 TollGate routers with auto-discovery (multi-gateway mode).
@@ -178,7 +182,18 @@ async fn main() -> anyhow::Result<()> {
             consume(&cfg, &identity, &peer, &mint, opts).await
         }
         #[cfg(feature = "v1-compat")]
-        Command::V1Consume { gateway, mint, amount, interval } => {
+        Command::V1Consume {
+            gateway, mint, amount, interval,
+            #[cfg(feature = "spilman")]
+                spilman,
+        } => {
+            #[cfg(feature = "spilman")]
+            if spilman {
+                v1_consume_spilman(&gateway, &mint, amount, interval).await
+            } else {
+                v1_consume(&gateway, &mint, amount, interval).await
+            }
+            #[cfg(not(feature = "spilman"))]
             v1_consume(&gateway, &mint, amount, interval).await
         }
         #[cfg(feature = "v1-compat")]
@@ -382,6 +397,100 @@ async fn v1_consume(
     client.run(std::sync::Arc::new(wallet)).await
         .map_err(|e| anyhow::anyhow!("v1 client error: {e}"))?;
 
+    Ok(())
+}
+
+#[cfg(all(feature = "v1-compat", feature = "spilman"))]
+async fn v1_consume_spilman(
+    gateway: &str,
+    mint: &str,
+    amount: u64,
+    interval: u64,
+) -> anyhow::Result<()> {
+    use cashu::nuts::SecretKey;
+    use v1_compat::http_client::TollGateHttpClient;
+    use v1_compat::wallet::CdkWallet;
+    use spilman::service::{ReqwestNetworking, SpilmanService};
+    use spilman::wallet::fetch_active_keyset_info;
+
+    tracing::info!(%gateway, %mint, amount, "v1 consume (spilman mode): opening payment channel");
+
+    let base_url = if gateway.starts_with("http") { gateway.to_string() } else { format!("http://{gateway}") };
+
+    tracing::info!("Fetching advertisement from gateway...");
+    let http = TollGateHttpClient::new_with_base_url(&base_url);
+    let ad = http.fetch_advertisement().await
+        .map_err(|e| anyhow::anyhow!("advertisement fetch failed: {e}"))?;
+    let gateway_pubkey = ad.pubkey().to_hex();
+    tracing::info!(gateway_pubkey = %gateway_pubkey, "Got gateway pubkey from advertisement");
+
+    tracing::info!("Fetching keyset info from mint...");
+    let (mint_url, keyset_info) = fetch_active_keyset_info(mint).await
+        .map_err(|e| anyhow::anyhow!("keyset fetch failed: {e}"))?;
+    let keyset_info_json = serde_json::to_string(&keyset_info)
+        .map_err(|e| anyhow::anyhow!("keyset serialization failed: {e}"))?;
+    tracing::info!(%mint_url, "Got keyset info");
+
+    tracing::info!("Initializing SpilmanService...");
+    let sender_secret = SecretKey::generate();
+    let service = SpilmanService::new(mint, sender_secret);
+    let net = ReqwestNetworking::new();
+    tracing::info!(sender = %service.sender_pubkey(), "SpilmanService initialized");
+
+    tracing::info!("Creating CdkWallet to fund channel...");
+    let wallet = CdkWallet::new(mint, [0u8; 64]).await
+        .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
+    let token = wallet.create_token(amount, mint).await
+        .map_err(|e| anyhow::anyhow!("token creation failed: {e}"))?;
+    let token_str = String::from_utf8(token)
+        .map_err(|e| anyhow::anyhow!("token not UTF-8: {e}"))?;
+    tracing::info!("Funding token created");
+
+    tracing::info!("Opening Spilman channel...");
+    let channel = service.open_channel(
+        &token_str,
+        &gateway_pubkey,
+        3600,
+        &keyset_info_json,
+        amount,
+        &net,
+    ).await.map_err(|e| anyhow::anyhow!("channel open failed: {e}"))?;
+
+    let channel_id = channel.channel_id.clone();
+    tracing::info!(channel_id = %channel_id, "Channel opened successfully!");
+
+    tracing::info!("Starting payment loop (interval={}s)...", interval);
+    let mut balance = 1u64;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+
+        match service.create_payment(&channel_id, balance) {
+            Ok(payment) => {
+                tracing::info!(
+                    channel_id = %channel_id,
+                    balance,
+                    payment_balance = payment.balance,
+                    "Payment created (signed)"
+                );
+                balance += 1;
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, "Payment creation failed");
+                break;
+            }
+        }
+
+        if balance > amount * 100 {
+            tracing::info!("Balance cap reached, requesting cooperative close...");
+            match service.request_cooperative_close(&channel_id, balance - 1) {
+                Ok(_) => tracing::info!("Cooperative close requested"),
+                Err(e) => tracing::warn!(err = %e, "Close request failed"),
+            }
+            break;
+        }
+    }
+
+    tracing::info!("Spilman consume session ended");
     Ok(())
 }
 
