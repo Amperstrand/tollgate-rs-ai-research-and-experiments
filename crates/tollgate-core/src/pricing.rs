@@ -51,6 +51,64 @@ impl Product {
     }
 }
 
+/// Pricing bounds for dynamic price adjustment.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PriceBounds {
+    pub per_second_floor: Option<i64>,
+    pub per_second_ceiling: Option<i64>,
+    pub per_unit_floor: Option<i64>,
+    pub per_unit_ceiling: Option<i64>,
+}
+
+impl Price {
+    pub fn clamp(self, bounds: &PriceBounds) -> Self {
+        Self {
+            per_second: clamp_val(
+                self.per_second,
+                bounds.per_second_floor,
+                bounds.per_second_ceiling,
+            ),
+            per_unit: clamp_val(
+                self.per_unit,
+                bounds.per_unit_floor,
+                bounds.per_unit_ceiling,
+            ),
+        }
+    }
+
+    pub fn apply_multiplier(self, multiplier: f64) -> Self {
+        Self {
+            per_second: (self.per_second as f64 * multiplier) as i64,
+            per_unit: (self.per_unit as f64 * multiplier) as i64,
+        }
+    }
+
+    pub fn adjust(
+        self,
+        bounds: &PriceBounds,
+        peer_multiplier: Option<f64>,
+        active_peer_factor: Option<f64>,
+    ) -> Self {
+        let mut price = self;
+        if let Some(factor) = active_peer_factor {
+            let boost = 1.0 + factor;
+            price = Self {
+                per_second: (price.per_second as f64 * boost) as i64,
+                per_unit: (price.per_unit as f64 * boost) as i64,
+            };
+        }
+        if let Some(mult) = peer_multiplier {
+            price = price.apply_multiplier(mult);
+        }
+        price.clamp(bounds)
+    }
+}
+
+fn clamp_val(val: i64, floor: Option<i64>, ceiling: Option<i64>) -> i64 {
+    let v = floor.map_or(val, |f| val.max(f));
+    ceiling.map_or(v, |c| v.min(c))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +143,56 @@ mod tests {
             per_unit: 3,
         };
         assert_eq!(mixed.cost_scaled(2000, 10), 20); // −10 + 30
+    }
+
+    #[test]
+    fn clamp_enforces_floor_and_ceiling() {
+        let bounds = PriceBounds {
+            per_second_floor: Some(5),
+            per_second_ceiling: Some(100),
+            per_unit_floor: Some(1),
+            per_unit_ceiling: Some(50),
+        };
+        let price = Price { per_second: 200, per_unit: 0 };
+        let clamped = price.clamp(&bounds);
+        assert_eq!(clamped.per_second, 100);
+        assert_eq!(clamped.per_unit, 1);
+    }
+
+    #[test]
+    fn apply_multiplier_scales_both_dimensions() {
+        let price = Price { per_second: 100, per_unit: 200 };
+        let scaled = price.apply_multiplier(0.5);
+        assert_eq!(scaled.per_second, 50);
+        assert_eq!(scaled.per_unit, 100);
+    }
+
+    #[test]
+    fn adjust_applies_multiplier_then_clamps() {
+        let bounds = PriceBounds {
+            per_second_floor: Some(10),
+            per_second_ceiling: Some(200),
+            per_unit_floor: None,
+            per_unit_ceiling: None,
+        };
+        let price = Price { per_second: 100, per_unit: 50 };
+        let adjusted = price.adjust(&bounds, Some(0.2), None);
+        assert_eq!(adjusted.per_second, 20);
+        assert_eq!(adjusted.per_unit, 10);
+    }
+
+    #[test]
+    fn adjust_with_active_peer_factor_boosts_price() {
+        let price = Price { per_second: 100, per_unit: 100 };
+        let adjusted = price.adjust(&PriceBounds::default(), None, Some(0.5));
+        assert_eq!(adjusted.per_second, 150);
+        assert_eq!(adjusted.per_unit, 150);
+    }
+
+    #[test]
+    fn clamp_with_no_bounds_returns_original() {
+        let price = Price { per_second: 42, per_unit: -7 };
+        let clamped = price.clamp(&PriceBounds::default());
+        assert_eq!(clamped, price);
     }
 }

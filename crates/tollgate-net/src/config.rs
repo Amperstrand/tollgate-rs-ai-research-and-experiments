@@ -45,6 +45,8 @@ pub struct Config {
     /// direction — what `tolltop` shows with a `↑` direction).
     pub upstreams: Vec<UpstreamConfig>,
     pub v1_compat: V1CompatConfig,
+    pub dynamic_pricing: DynamicPricingConfig,
+    pub peer_overrides: std::collections::HashMap<String, PeerOverride>,
 }
 
 impl Default for Config {
@@ -60,6 +62,8 @@ impl Default for Config {
             metering_interval_secs: 5,
             upstreams: Vec::new(),
             v1_compat: V1CompatConfig::default(),
+            dynamic_pricing: DynamicPricingConfig::default(),
+            peer_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -85,13 +89,36 @@ impl FirewallMode {
     }
 }
 
-/// A single static product offer.
+/// A single static product offer with optional dynamic pricing bounds.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct ProductConfig {
     pub pricing_scale: u32,
     pub price_per_second: i64,
     pub price_per_unit: i64,
+    pub price_per_second_floor: Option<i64>,
+    pub price_per_second_ceiling: Option<i64>,
+    pub price_per_unit_floor: Option<i64>,
+    pub price_per_unit_ceiling: Option<i64>,
+}
+
+/// Dynamic pricing strategy configuration.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct DynamicPricingConfig {
+    pub enabled: bool,
+    pub strategy: String,
+    pub metric_weights: std::collections::HashMap<String, f64>,
+    pub active_peer_multiplier: Option<f64>,
+    pub max_active_peers: Option<u32>,
+}
+
+/// Per-peer pricing override keyed by pubkey hex.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct PeerOverride {
+    pub price_multiplier: Option<f64>,
+    pub blocked: bool,
 }
 
 /// An upstream peer this node *buys* from — it connects, pays, and auto-tops-up,
