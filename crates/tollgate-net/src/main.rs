@@ -117,6 +117,22 @@ enum Command {
         #[arg(long, default_value_t = 5)]
         interval: u64,
     },
+    #[cfg(feature = "v1-compat")]
+    /// Pay upstream Go v1 TollGate routers with auto-discovery (multi-gateway mode).
+    V1Auto {
+        /// Mint URL to draw Cashu tokens on.
+        #[arg(long)]
+        mint: String,
+        /// Initial token amount in sats.
+        #[arg(long, default_value_t = 8)]
+        amount: u64,
+        /// Seconds between usage polls.
+        #[arg(long, default_value_t = 5)]
+        interval: u64,
+        /// Gateway IPs to scan, comma-separated (e.g. "192.168.1.1,10.0.0.1").
+        #[arg(long, value_delimiter = ',')]
+        scan_interfaces: Option<Vec<String>>,
+    },
 }
 
 #[tokio::main]
@@ -161,6 +177,10 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "v1-compat")]
         Command::V1Consume { gateway, mint, amount, interval } => {
             v1_consume(&gateway, &mint, amount, interval).await
+        }
+        #[cfg(feature = "v1-compat")]
+        Command::V1Auto { mint, amount, interval, scan_interfaces } => {
+            v1_auto(&mint, amount, interval, scan_interfaces).await
         }
     }
 }
@@ -358,6 +378,73 @@ async fn v1_consume(
     let mut client = v1_compat::client::V1Client::new(config);
     client.run(std::sync::Arc::new(wallet)).await
         .map_err(|e| anyhow::anyhow!("v1 client error: {e}"))?;
+
+    Ok(())
+}
+
+#[cfg(feature = "v1-compat")]
+async fn v1_auto(
+    mint: &str,
+    amount: u64,
+    interval: u64,
+    scan_interfaces: Option<Vec<String>>,
+) -> anyhow::Result<()> {
+    use v1_compat::client::V1ClientConfig;
+    use v1_compat::crowsnest::{Crowsnest, CrowsnestConfig, GatewayHandler};
+    use v1_compat::session_manager::{SessionManager, SessionManagerConfig};
+    use v1_compat::usage_tracker::UsageTrackerConfig;
+    use v1_compat::wallet::CdkWallet;
+
+    tracing::info!(%mint, amount, interval, "v1 auto: multi-gateway discovery mode");
+
+    let wallet = Arc::new(
+        CdkWallet::new(mint, [0u8; 64])
+            .await
+            .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?,
+    );
+
+    let client_config = V1ClientConfig {
+        gateway_ip: String::new(),
+        mac_address: "00:00:00:00:00:00".to_string(),
+        our_mint_urls: vec![mint.to_string()],
+        unit: "sat".to_string(),
+        max_price_per_ms: 0.0,
+        max_price_per_byte: 0.0,
+        preferred_allotment: amount * 60_000,
+        poll_interval_secs: interval,
+        renewal_threshold: 0.2,
+    };
+
+    let tracker_config = UsageTrackerConfig {
+        poll_interval: std::time::Duration::from_secs(interval),
+        renewal_threshold: 0.8,
+    };
+
+    let session_manager = Arc::new(SessionManager::new(
+        SessionManagerConfig {
+            client_config,
+            tracker_config,
+        },
+        wallet,
+    ));
+
+    let gateway_ips = scan_interfaces.unwrap_or_else(|| vec!["192.168.1.1".to_string()]);
+    let crowsnest_config = CrowsnestConfig {
+        gateway_ips,
+        scan_interval: std::time::Duration::from_secs(30),
+        ..Default::default()
+    };
+
+    let handler: Arc<dyn GatewayHandler> = session_manager.clone();
+    let crowsnest = Crowsnest::new(crowsnest_config, handler);
+    let _crowsnest_handle = crowsnest.spawn();
+
+    tracing::info!("Crowsnest spawned; session manager running");
+
+    session_manager
+        .run()
+        .await
+        .map_err(|e| anyhow::anyhow!("session manager error: {e}"))?;
 
     Ok(())
 }

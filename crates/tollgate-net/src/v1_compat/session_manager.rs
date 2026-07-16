@@ -18,12 +18,15 @@
 )]
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use super::client::{V1Client, V1ClientConfig, V1ClientError, V1Session};
+use super::crowsnest::{GatewayHandler, GatewayHandlerError};
 use super::http_client::TollGateHttpClient;
 use super::usage_tracker::{RenewalRequest, UsageTrackerConfig, UsageTrackerHandle};
 use super::wallet::CdkWallet;
@@ -342,5 +345,47 @@ impl SessionManager {
                 tracing::error!(gateway_ip = %req.gateway_ip, error = %e, "Renewal failed");
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GatewayHandler trait impl
+// ---------------------------------------------------------------------------
+
+impl GatewayHandler for SessionManager {
+    fn handle_gateway_connected(
+        &self,
+        interface_name: &str,
+        mac_address: &str,
+        gateway_ip: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), GatewayHandlerError>> + Send + '_>> {
+        let interface_name = interface_name.to_owned();
+        let mac_address = mac_address.to_owned();
+        let gateway_ip = gateway_ip.to_owned();
+        Box::pin(async move {
+            SessionManager::handle_gateway_connected(
+                self,
+                &interface_name,
+                &mac_address,
+                &gateway_ip,
+            )
+            .await
+            .map_err(|e| match e {
+                SessionManagerError::SessionExists(ip) => GatewayHandlerError::SessionExists(ip),
+                other => GatewayHandlerError::Other(other.to_string()),
+            })
+        })
+    }
+
+    fn handle_disconnect(
+        &self,
+        interface_name: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), GatewayHandlerError>> + Send + '_>> {
+        let interface_name = interface_name.to_owned();
+        Box::pin(async move {
+            SessionManager::handle_disconnect(self, &interface_name)
+                .await
+                .map_err(|e| GatewayHandlerError::Other(e.to_string()))
+        })
     }
 }
