@@ -18,6 +18,9 @@ mod v1_compat;
 #[cfg(feature = "openwrt")]
 mod openwrt;
 
+#[cfg(feature = "spilman")]
+mod spilman;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

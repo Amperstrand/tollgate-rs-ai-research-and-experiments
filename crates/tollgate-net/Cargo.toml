@@ -72,6 +72,7 @@ openwrt = [
 ]
 spilman = [
     "dep:cdk-spilman",
+    "dep:async-trait",
     "cdk-spilman/wallet",
     "cdk-spilman/configurable-host-reqwest",
 ]
