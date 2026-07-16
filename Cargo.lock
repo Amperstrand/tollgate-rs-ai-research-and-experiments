@@ -409,8 +409,8 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cashu"
-version = "0.15.1"
-source = "git+https://github.com/cashubtc/cdk.git?rev=63866dc6d7da9796c75365cde97157d464331da1#63866dc6d7da9796c75365cde97157d464331da1"
+version = "0.16.0"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0#a46f99802f5bb4b85ff6a535d4987e1b9514b2a2"
 dependencies = [
  "bitcoin",
  "cbor-diag",
@@ -489,8 +489,8 @@ dependencies = [
 
 [[package]]
 name = "cdk"
-version = "0.15.1"
-source = "git+https://github.com/cashubtc/cdk.git?rev=63866dc6d7da9796c75365cde97157d464331da1#63866dc6d7da9796c75365cde97157d464331da1"
+version = "0.16.0"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0#a46f99802f5bb4b85ff6a535d4987e1b9514b2a2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -525,8 +525,8 @@ dependencies = [
 
 [[package]]
 name = "cdk-common"
-version = "0.15.1"
-source = "git+https://github.com/cashubtc/cdk.git?rev=63866dc6d7da9796c75365cde97157d464331da1#63866dc6d7da9796c75365cde97157d464331da1"
+version = "0.16.0"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0#a46f99802f5bb4b85ff6a535d4987e1b9514b2a2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -537,6 +537,7 @@ dependencies = [
  "ciborium",
  "futures",
  "getrandom 0.2.17",
+ "jsonwebtoken",
  "lightning",
  "lightning-invoice",
  "parking_lot",
@@ -557,8 +558,8 @@ dependencies = [
 
 [[package]]
 name = "cdk-http-client"
-version = "0.15.1"
-source = "git+https://github.com/cashubtc/cdk.git?rev=63866dc6d7da9796c75365cde97157d464331da1#63866dc6d7da9796c75365cde97157d464331da1"
+version = "0.16.0"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0#a46f99802f5bb4b85ff6a535d4987e1b9514b2a2"
 dependencies = [
  "futures",
  "futures-channel",
@@ -578,8 +579,8 @@ dependencies = [
 
 [[package]]
 name = "cdk-signatory"
-version = "0.15.1"
-source = "git+https://github.com/cashubtc/cdk.git?rev=63866dc6d7da9796c75365cde97157d464331da1#63866dc6d7da9796c75365cde97157d464331da1"
+version = "0.16.0"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0#a46f99802f5bb4b85ff6a535d4987e1b9514b2a2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -598,9 +599,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "cdk-sql-common"
+name = "cdk-spilman"
 version = "0.15.1"
-source = "git+https://github.com/cashubtc/cdk.git?rev=63866dc6d7da9796c75365cde97157d464331da1#63866dc6d7da9796c75365cde97157d464331da1"
+source = "git+https://github.com/SatsAndSports/cashu_spilman_channels?branch=main#e19f6b71dc12be5427335d5836bc2e28022bf745"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bitcoin",
+ "cashu",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yml",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "cdk-sql-common"
+version = "0.16.0"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0#a46f99802f5bb4b85ff6a535d4987e1b9514b2a2"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -617,8 +638,8 @@ dependencies = [
 
 [[package]]
 name = "cdk-sqlite"
-version = "0.15.1"
-source = "git+https://github.com/cashubtc/cdk.git?rev=63866dc6d7da9796c75365cde97157d464331da1#63866dc6d7da9796c75365cde97157d464331da1"
+version = "0.16.0"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0#a46f99802f5bb4b85ff6a535d4987e1b9514b2a2"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -1780,6 +1801,16 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "libyml"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3302702afa434ffa30847a83305f0a69d6abd74293b6554c18ec85c7ef30c980"
+dependencies = [
+ "anyhow",
+ "version_check",
 ]
 
 [[package]]
@@ -2991,6 +3022,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yml"
+version = "0.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59e2dd588bf1597a252c3b920e0143eb99b0f76e4e082f4c92ce34fbc9e71ddd"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "libyml",
+ "memchr",
+ "ryu",
+ "serde",
+ "version_check",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3418,6 +3464,7 @@ dependencies = [
  "bytes",
  "cashu",
  "cdk",
+ "cdk-spilman",
  "cdk-sqlite",
  "clap",
  "dirs",

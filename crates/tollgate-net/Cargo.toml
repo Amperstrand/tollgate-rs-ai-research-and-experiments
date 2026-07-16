@@ -47,6 +47,8 @@ ipnetwork = { version = "0.20", optional = true }
 rtnetlink = { version = "0.21", optional = true }
 netlink-packet-route = { version = "0.30", optional = true }
 netlink-packet-core = { version = "0.8", optional = true }
+# spilman channel dependencies
+cdk-spilman = { git = "https://github.com/SatsAndSports/cashu_spilman_channels", branch = "main", optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
@@ -67,4 +69,9 @@ openwrt = [
     "dep:rtnetlink",
     "dep:netlink-packet-route",
     "dep:netlink-packet-core",
+]
+spilman = [
+    "dep:cdk-spilman",
+    "cdk-spilman/wallet",
+    "cdk-spilman/configurable-host-reqwest",
 ]
