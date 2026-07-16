@@ -1,0 +1,121 @@
+#!/bin/sh
+# ============================================================================
+# postinst — Post-installation script for tollgate-wrt package
+# ============================================================================
+#
+# WHAT: Runs after the .ipk/.apk package is installed. Executes uci-defaults
+#       scripts, waits for network interfaces to come up, then restarts all
+#       dependent services in the correct order.
+#
+# Go v1 REFERENCE: /packaging/postinst (47 lines)
+#   - Runs uci-defaults scripts
+#   - Restart sequence: network → wifi reload → firewall → dnsmasq →
+#     uhttpd → nodogsplash → tollgate-wrt
+#   - Waits for br-lan and br-private interfaces
+#
+# OLD RUST: Only ran uci-defaults, firewall reload, dnsmasq restart,
+#   and tollgate-wrt enable/start. Did NOT restart network, wifi, uhttpd,
+#   or nodogsplash. This meant WiFi APs and HTTP config changes from
+#   99-tollgate-setup would not take effect until manual intervention.
+#
+# Rust IMPROVEMENT: Full parity with Go v1's postinst. Restarts ALL
+#   services in the correct dependency order. This ensures that firewall
+#   rules, WiFi APs, DNS, HTTP, captive portal, and TollGate itself
+#   all come up correctly after a fresh install.
+#
+# RESTART ORDER RATIONALE:
+#   1. network     — bring up interfaces (WAN, LAN, private)
+#   2. wait br-lan — LAN bridge must exist before services bind to it
+#   3. wait br-private — private bridge (if configured)
+#   4. wifi reload — apply wireless AP configuration
+#   5. firewall    — apply firewall rules and includes
+#   6. dnsmasq     — DNS/DHCP (needs interfaces up)
+#   7. uhttpd      — HTTP server (needs interfaces for binding)
+#   8. nodogsplash — captive portal (needs interfaces + uhttpd)
+#   9. tollgate-wrt — TollGate service (needs all of the above)
+# ============================================================================
+
+set -e
+
+logger -t tollgate-postinst "Starting post-installation"
+
+# ---------------------------------------------------------------------------
+# Run all TollGate uci-defaults scripts
+# OpenWrt convention: scripts in /etc/uci-defaults/ run once, then self-delete
+# ---------------------------------------------------------------------------
+for script in /etc/uci-defaults/9[0-9]-tollgate-*; do
+    if [ -x "$script" ]; then
+        echo "Running uci-defaults: $(basename "$script")"
+        logger -t tollgate-postinst "Running uci-defaults: $(basename "$script")"
+        "$script" || echo "Warning: $script exited with code $?"
+        # Remove script after execution (OpenWrt convention)
+        rm -f "$script"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Helper: wait for a network interface to appear
+# ---------------------------------------------------------------------------
+wait_for_iface() {
+    iface="$1"
+    timeout="${2:-15}"
+    count=0
+    while [ "$count" -lt "$timeout" ]; do
+        if [ -d "/sys/class/net/$iface" ]; then
+            return 0
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    echo "Warning: $iface did not appear within ${timeout}s" >&2
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Restart services in dependency order (matches Go v1)
+# ---------------------------------------------------------------------------
+
+echo "Restarting services in dependency order..."
+logger -t tollgate-postinst "Restarting services"
+
+# 1. Network — bring up all interfaces
+/etc/init.d/network restart 2>/dev/null || true
+
+# 2-3. Wait for bridges to come up
+echo "Waiting for br-lan..."
+wait_for_iface br-lan 15 || true
+echo "Waiting for br-private..."
+wait_for_iface br-private 10 || true
+
+# 4. WiFi — apply wireless configuration
+wifi reload 2>/dev/null || true
+
+# 5. Firewall — apply rules and includes
+/etc/init.d/firewall restart 2>/dev/null || true
+
+# 6. DNS/DHCP
+/etc/init.d/dnsmasq restart 2>/dev/null || true
+
+# 7. HTTP server
+/etc/init.d/uhttpd restart 2>/dev/null || true
+
+# 8. Captive portal (if installed)
+if [ -x /etc/init.d/nodogsplash ]; then
+    /etc/init.d/nodogsplash restart 2>/dev/null || true
+fi
+
+# 9. TollGate Rust — enable and start
+if [ -x /etc/init.d/tollgate-wrt ]; then
+    /etc/init.d/tollgate-wrt enable 2>/dev/null || true
+    /etc/init.d/tollgate-wrt stop 2>/dev/null || true
+    /etc/init.d/tollgate-wrt start 2>/dev/null || true
+    logger -t tollgate-postinst "tollgate-wrt enabled and started"
+else
+    echo "Warning: /etc/init.d/tollgate-wrt not found" >&2
+    logger -t tollgate-postinst "WARNING: tollgate-wrt init script not found"
+fi
+
+logger -t tollgate-postinst "Post-installation complete"
+echo "TollGate Rust post-installation complete."
+
+exit 0
