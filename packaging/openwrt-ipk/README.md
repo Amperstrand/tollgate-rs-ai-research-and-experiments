@@ -51,13 +51,35 @@ automatically by `opkg`.
 
 `build-ipk.sh` and the `Makefile` map the architecture to a Rust musl target:
 
-| `--arch` | OpenWrt arch | Rust target |
-| --- | --- | --- |
-| `aarch64` *(default)* | `aarch64_cortex-a53` | `aarch64-unknown-linux-musl` |
-| `x86_64` | `x86_64` | `x86_64-unknown-linux-musl` |
-| `mipsel` | `mipsel_24kc` | `mipsel-unknown-linux-musl` |
-| `mips` | `mips_24kc` | `mips-unknown-linux-musl` |
-| `arm` | `arm_cortex-a7` | `arm-unknown-linux-musleabihf` |
+| `--arch` | OpenWrt arch | Rust target | Standalone | SDK |
+| --- | --- | --- | --- | --- |
+| `aarch64` *(default)* | `aarch64_cortex-a53` | `aarch64-unknown-linux-musl` | ✅ | ✅ |
+| `x86_64` | `x86_64` | `x86_64-unknown-linux-musl` | ✅ | ✅ |
+| `arm` | `arm_cortex-a7` | `arm-unknown-linux-musleabihf` | ✅ | ✅ |
+| `mipsel` | `mipsel_24kc` | `mipsel-unknown-linux-musl` | ❌ Tier 3 | ✅ |
+| `mips` | `mips_24kc` | `mips-unknown-linux-musl` | ❌ Tier 3 | ✅ |
+
+### MIPS limitations (standalone builds)
+
+Rust classifies `mips-unknown-linux-musl` and `mipsel-unknown-linux-musl` as
+**Tier 3** targets. This means no pre-compiled `rust-std` is available via
+`rustup`, so `cargo-zigbuild` cannot produce a standalone binary for MIPS.
+
+**For MIPS routers, use the OpenWrt SDK path instead.** The SDK's `rust/host`
+builds the Rust toolchain from source, which generates `rust-std` for all
+supported targets — including MIPS. This is slower (hours, not minutes) but
+produces correct binaries.
+
+| Approach | MIPS support | Build time | Toolchain |
+| --- | --- | --- | --- |
+| `build-ipk.sh` (standalone) | ❌ No Tier 3 std | Minutes | cargo-zigbuild |
+| `Makefile` (OpenWrt SDK) | ✅ Full | Hours (rust/host compiles from source) | OpenWrt toolchain |
+| Nightly `-Z build-std` (future) | ✅ Experimental | Minutes | cargo + nightly |
+
+**Future improvement**: When Rust stabilizes `-Z build-std` or promotes MIPS
+musl to Tier 2, the standalone path will work for MIPS without changes. The
+OpenWrt TIER-1 Rust PR ([openwrt/openwrt#22748](https://github.com/openwrt/openwrt/pull/22748))
+may also add pre-built host compilers that include MIPS std.
 
 To add a missing architecture, add a mapping in both `Makefile` (the `ifeq`
 block) and `build-ipk.sh` (the `case` block).

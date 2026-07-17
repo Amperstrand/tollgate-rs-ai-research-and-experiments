@@ -71,10 +71,12 @@ case "$ARCH" in
     mipsel)
         RUST_TARGET="mipsel-unknown-linux-musl"
         OPENWRT_ARCH="mipsel_24kc"
+        MIPS_TIER3=1
         ;;
     mips)
         RUST_TARGET="mips-unknown-linux-musl"
         OPENWRT_ARCH="mips_24kc"
+        MIPS_TIER3=1
         ;;
     arm)
         RUST_TARGET="arm-unknown-linux-musleabihf"
@@ -105,6 +107,20 @@ PKG_VERSION="${PKG_VERSION:-$(cd "$PROJECT_ROOT" && git describe --tags --always
 
 echo "==> Building $PKG_NAME $PKG_VERSION for $OPENWRT_ARCH ($RUST_TARGET)"
 echo "    features: $FEATURES"
+
+if [ "${MIPS_TIER3:-0}" = "1" ] && [ -z "$BIN_DIR" ]; then
+    echo "" >&2
+    echo "ERROR: $RUST_TARGET is a Rust Tier 3 target — no pre-compiled std available." >&2
+    echo "       cargo-zigbuild cannot produce a standalone binary for MIPS." >&2
+    echo "" >&2
+    echo "Options:" >&2
+    echo "  1. Use the OpenWrt SDK (Makefile) — rust/host builds std from source" >&2
+    echo "  2. Provide prebuilt binaries: --bin-dir path/to/mips/release" >&2
+    echo "  3. Use nightly + -Z build-std (experimental): cargo +nightly build -Z build-std" >&2
+    echo "" >&2
+    echo "See packaging/openwrt-ipk/README.md for details." >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Obtain binaries
