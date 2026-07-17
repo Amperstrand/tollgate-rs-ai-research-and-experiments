@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      features:
+        description: 'Cargo features (default: v1-compat,spilman)'
+        default: 'v1-compat,spilman'
+
+env:
+  FEATURES: ${{ github.event.inputs.features || 'v1-compat,spilman' }}
+
+jobs:
+  build-ipk:
+    name: Build .ipk (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            rust_target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            rust_target: x86_64-unknown-linux-musl
+          - arch: arm
+            rust_target: arm-unknown-linux-musleabihf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      - uses: mlugg/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        run: pip3 install cargo-zigbuild
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.rust_target }}-${{ env.FEATURES }}
+
+      - name: Build .ipk
+        run: |
+          PATH="$HOME/.local/bin:$PATH" bash packaging/openwrt-ipk/build-ipk.sh \
+            --arch ${{ matrix.arch }} \
+            --features ${{ env.FEATURES }}
+
+      - name: Upload .ipk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tollgate-${{ matrix.arch }}
+          path: dist/*.ipk
+          retention-days: 30
+
+  build-linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-${{ env.FEATURES }}
+
+      - name: Build release binary
+        run: cargo build --release --features ${{ env.FEATURES }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tollgate-linux-x86_64
+          path: |
+            target/release/tollgate
+            target/release/tolltop
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-ipk, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/tollgate-aarch64/*.ipk
+            artifacts/tollgate-x86_64/*.ipk
+            artifacts/tollgate-arm/*.ipk
+            artifacts/tollgate-linux-x86_64/tollgate
+            artifacts/tollgate-linux-x86_64/tolltop
