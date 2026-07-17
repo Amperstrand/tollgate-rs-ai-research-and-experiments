@@ -1,0 +1,4 @@
+# Preserve TollGate state across sysupgrade.
+# Listed paths are kept in /etc/sysupgrade.conf by the sysupgrade keep.d mechanism.
+
+/etc/tollgate/

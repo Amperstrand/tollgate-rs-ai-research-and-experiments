@@ -1,0 +1,107 @@
+#!/bin/sh
+# TollGate first-boot config setup — runs once after package installation.
+# Bootstraps the on-disk configuration directory, installs a default config
+# from the shipped example if none exists, records the install time, and
+# applies a few useful router defaults (hostname, DNS fallback).
+#
+# This script is executed by /etc/rc.d on first boot and then deleted by the
+# UCI defaults mechanism. Safe to re-run (idempotent).
+
+set -e
+
+CONF_DIR="/etc/tollgate"
+CONF_FILE="$CONF_DIR/tollgate.yaml"
+EXAMPLE_FILE="$CONF_DIR/tollgate.yaml.example"
+
+echo "========================================"
+echo " TollGate — First-boot Setup"
+echo " $(date)"
+echo "========================================"
+
+# ---------------------------------------------------------------------------
+# 1. Config directory + default config
+# ---------------------------------------------------------------------------
+mkdir -p "$CONF_DIR"
+
+# Install the example config as the live config if none exists. The example
+# is shipped by the package; if opkg already placed tollgate.yaml (it is a
+# conffile), leave the user's copy untouched.
+if [ ! -f "$CONF_FILE" ]; then
+	if [ -f "$EXAMPLE_FILE" ]; then
+		cp "$EXAMPLE_FILE" "$CONF_FILE"
+		chmod 0600 "$CONF_FILE"
+		logger -t tollgate-setup "Installed default config from $EXAMPLE_FILE"
+	else
+		# Fallback: write a minimal config so the daemon can start.
+		cat > "$CONF_FILE" <<'YAML'
+# Minimal TollGate config — see tollgate.yaml.example for all options.
+listen: "0.0.0.0:4747"
+unit: "bytes"
+metering_interval_secs: 5
+secret_key_file: /etc/tollgate/identity.hex
+control_socket: /run/tollgate/tollgate.sock
+firewall: enforcing
+mints: []
+products: []
+v1_compat:
+  metric: "bytes"
+  step_size: 5000
+  accepted_mints: []
+YAML
+		chmod 0600 "$CONF_FILE"
+		logger -t tollgate-setup "Wrote minimal fallback config"
+	fi
+fi
+
+# Runtime directory for the control socket.
+mkdir -p /run/tollgate
+chmod 0750 /run/tollgate
+
+# ---------------------------------------------------------------------------
+# 2. Record install time (read by the dashboard / operator tooling)
+# ---------------------------------------------------------------------------
+if [ ! -f "$CONF_DIR/install.json" ]; then
+	NOW="$(date +%s)"
+	if command -v jq >/dev/null 2>&1; then
+		echo "{\"install_time\": $NOW}" > "$CONF_DIR/install.json"
+	elif echo "{\"install_time\": $NOW}" > "$CONF_DIR/install.json" 2>/dev/null; then
+		: # plain shell redirect
+	fi
+	logger -t tollgate-setup "Recorded install_time=$NOW"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Hostname — set to TollGate only if it is still the OpenWrt default
+# ---------------------------------------------------------------------------
+cur_hostname="$(uci -q get system.@system[0].hostname 2>/dev/null)"
+case "$cur_hostname" in
+	""|OpenWrt|openwrt)
+		uci set system.@system[0].hostname='TollGate'
+		uci set system.@system[0].zonename='UTC'
+		uci set system.@system[0].timezone='UTC0'
+		logger -t tollgate-setup "Set hostname to TollGate"
+		;;
+esac
+
+# ---------------------------------------------------------------------------
+# 4. DNS fallback — set Cloudflare 1.1.1.1 if DNS is unset or localhost
+# ---------------------------------------------------------------------------
+cur_dns="$(uci -q get network.wan.dns 2>/dev/null)"
+case "$cur_dns" in
+	""|127.0.0.1|localhost)
+		uci set network.wan.peerdns='0'
+		uci -q del network.wan.dns 2>/dev/null || true
+		uci add_list network.wan.dns='1.1.1.1'
+		uci add_list network.wan.dns='1.0.0.1'
+		logger -t tollgate-setup "Set DNS to Cloudflare 1.1.1.1 / 1.0.0.1"
+		;;
+esac
+
+uci commit
+logger -t tollgate-setup "First-boot setup complete"
+
+echo "========================================"
+echo " TollGate setup complete."
+echo "========================================"
+
+exit 0

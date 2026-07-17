@@ -1,0 +1,64 @@
+#!/bin/sh
+# TollGate first-boot firewall setup — runs once after package installation.
+# Configures kernel modules, the firewall include, and WAN-side accept rules
+# for the TollGate listen port. Executed by /etc/rc.d on first boot and then
+# deleted by the UCI defaults mechanism.
+
+set -e
+
+# ---------------------------------------------------------------------------
+# 1. Kernel modules
+# ---------------------------------------------------------------------------
+# kmod-nft-tproxy is listed as a package dependency, but ensure the modules
+# are actually loaded. TollGate's enforcing firewall mode installs a forward
+# chain and paid_peers sets via nftables.
+modprobe nf_tables 2>/dev/null || true
+modprobe nft_tproxy 2>/dev/null || true
+grep -qxF 'nf_tables' /etc/modules.d/nf-tables 2>/dev/null || \
+	echo "nf_tables" > /etc/modules.d/nf-tables 2>/dev/null || true
+grep -qxF 'nft_tproxy' /etc/modules.d/nft-tproxy 2>/dev/null || \
+	echo "nft_tproxy" > /etc/modules.d/nft-tproxy 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 2. Firewall include — pull in /etc/config/firewall-tollgate
+# ---------------------------------------------------------------------------
+# Idempotent: only add the include if it is not already registered.
+if ! uci -q get firewall.tollgate >/dev/null 2>&1; then
+	uci set firewall.tollgate=include
+	uci set firewall.tollgate.path='/etc/config/firewall-tollgate'
+	uci set firewall.tollgate.type='uci'
+	uci set firewall.tollgate.reload='1'
+fi
+
+# ---------------------------------------------------------------------------
+# 3. WAN-side accept rules for the TollGate listen port (default 4747)
+# ---------------------------------------------------------------------------
+# fw4 (nftables) evaluates these rules on the wan->router INPUT path so peers
+# can reach the TollGate HTTP/WS transport. The lan-side rule ships in
+# /etc/config/firewall-tollgate; this adds the optional WAN rule for routers
+# that sell access to the public internet side.
+TOLLGATE_PORT="$(uci -q get tollgate.@server[0].port 2>/dev/null)"
+[ -n "$TOLLGATE_PORT" ] || TOLLGATE_PORT="4747"
+
+FOUND=0
+i=0
+while uci -q get "firewall.@rule[$i]" >/dev/null 2>&1; do
+	if uci -q get "firewall.@rule[$i].name" 2>/dev/null | grep -q 'Allow-TollGate-WAN'; then
+		FOUND=1
+		break
+	fi
+	i=$((i + 1))
+done
+
+if [ "$FOUND" = "0" ]; then
+	uci add firewall rule
+	uci set firewall.@rule[-1].name="Allow-TollGate-WAN"
+	uci set firewall.@rule[-1].src='wan'
+	uci set firewall.@rule[-1].proto='tcp'
+	uci set firewall.@rule[-1].dest_port="$TOLLGATE_PORT"
+	uci set firewall.@rule[-1].target='ACCEPT'
+fi
+
+uci commit firewall
+
+exit 0
