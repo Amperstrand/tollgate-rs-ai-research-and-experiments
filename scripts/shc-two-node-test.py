@@ -245,13 +245,27 @@ def main():
     print(f"  Client  ordered: service_id={cl_sid}")
 
     try:
-        # ── Wait for provisioning + SSH ─────────────────────────────
-        gw_ip, _ = wait_for_vm(client, gw_sid, "gateway")
+        # ── Wait for provisioning + SSH (PARALLEL via threads) ──────
+        import threading
+
+        results = {}
+        def provision(label, sid):
+            ip, user = wait_for_vm(client, sid, label)
+            results[label] = (ip, user)
+
+        t_gw = threading.Thread(target=provision, args=("gateway", gw_sid))
+        t_cl = threading.Thread(target=provision, args=("client", cl_sid))
+        t_gw.start()
+        t_cl.start()
+        t_gw.join(timeout=400)
+        t_cl.join(timeout=400)
+
+        gw_ip = results.get("gateway", (None, None))[0]
+        cl_ip = results.get("client", (None, None))[0]
+
         if not gw_ip:
             print("FATAL: Gateway VM unreachable — aborting.")
             return
-
-        cl_ip, _ = wait_for_vm(client, cl_sid, "client")
         if not cl_ip:
             print("FATAL: Client VM unreachable — aborting.")
             return
@@ -276,7 +290,23 @@ def main():
             print(f"  WARNING: fake-mint returned HTTP {fm_code}, checking log:")
             ssh(gw_ip, "cat", "/tmp/fake-mint.log")
         else:
-            print("  fake-mint is UP on :{0}".format(MINT_PORT))
+            print(f"  fake-mint is UP on :{MINT_PORT}")
+
+        print("  Checking port connectivity client→gateway...")
+        r = ssh(cl_ip, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                f"http://{gw_ip}:{MINT_PORT}/v1/info", timeout=10)
+        cross_code = r.stdout.decode().strip()
+        if cross_code != "200":
+            print(f"  WARNING: Client cannot reach gateway:{MINT_PORT} (HTTP {cross_code})")
+            print("  fake-mint may need to bind to 0.0.0.0 or firewall needs opening")
+            ssh_shell(gw_ip, f"sudo iptables -I INPUT -p tcp --dport {MINT_PORT} -j ACCEPT 2>/dev/null; sudo iptables -I INPUT -p tcp --dport {GW_PORT} -j ACCEPT 2>/dev/null; true")
+            time.sleep(1)
+            r = ssh(cl_ip, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                    f"http://{gw_ip}:{MINT_PORT}/v1/info", timeout=10)
+            cross_code = r.stdout.decode().strip()
+            print(f"  After firewall fix: HTTP {cross_code}")
+        else:
+            print(f"  Client→gateway:{MINT_PORT} OK")
 
         # ── Deploy tollgate + tolltop to gateway ────────────────────
         print("\n" + "-" * 60)
