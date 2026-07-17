@@ -1,0 +1,109 @@
+# ============================================================================
+# TollGate node configuration
+# ============================================================================
+#
+# This is the reference configuration for the Rust `tollgate` node daemon.
+# Copy to /etc/tollgate/tollgate.yaml (or edit in place — it is a conffile and
+# opkg preserves it across upgrades).
+#
+# All fields are optional; the values below are the defaults. Commented lines
+# show the full set of options.
+#
+# Field reference lives in crates/tollgate-net/src/config.rs (Config struct)
+# and docs/design/core/tollgate-configuration.md.
+
+# ---------------------------------------------------------------------------
+# Identity
+# ---------------------------------------------------------------------------
+# Path to a file holding the hex-encoded secp256k1 secret key.
+#   - File present  -> load it
+#   - File absent   -> generate a fresh key, write it (mode 0600), reuse on restart
+#   - Unset         -> ephemeral key (NOT persisted; identity changes every start)
+secret_key_file: /etc/tollgate/identity.hex
+
+# ---------------------------------------------------------------------------
+# Transport
+# ---------------------------------------------------------------------------
+# HTTP/WS listen address. TollGate default port is 4747.
+listen: "0.0.0.0:4747"
+
+# Path to the Unix control socket served for `tolltop` / status tooling.
+control_socket: /run/tollgate/tollgate.sock
+
+# ---------------------------------------------------------------------------
+# Metering
+# ---------------------------------------------------------------------------
+# Resource unit this node meters, advertised in Announce ("bytes", "wh", ...).
+unit: "bytes"
+
+# How often (seconds) to sample meters / charge peers / send MeteringReports.
+# Lower = finer-grained reports; the drain *rate* is unchanged. Clamped to >=1.
+metering_interval_secs: 5
+
+# ---------------------------------------------------------------------------
+# Firewall
+# ---------------------------------------------------------------------------
+# How tollgate-net manages the host firewall.
+#   enforcing  -> install a policy-drop forward chain that enforces payment
+#                 (correct for a dedicated TollGate node; the default)
+#   sets-only  -> only manage the paid_peers sets; do not install a forward
+#                 chain. Use on a box that already has a firewall — reference
+#                 @paid_peers_v4/v6 from your own ruleset.
+firewall: enforcing
+
+# ---------------------------------------------------------------------------
+# Mints & products
+# ---------------------------------------------------------------------------
+# Mints whose tokens this node accepts.
+mints:
+  - "https://mint.example.com"
+
+# Products this node sells (static pricing in v1).
+# Each product defines a pricing_scale and a price per second and/or per unit.
+products:
+  - pricing_scale: 1000
+    price_per_second: 0
+    price_per_unit: 7
+
+# ---------------------------------------------------------------------------
+# Upstream peers (mesh direction — this node BUYS from these)
+# ---------------------------------------------------------------------------
+# On `serve`, tollgate connects, pays, and auto-tops-up each upstream, tracking
+# the relationship as an inbound/mesh peer.
+upstreams: []
+#  - peer: "http://gw.example.com:4747"
+#    mint: "https://mint.example.com"
+#    amount: 8          # initial token amount in sats
+#    topup: 8           # top-up amount (also the low-balance watermark)
+#    interval_secs: 5   # seconds between polls for MeteringReports
+#    # meter_iface: eth0       # receive-side count over this interface
+#    # meter_upstream: false   # receive-side count by next-hop MAC
+
+# ---------------------------------------------------------------------------
+# v1 Go-router compatibility server configuration
+# ---------------------------------------------------------------------------
+# When the v1-compat cargo feature is enabled, this configures the v1
+# compatibility layer for interoperating with Go v1 TollGate routers.
+v1_compat:
+  metric: "bytes"
+  step_size: 5000
+  accepted_mints: []
+  # accepted_mints:
+  #   - url: "https://mint.example.com"
+  #     price_per_step: 1
+  #     unit: "sat"
+  #     min_steps: 1
+  # nostr_secret_key:   # optional nostr relay signing key (hex)
+
+# ---------------------------------------------------------------------------
+# Dynamic pricing (optional)
+# ---------------------------------------------------------------------------
+dynamic_pricing:
+  enabled: false
+  strategy: "weighted_average"
+  metric_weights: {}
+  # active_peer_multiplier: 1.5
+  # max_active_peers: 50
+
+# Per-peer pricing overrides, keyed by pubkey hex (optional).
+peer_overrides: {}

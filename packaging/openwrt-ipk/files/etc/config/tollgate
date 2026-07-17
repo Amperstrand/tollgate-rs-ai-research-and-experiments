@@ -1,0 +1,20 @@
+# UCI runtime knobs for TollGate.
+#
+# These are OPTIONAL overrides. The authoritative configuration is the YAML
+# file at /etc/tollgate/tollgate.yaml. The keys here let an operator tweak a
+# few values without editing YAML (useful from `uci set` over SSH).
+
+config server 'main'
+	# Listen address override. Falls back to the YAML `listen:` value
+	# (default 127.0.0.1:4747) when unset.
+	# option listen '0.0.0.0:4747'
+
+	# Port exposed to peers; used by the first-boot firewall script to open
+	# the WAN accept rule. Defaults to 4747.
+	option port '4747'
+
+	# Metered resource unit advertised in Announce ("bytes", "wh", ...).
+	option metric 'bytes'
+
+	# Spilman channel step size (sats per step).
+	option step_size '5000'

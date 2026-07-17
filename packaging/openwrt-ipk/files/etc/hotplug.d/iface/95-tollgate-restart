@@ -1,0 +1,58 @@
+#!/bin/sh
+# Restart TollGate when the WAN interface comes up with connectivity.
+#
+# TollGate needs a working uplink to reach upstream peers and the Cashu mint.
+# On boot the daemon may start before WAN has a route; this hotplug script
+# waits for connectivity (via ubus, not external ping) and then restarts
+# TollGate once. A flag file prevents restart loops.
+
+# Only trigger on interface-up events.
+[ "$ACTION" = "ifup" ] || exit 0
+
+# Only trigger for WAN interfaces.
+WAN_DEVICE="$(uci -q get network.wan.device 2>/dev/null)"
+
+if [ -n "$WAN_DEVICE" ] && [ "$DEVICE" = "$WAN_DEVICE" ]; then
+	: # matches WAN device
+elif [ "$INTERFACE" = "wan" ] || [ "$INTERFACE" = "wwan" ]; then
+	: # matches WAN/WWAN interface name
+else
+	exit 0  # not a WAN interface
+fi
+
+# Prevent multiple restarts (flag file).
+FLAG_FILE="/tmp/tollgate_initial_restart_done"
+[ -f "$FLAG_FILE" ] && exit 0
+
+# ---------------------------------------------------------------------------
+# Connectivity check via ubus.
+# Checks network.interface.wan status for "up": true and a present route — a
+# local determination that does not depend on external hosts (unlike ping).
+# ---------------------------------------------------------------------------
+check_connectivity_ubus() {
+	STATUS="$(ubus call network.interface."$INTERFACE" status 2>/dev/null)" || return 1
+	UP="$(echo "$STATUS" | jsonfilter -e '@.up' 2>/dev/null)" || return 1
+	[ "$UP" = "true" ] || return 1
+	echo "$STATUS" | jsonfilter -e '@.route[0].target' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+MAX_ATTEMPTS=12
+POLL_INTERVAL=5
+ATTEMPT=0
+
+logger -t tollgate-hotplug "WAN ($INTERFACE) came up, checking connectivity..."
+
+while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; do
+	ATTEMPT=$((ATTEMPT + 1))
+	if check_connectivity_ubus; then
+		logger -t tollgate-hotplug "Connectivity confirmed (attempt $ATTEMPT/$MAX_ATTEMPTS), restarting tollgate"
+		/etc/init.d/tollgate restart 2>/dev/null || true
+		touch "$FLAG_FILE"
+		exit 0
+	fi
+	sleep "$POLL_INTERVAL"
+done
+
+logger -t tollgate-hotplug "No connectivity after $MAX_ATTEMPTS attempts, skipping tollgate restart"
+exit 0

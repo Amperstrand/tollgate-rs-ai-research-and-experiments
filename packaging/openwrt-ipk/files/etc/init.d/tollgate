@@ -1,0 +1,58 @@
+#!/bin/sh /etc/rc.common
+# TollGate node daemon — procd init script for OpenWrt.
+#
+# Starts the Rust `tollgate` binary in `serve` mode with the YAML config at
+# /etc/tollgate/tollgate.yaml. Respawns on crash; logs to syslog (logread | grep tollgate).
+
+USE_PROCD=1
+START=95
+STOP=10
+
+PROG=/usr/bin/tollgate
+CONFIG=/etc/tollgate/tollgate.yaml
+RUN_DIR=/run/tollgate
+
+start_service() {
+	# Load nftables support (TollGate's enforcing firewall mode installs a
+	# forward chain + paid_peers sets via nft). kmod-nft-tproxy is a package
+	# dependency, but ensure the module is actually present.
+	modprobe nf_tables 2>/dev/null || true
+	modprobe nft_tproxy 2>/dev/null || true
+
+	# Pre-create the runtime directory for the control socket. The default
+	# control_socket lives in /tmp, but an admin may point it at /run/tollgate
+	# for a stable path shared with tolltop.
+	mkdir -p "$RUN_DIR"
+	chmod 0750 "$RUN_DIR"
+
+	# Defaults for the serve invocation. An admin may override the listen
+	# address via UCI (config/tollgate) without editing the YAML.
+	local listen
+	listen="$(uci -q get tollgate.@server[0].listen 2>/dev/null)"
+
+	procd_open_instance
+	if [ -n "$listen" ]; then
+		procd_set_param command "$PROG" --config "$CONFIG" serve --listen "$listen"
+	else
+		procd_set_param command "$PROG" --config "$CONFIG" serve
+	fi
+	# Respawn: restart after 5 s, give up after 5 consecutive failures within
+	# a 3600 s window, then reset the failure counter and try again.
+	procd_set_param respawn 3600 5 5
+	# Forward stdout/stderr to syslog so `logread` shows daemon output.
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	# Sandboxing: run as root (TollGate needs NET_ADMIN for nftables).
+	procd_set_param user root
+	procd_close_instance
+}
+
+reload_service() {
+	restart
+}
+
+service_triggers() {
+	# Restart when the WAN interface (re)appears; the hotplug script handles
+	# the connectivity-checked restart.
+	procd_add_interface_trigger "interface.wan" wan /etc/init.d/tollgate restart
+}
