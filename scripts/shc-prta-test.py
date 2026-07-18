@@ -182,11 +182,13 @@ v1_compat:
             "TOLLGATE_LOCAL_MINT_URL": f"https://testnut.cashu.exchange",
             "TOLLGATE_CASHU_VENV": os.path.expanduser("~/.cashu-venv"),
             "TOLLGATE_VIRTUAL_LAB": "",
+            "TOLLGATE_CLIENT_IP": ip,
+            "TOLLGATE_CLIENT_MAC": "02:00:00:00:00:01",
         })
 
         result = subprocess.run(
             ["python3", "-m", "pytest", "tests/api/test_rust_v1_api.py",
-             "-v", "--tb=short", "-x", "--no-header",
+             "-v", "--tb=short", "--no-header",
              "--timeout=120", "-o", "addopts="],
             cwd=PRTA,
             env=env,
