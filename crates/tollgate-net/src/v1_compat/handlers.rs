@@ -248,7 +248,11 @@ async fn handle_get_ln_invoice(
 ) -> Response {
     let quote_id = match params.get("quote") {
         Some(id) => id.as_str(),
-        None => return (StatusCode::BAD_REQUEST, "missing quote parameter").into_response(),
+        None => {
+            let json = serde_json::json!({"error": "missing quote parameter"});
+            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+        }
     };
 
     let mint_url = config
@@ -286,11 +290,15 @@ async fn handle_get_ln_invoice(
             )
                 .into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("quote check failed: {e}"),
-        )
-            .into_response(),
+        Err(e) => {
+            let json = serde_json::json!({"error": format!("quote check failed: {e}"), "quote": quote_id});
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response()
+        }
     }
 }
 

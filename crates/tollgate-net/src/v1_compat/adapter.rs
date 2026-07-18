@@ -84,11 +84,14 @@ pub async fn get_usage_text(driver: &Driver, peer_hex: &str) -> Option<String> {
 
 pub async fn get_balance_json(driver: &Driver, peer_hex: &str) -> Option<serde_json::Value> {
     let peer = find_peer_status(driver, peer_hex).await?;
+    let is_active = peer.state == "Active";
     Some(serde_json::json!({
         "balance": peer.their_balance,
+        "remaining": peer.their_balance.max(0),
         "delivered": peer.delivered,
         "received": peer.received,
         "state": peer.state,
+        "session_active": is_active,
         "metered_secs": peer.metered_secs,
     }))
 }
