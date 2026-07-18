@@ -109,13 +109,16 @@ def main():
             ("GET /balance", f"http://{ip}:{PORT}/balance", "404", ""),
             ("GET /pay", f"http://{ip}:{PORT}/pay", "200", r'"kind"'),
             ("POST / bad token", f"http://{ip}:{PORT}/", "400", ""),
-            ("v2 exchange (POST)", f"-X POST {ip}:{PORT}/tollgate/v1/exchange", "400", ""),
+            ("v2 exchange (POST)", f"http://{ip}:{PORT}/tollgate/v1/exchange", "400", ""),
         ]
         p = f_ = 0
         for name, url, wc, wb in tests:
             try:
                 if "bad token" in name:
                     r = subprocess.run(["curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", "-d", "fake", url],
+                        capture_output=True, timeout=10)
+                elif "exchange" in name.lower():
+                    r = subprocess.run(["curl", "-s", "-w", "\\n%{http_code}", "-X", "POST", "-d", "", url],
                         capture_output=True, timeout=10)
                 else:
                     r = subprocess.run(["curl", "-s", "-w", "\\n%{http_code}", url], capture_output=True, timeout=10)
