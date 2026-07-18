@@ -141,12 +141,16 @@ def wait_for_vm(client, service_id, label):
 
 
 def deploy_binary(ip, local_path, remote_path, label=""):
-    """SCP a binary to the VM and make it executable."""
+    """SCP a binary to the VM and make it executable (gzip-compressed transfer)."""
     size_mb = os.path.getsize(local_path) // 1_048_576
     name = os.path.basename(remote_path)
-    print(f"  [{label}] Deploying {name} ({size_mb} MB)...")
-    scp(local_path, ip, "/tmp/_deploy_bin")
-    ssh_shell(ip, f"sudo mv /tmp/_deploy_bin {remote_path} && sudo chmod +x {remote_path}")
+    _gz = f"/tmp/_deploy_{name}.gz"
+    with open(_gz, "wb") as _f:
+        subprocess.run(["gzip", "-c", local_path], stdout=_f, check=True)
+    gz_mb = os.path.getsize(_gz) // 1_048_576
+    print(f"  [{label}] Deploying {name} ({size_mb} MB → {gz_mb} MB gz)...")
+    scp(_gz, ip, "/tmp/_deploy_bin.gz")
+    ssh_shell(ip, f"gunzip -f /tmp/_deploy_bin.gz && sudo mv /tmp/_deploy_bin {remote_path} && sudo chmod +x {remote_path}")
 
 
 def write_remote_config(ip, config_yaml, remote_path="/etc/tollgate.yaml"):

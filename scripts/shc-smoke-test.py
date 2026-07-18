@@ -75,9 +75,13 @@ def main():
         capture_output=True, timeout=30)
 
     try:
-        print(f"Deploying binary ({os.path.getsize(BINARY)//1048576}MB)...")
+        _gz = "/tmp/tollgate.gz"
+        with open(_gz, "wb") as _f:
+            subprocess.run(["gzip", "-c", BINARY], stdout=_f, check=True)
+        print(f"Deploying binary ({os.path.getsize(BINARY)//1048576}MB → {os.path.getsize(_gz)//1048576}MB gz)...")
         subprocess.run(["scp", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, BINARY, f"{user}@{ip}:/tmp/tollgate"], check=True, timeout=600)
+            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, _gz, f"{user}@{ip}:/tmp/tollgate.gz"], check=True, timeout=300)
+        ssh("gunzip", "-f", "/tmp/tollgate.gz")
         ssh("sudo", "mv", "/tmp/tollgate", "/usr/local/bin/tollgate")
         ssh("sudo", "chmod", "+x", "/usr/local/bin/tollgate")
 

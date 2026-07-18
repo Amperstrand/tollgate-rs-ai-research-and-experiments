@@ -105,10 +105,12 @@ def main():
         # No fake-mint needed — using testnut.cashu.exchange as mint
         print("Using testnut.cashu.exchange as mint (no fake-mint needed)")
 
-        # Deploy binaries
-        print(f"Deploying tollgate ({os.path.getsize(BINARY)//1048576}MB)...")
-        scp(BINARY, ip, "/tmp/tollgate", timeout=600)
-        ssh(ip, "sudo mv /tmp/tollgate /usr/local/bin/tollgate && sudo chmod +x /usr/local/bin/tollgate")
+        _gz = "/tmp/tollgate.gz"
+        with open(_gz, "wb") as _f:
+            subprocess.run(["gzip", "-c", BINARY], stdout=_f, check=True)
+        print(f"Deploying tollgate ({os.path.getsize(BINARY)//1048576}MB → {os.path.getsize(_gz)//1048576}MB gz)...")
+        scp(_gz, ip, "/tmp/tollgate.gz", timeout=300)
+        ssh(ip, "gunzip -f /tmp/tollgate.gz && sudo mv /tmp/tollgate /usr/local/bin/tollgate && sudo chmod +x /usr/local/bin/tollgate")
         ssh(ip, "sudo ln -sf /usr/local/bin/tollgate /usr/sbin/tollgate-wrt")
 
         # Write config — listen on 2121 (PRTA BACKEND_PORT)
