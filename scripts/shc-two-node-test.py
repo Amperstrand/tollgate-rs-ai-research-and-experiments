@@ -78,7 +78,7 @@ def ssh_shell(ip, command, timeout=30):
     )
 
 
-def scp(local, ip, remote, timeout=180):
+def scp(local, ip, remote, timeout=600):
     """Copy *local* to *ip:remote*."""
     return subprocess.run(
         SCP_BASE + [local, f"debian@{ip}:{remote}"],

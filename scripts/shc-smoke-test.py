@@ -77,7 +77,7 @@ def main():
     try:
         print(f"Deploying binary ({os.path.getsize(BINARY)//1048576}MB)...")
         subprocess.run(["scp", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, BINARY, f"{user}@{ip}:/tmp/tollgate"], check=True, timeout=180)
+            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, BINARY, f"{user}@{ip}:/tmp/tollgate"], check=True, timeout=600)
         ssh("sudo", "mv", "/tmp/tollgate", "/usr/local/bin/tollgate")
         ssh("sudo", "chmod", "+x", "/usr/local/bin/tollgate")
 
