@@ -109,7 +109,7 @@ def main():
             ("GET /balance", f"http://{ip}:{PORT}/balance", "404", ""),
             ("GET /pay", f"http://{ip}:{PORT}/pay", "200", r'"kind"'),
             ("POST / bad token", f"http://{ip}:{PORT}/", "400", ""),
-            ("v2 exchange (POST)", f"http://{ip}:{PORT}/tollgate/v1/exchange", "400", ""),
+            ("v2 exchange (POST)", f"http://{ip}:{PORT}/tollgate/v1/exchange", "200", ""),
         ]
         p = f_ = 0
         for name, url, wc, wb in tests:
