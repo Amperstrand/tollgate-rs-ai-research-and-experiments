@@ -107,7 +107,7 @@ def main():
 
         # Deploy binaries
         print(f"Deploying tollgate ({os.path.getsize(BINARY)//1048576}MB)...")
-        scp(BINARY, ip, "/tmp/tollgate", timeout=300)
+        scp(BINARY, ip, "/tmp/tollgate", timeout=600)
         ssh(ip, "sudo mv /tmp/tollgate /usr/local/bin/tollgate && sudo chmod +x /usr/local/bin/tollgate")
         ssh(ip, "sudo ln -sf /usr/local/bin/tollgate /usr/sbin/tollgate-wrt")
 

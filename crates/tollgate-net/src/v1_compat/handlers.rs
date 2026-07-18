@@ -66,7 +66,9 @@ async fn handle_post_payment(
     let token = match extract_payment_token(&body) {
         Some(t) => t,
         None => {
-            return (StatusCode::BAD_REQUEST, "missing or invalid token").into_response();
+            let json = serde_json::json!({"error": "missing or invalid token"});
+            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default()).into_response();
         }
     };
 
@@ -85,7 +87,9 @@ async fn handle_post_payment(
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(hex) => hex,
         None => {
-            return (StatusCode::BAD_REQUEST, "could not resolve client identity").into_response();
+            let json = serde_json::json!({"error": "could not resolve client identity"});
+            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default()).into_response();
         }
     };
 
@@ -143,11 +147,19 @@ async fn handle_usage(
     let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)));
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(h) => h,
-        None => return (StatusCode::BAD_REQUEST, "unknown client").into_response(),
+        None => {
+            let json = serde_json::json!({"error": "unknown client"});
+            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+        }
     };
     match adapter::get_usage_text(&driver, &peer_hex).await {
         Some(text) => (StatusCode::OK, text).into_response(),
-        None => (StatusCode::NOT_FOUND, "no active session").into_response(),
+        None => {
+            let json = serde_json::json!({"error": "no active session"});
+            (StatusCode::NOT_FOUND, [("content-type", "application/json")],
+             serde_json::to_string(&json).unwrap_or_default()).into_response()
+        }
     }
 }
 
@@ -179,7 +191,11 @@ async fn handle_balance(
     let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)));
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(h) => h,
-        None => return (StatusCode::BAD_REQUEST, "unknown client").into_response(),
+        None => {
+            let json = serde_json::json!({"error": "unknown client"});
+            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+        }
     };
     match adapter::get_balance_json(&driver, &peer_hex).await {
         Some(json) => (
@@ -188,7 +204,11 @@ async fn handle_balance(
             serde_json::to_string(&json).unwrap_or_default(),
         )
             .into_response(),
-        None => (StatusCode::NOT_FOUND, "no active session").into_response(),
+        None => {
+            let json = serde_json::json!({"error": "no active session"});
+            (StatusCode::NOT_FOUND, [("content-type", "application/json")],
+             serde_json::to_string(&json).unwrap_or_default()).into_response()
+        }
     }
 }
 
@@ -210,11 +230,13 @@ async fn handle_post_ln_invoice(
     let wallet = match crate::v1_compat::wallet::CdkWallet::new(mint_url, [0u8; 64]).await {
         Ok(w) => w,
         Err(e) => {
+            let json = serde_json::json!({"error": format!("wallet init failed: {e}")});
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                format!("wallet init failed: {e}"),
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -234,11 +256,15 @@ async fn handle_post_ln_invoice(
             )
                 .into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("mint quote failed: {e}"),
-        )
-            .into_response(),
+        Err(e) => {
+            let json = serde_json::json!({"error": format!("mint quote failed: {e}"), "amount": amount});
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -264,11 +290,13 @@ async fn handle_get_ln_invoice(
     let wallet = match crate::v1_compat::wallet::CdkWallet::new(mint_url, [0u8; 64]).await {
         Ok(w) => w,
         Err(e) => {
+            let json = serde_json::json!({"error": format!("wallet init failed: {e}"), "quote": quote_id});
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                format!("wallet init failed: {e}"),
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
             )
-                .into_response()
+                .into_response();
         }
     };
 
