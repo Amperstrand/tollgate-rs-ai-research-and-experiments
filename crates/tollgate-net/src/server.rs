@@ -17,8 +17,18 @@ use tollgate_protocol::{Announce, MessageType, decode_frames, encode_frame, peek
 
 use crate::driver::Driver;
 
-pub async fn serve(listen: &str, driver: Driver, cfg: &crate::config::Config) -> anyhow::Result<()> {
-    let app = router(driver, cfg);
+pub async fn serve(
+    listen: &str,
+    driver: Driver,
+    cfg: &crate::config::Config,
+    #[cfg(feature = "v1-compat")] wallet: Option<std::sync::Arc<crate::v1_compat::wallet::CdkWallet>>,
+) -> anyhow::Result<()> {
+    let app = router(
+        driver,
+        cfg,
+        #[cfg(feature = "v1-compat")]
+        wallet,
+    );
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
     axum::serve(
@@ -30,7 +40,10 @@ pub async fn serve(listen: &str, driver: Driver, cfg: &crate::config::Config) ->
 }
 
 #[cfg(feature = "v1-compat")]
-pub fn build_v1_config(v1: &crate::config::V1CompatConfig) -> std::sync::Arc<crate::v1_compat::merchant::V1ServerConfig> {
+pub fn build_v1_config(
+    v1: &crate::config::V1CompatConfig,
+    wallet: Option<std::sync::Arc<crate::v1_compat::wallet::CdkWallet>>,
+) -> std::sync::Arc<crate::v1_compat::merchant::V1ServerConfig> {
     use std::sync::Arc;
     use crate::v1_compat::merchant::{AcceptedMint, V1ServerConfig};
     let metric = if v1.metric.is_empty() { "milliseconds".to_string() } else { v1.metric.clone() };
@@ -54,11 +67,22 @@ pub fn build_v1_config(v1: &crate::config::V1CompatConfig) -> std::sync::Arc<cra
         Some(hex) => nostr::key::Keys::parse(hex).unwrap_or_else(|_| nostr::key::Keys::generate()),
         None => nostr::key::Keys::generate(),
     };
-    Arc::new(V1ServerConfig { metric, step_size, accepted_mints, nostr_keys, trust_proxy_headers: v1.trust_proxy_headers })
+    Arc::new(V1ServerConfig {
+        metric,
+        step_size,
+        accepted_mints,
+        nostr_keys,
+        trust_proxy_headers: v1.trust_proxy_headers,
+        wallet,
+    })
 }
 
 #[cfg_attr(not(feature = "v1-compat"), allow(unused_variables))]
-pub fn router(driver: Driver, cfg: &crate::config::Config) -> Router {
+pub fn router(
+    driver: Driver,
+    cfg: &crate::config::Config,
+    #[cfg(feature = "v1-compat")] wallet: Option<std::sync::Arc<crate::v1_compat::wallet::CdkWallet>>,
+) -> Router {
     #[cfg(feature = "v1-compat")]
     let v1_driver = driver.clone();
 
@@ -69,7 +93,7 @@ pub fn router(driver: Driver, cfg: &crate::config::Config) -> Router {
 
     #[cfg(feature = "v1-compat")]
     {
-        let v1_config = build_v1_config(&cfg.v1_compat);
+        let v1_config = build_v1_config(&cfg.v1_compat, wallet);
         base.merge(crate::v1_compat::build_v1_router(v1_driver, v1_config))
     }
     #[cfg(not(feature = "v1-compat"))]
@@ -187,7 +211,12 @@ mod tests {
 
     #[tokio::test]
     async fn announce_establishes_peer_and_returns_ok() {
-        let app = router(test_driver(), &crate::config::Config::default());
+        let app = router(
+            test_driver(),
+            &crate::config::Config::default(),
+            #[cfg(feature = "v1-compat")]
+            None,
+        );
 
         let pk = tollgate_protocol::PublicKey::from_bytes([2u8; 33]);
         let announce = Announce::new(1, pk, "bytes", 0).encode();
@@ -209,7 +238,12 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_framing_is_rejected() {
-        let app = router(test_driver(), &crate::config::Config::default());
+        let app = router(
+            test_driver(),
+            &crate::config::Config::default(),
+            #[cfg(feature = "v1-compat")]
+            None,
+        );
 
         // A length prefix claiming 9 bytes but with no body.
         let resp = app

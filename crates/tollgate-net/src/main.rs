@@ -263,7 +263,58 @@ async fn serve(
         });
     }
 
-    server::serve(&cfg.listen, driver, &cfg).await
+    #[cfg(feature = "v1-compat")]
+    let v1_wallet = match build_v1_wallet(&cfg.v1_compat).await {
+        Ok(w) => Some(w),
+        Err(e) => {
+            tracing::error!(err = %e, "v1 wallet construction failed; LN invoice endpoints will return 503");
+            None
+        }
+    };
+
+    #[cfg(feature = "v1-compat")]
+    {
+        server::serve(&cfg.listen, driver, &cfg, v1_wallet).await
+    }
+    #[cfg(not(feature = "v1-compat"))]
+    {
+        server::serve(&cfg.listen, driver, &cfg).await
+    }
+}
+
+#[cfg(feature = "v1-compat")]
+async fn build_v1_wallet(
+    v1: &crate::config::V1CompatConfig,
+) -> anyhow::Result<std::sync::Arc<crate::v1_compat::wallet::CdkWallet>> {
+    use crate::v1_compat::wallet::CdkWallet;
+
+    let seed_hex = v1
+        .wallet_seed
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("v1_compat.wallet_seed not set"))?;
+    let seed_bytes = hex::decode(seed_hex.trim())
+        .map_err(|e| anyhow::anyhow!("invalid wallet_seed hex: {e}"))?;
+    let seed: [u8; 64] = seed_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "wallet_seed must decode to exactly 64 bytes, got {}",
+                seed_bytes.len()
+            )
+        })?;
+
+    let mint_url = v1
+        .accepted_mints
+        .first()
+        .map(|m| m.url.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("http://localhost:3338");
+
+    let wallet = CdkWallet::new(mint_url, seed)
+        .await
+        .map_err(|e| anyhow::anyhow!("wallet init: {e}"))?;
+    Ok(std::sync::Arc::new(wallet))
 }
 
 async fn connect(

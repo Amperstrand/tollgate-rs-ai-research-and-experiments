@@ -158,6 +158,7 @@ pub struct V1CompatConfig {
     pub accepted_mints: Vec<V1AcceptedMint>,
     pub nostr_secret_key: Option<String>,
     pub trust_proxy_headers: bool,
+    pub wallet_seed: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

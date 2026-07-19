@@ -15,10 +15,13 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr::event::tag::{Tag, TagKind};
 use nostr::prelude::*;
+
+use super::wallet::CdkWallet;
 
 // ---------------------------------------------------------------------------
 // Configuration types (previously from the experimental v1 server module)
@@ -53,6 +56,7 @@ pub struct V1ServerConfig {
     /// Nostr keys used to sign events.
     pub nostr_keys: Keys,
     pub trust_proxy_headers: bool,
+    pub wallet: Option<Arc<CdkWallet>>,
 }
 
 /// A customer session record.

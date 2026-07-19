@@ -216,24 +216,16 @@ async fn handle_post_ln_invoice(
         .and_then(|v| v.get("amount").and_then(|a| a.as_u64()))
         .unwrap_or(8);
 
+    let wallet = match config.wallet.as_ref() {
+        Some(w) => w.clone(),
+        None => return json_error(StatusCode::SERVICE_UNAVAILABLE, "wallet not configured"),
+    };
+
     let mint_url = config
         .accepted_mints
         .first()
         .map(|m| m.url.as_str())
         .unwrap_or("http://localhost:3338");
-
-    let wallet = match crate::v1_compat::wallet::CdkWallet::new(mint_url, [0u8; 64]).await {
-        Ok(w) => w,
-        Err(e) => {
-            let json = serde_json::json!({"error": format!("wallet init failed: {e}")});
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
-            )
-                .into_response();
-        }
-    };
 
     match wallet.request_mint_quote(amount, mint_url).await {
         Ok(info) => {
@@ -276,23 +268,9 @@ async fn handle_get_ln_invoice(
         }
     };
 
-    let mint_url = config
-        .accepted_mints
-        .first()
-        .map(|m| m.url.as_str())
-        .unwrap_or("http://localhost:3338");
-
-    let wallet = match crate::v1_compat::wallet::CdkWallet::new(mint_url, [0u8; 64]).await {
-        Ok(w) => w,
-        Err(e) => {
-            let json = serde_json::json!({"error": format!("wallet init failed: {e}"), "quote": quote_id});
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
-            )
-                .into_response();
-        }
+    let wallet = match config.wallet.as_ref() {
+        Some(w) => w.clone(),
+        None => return json_error(StatusCode::SERVICE_UNAVAILABLE, "wallet not configured"),
     };
 
     match wallet.check_mint_quote_status(quote_id).await {
@@ -375,6 +353,7 @@ mod tests {
             }],
             nostr_keys: Keys::generate(),
             trust_proxy_headers: false,
+            wallet: None,
         })
     }
 
@@ -472,6 +451,60 @@ mod tests {
                 || resp.status() == StatusCode::INTERNAL_SERVER_ERROR,
             "expected 503/500 from wallet init failure, got {}",
             resp.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn post_ln_invoice_returns_503_with_explicit_message_when_wallet_not_configured() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/ln-invoice")
+                    .body(Body::from(r#"{"amount":8}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "POST /ln-invoice must return 503 when wallet is not configured"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body)
+            .expect("ln-invoice 503 response must be valid JSON");
+        assert_eq!(
+            json["error"], "wallet not configured",
+            "POST /ln-invoice 503 must explain 'wallet not configured' (B2 contract); got: {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_ln_invoice_returns_503_with_explicit_message_when_wallet_not_configured() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/ln-invoice?quote=abc123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "GET /ln-invoice must return 503 when wallet is not configured"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body)
+            .expect("ln-invoice 503 response must be valid JSON");
+        assert_eq!(
+            json["error"], "wallet not configured",
+            "GET /ln-invoice 503 must explain 'wallet not configured' (B2 contract); got: {json}"
         );
     }
 
