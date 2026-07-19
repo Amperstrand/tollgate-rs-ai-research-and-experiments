@@ -54,7 +54,7 @@ pub fn build_v1_config(v1: &crate::config::V1CompatConfig) -> std::sync::Arc<cra
         Some(hex) => nostr::key::Keys::parse(hex).unwrap_or_else(|_| nostr::key::Keys::generate()),
         None => nostr::key::Keys::generate(),
     };
-    Arc::new(V1ServerConfig { metric, step_size, accepted_mints, nostr_keys })
+    Arc::new(V1ServerConfig { metric, step_size, accepted_mints, nostr_keys, trust_proxy_headers: v1.trust_proxy_headers })
 }
 
 #[cfg_attr(not(feature = "v1-compat"), allow(unused_variables))]

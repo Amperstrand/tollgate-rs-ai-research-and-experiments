@@ -5,7 +5,7 @@ use tollgate_net::status::PeerStatus;
 use tollgate_protocol::{BootstrapAck, BootstrapToken, MessageType, peek_type};
 
 use crate::driver::Driver;
-use crate::v1_compat::mac_resolver::{DhcpLeasesResolver, MacResolver, StubMacResolver};
+use crate::v1_compat::mac_resolver::{DhcpLeasesResolver, MacResolver};
 
 pub fn mac_to_peer_hex(mac: &str) -> String {
     let clean = mac.replace([':', '-'], "");
@@ -23,10 +23,6 @@ pub async fn resolve_peer_hex(ip: Option<IpAddr>) -> Option<String> {
     let ip_str = ip.to_string();
     let resolver = DhcpLeasesResolver;
     if let Ok(mac) = <DhcpLeasesResolver as MacResolver>::resolve(&resolver, &ip_str) {
-        return Some(mac_to_peer_hex(&mac));
-    }
-    let stub = StubMacResolver::default();
-    if let Ok(mac) = stub.resolve(&ip_str) {
         return Some(mac_to_peer_hex(&mac));
     }
     None
@@ -94,4 +90,19 @@ pub async fn get_balance_json(driver: &Driver, peer_hex: &str) -> Option<serde_j
         "session_active": is_active,
         "metered_secs": peer.metered_secs,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn resolve_peer_hex_returns_none_without_dhcp() {
+        // /tmp/dhcp.leases doesn't have 10.99.99.99 (and may not exist at all).
+        let result = resolve_peer_hex(Some(std::net::IpAddr::V4([10, 99, 99, 99].into()))).await;
+        assert!(
+            result.is_none(),
+            "resolve_peer_hex must return None when DHCP fails, got: {result:?}"
+        );
+    }
 }

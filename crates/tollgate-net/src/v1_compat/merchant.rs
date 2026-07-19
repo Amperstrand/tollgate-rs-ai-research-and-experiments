@@ -52,6 +52,7 @@ pub struct V1ServerConfig {
     pub accepted_mints: Vec<AcceptedMint>,
     /// Nostr keys used to sign events.
     pub nostr_keys: Keys,
+    pub trust_proxy_headers: bool,
 }
 
 /// A customer session record.

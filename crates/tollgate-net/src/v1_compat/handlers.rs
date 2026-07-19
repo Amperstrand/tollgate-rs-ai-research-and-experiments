@@ -79,17 +79,7 @@ async fn handle_post_payment(
         }
     };
 
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .and_then(|s| s.trim().parse().ok())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.trim().parse().ok())
-        });
+    let client_ip = extract_ip(&headers, config.trust_proxy_headers);
 
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(hex) => hex,
@@ -148,10 +138,11 @@ async fn handle_post_payment(
 
 async fn handle_usage(
     State(driver): State<Driver>,
+    axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)));
+    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)), config.trust_proxy_headers);
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(h) => h,
         None => {
@@ -171,10 +162,11 @@ async fn handle_usage(
 }
 
 async fn handle_whoami(
+    axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)));
+    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)), config.trust_proxy_headers);
     let ip_str = client_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
     let resolver = crate::v1_compat::mac_resolver::DhcpLeasesResolver;
@@ -182,20 +174,16 @@ async fn handle_whoami(
         return (StatusCode::OK, format!("mac={mac}")).into_response();
     }
 
-    let stub = crate::v1_compat::mac_resolver::StubMacResolver::default();
-    if let Ok(mac) = crate::v1_compat::mac_resolver::MacResolver::resolve(&stub, &ip_str) {
-        return (StatusCode::OK, format!("mac={mac}")).into_response();
-    }
-
-    (StatusCode::BAD_REQUEST, "unknown").into_response()
+    json_error(StatusCode::BAD_REQUEST, "unknown client")
 }
 
 async fn handle_balance(
     State(driver): State<Driver>,
+    axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)));
+    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)), config.trust_proxy_headers);
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(h) => h,
         None => {
@@ -337,25 +325,30 @@ async fn handle_get_ln_invoice(
     }
 }
 
-fn extract_ip(headers: &HeaderMap) -> Option<std::net::IpAddr> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .and_then(|s| s.trim().parse().ok())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.trim().parse().ok())
-        })
+fn extract_ip(headers: &HeaderMap, trust: bool) -> Option<std::net::IpAddr> {
+    if trust {
+        headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.trim().parse().ok())
+            .or_else(|| {
+                headers
+                    .get("x-real-ip")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse().ok())
+            })
+    } else {
+        None
+    }
 }
 
 fn extract_ip_full(
     headers: &HeaderMap,
     conn: Option<&axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    trust: bool,
 ) -> Option<std::net::IpAddr> {
-    extract_ip(headers).or_else(|| conn.map(|c| c.0.ip()))
+    extract_ip(headers, trust).or_else(|| conn.map(|c| c.0.ip()))
 }
 
 #[cfg(test)]
@@ -381,6 +374,7 @@ mod tests {
                 min_steps: 1,
             }],
             nostr_keys: Keys::generate(),
+            trust_proxy_headers: false,
         })
     }
 
@@ -394,6 +388,22 @@ mod tests {
             "bytes",
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn extract_ip_ignores_xff_when_untrusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        let ip = extract_ip(&headers, false);
+        assert!(ip.is_none(), "extract_ip must ignore XFF when trust=false, got: {ip:?}");
+    }
+
+    #[test]
+    fn extract_ip_honors_xff_when_trusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        let ip = extract_ip(&headers, true);
+        assert_eq!(ip, Some("1.2.3.4".parse().unwrap()));
     }
 
     #[tokio::test]
@@ -411,7 +421,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_usage_returns_404_without_session() {
+    async fn get_usage_returns_400_without_known_peer() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -424,11 +434,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
-    async fn get_balance_returns_404_without_session() {
+    async fn get_balance_returns_400_without_known_peer() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -441,7 +451,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -565,7 +575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn whoami_returns_mac_format_with_connectinfo() {
+    async fn whoami_returns_400_when_peer_unknown() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -578,16 +588,16 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = String::from_utf8(
             axum::body::to_bytes(resp.into_body(), 1024).await.unwrap().to_vec(),
         )
         .unwrap();
-        assert!(body.starts_with("mac="), "whoami must return 'mac=...' format, got: {body}");
+        assert!(body.contains("unknown client"), "whoami must return JSON 'unknown client' for unregistered peer, got: {body}");
     }
 
     #[tokio::test]
-    async fn usage_returns_404_for_unknown_peer() {
+    async fn usage_returns_400_for_unknown_peer() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -600,11 +610,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
-    async fn balance_returns_404_for_unknown_peer() {
+    async fn balance_returns_400_for_unknown_peer() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -617,7 +627,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

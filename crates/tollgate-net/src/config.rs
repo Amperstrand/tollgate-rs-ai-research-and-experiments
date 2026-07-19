@@ -157,6 +157,7 @@ pub struct V1CompatConfig {
     pub step_size: u64,
     pub accepted_mints: Vec<V1AcceptedMint>,
     pub nostr_secret_key: Option<String>,
+    pub trust_proxy_headers: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
