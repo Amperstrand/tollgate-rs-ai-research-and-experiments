@@ -11,6 +11,16 @@ use crate::driver::Driver;
 use crate::v1_compat::adapter;
 use crate::v1_compat::merchant::{self, V1ServerConfig};
 
+fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
+    let json = serde_json::json!({"error": message.into()});
+    (
+        status,
+        [("content-type", "application/json")],
+        serde_json::to_string(&json).unwrap_or_default(),
+    )
+        .into_response()
+}
+
 pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
     Router::new()
         .route(
@@ -23,6 +33,7 @@ pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
         .route("/balance", get(handle_balance))
         .route("/ln-invoice", get(handle_get_ln_invoice).post(handle_post_ln_invoice))
         .layer(axum::Extension(config))
+        .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .with_state(driver)
 }
 
@@ -49,11 +60,7 @@ async fn handle_get_details(
             json,
         )
             .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to build advertisement: {e}"),
-        )
-            .into_response(),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to build advertisement: {e}")),
     }
 }
 
@@ -118,11 +125,7 @@ async fn handle_post_payment(
                 event_json,
             )
                 .into_response(),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session event error: {e}"),
-            )
-                .into_response(),
+            Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("session event error: {e}")),
         }
     } else {
         let notice = merchant::build_notice_event(
@@ -133,8 +136,12 @@ async fn handle_post_payment(
             &config,
         );
         match notice {
-            Ok(json) => (StatusCode::PAYMENT_REQUIRED, json).into_response(),
-            Err(_) => (StatusCode::PAYMENT_REQUIRED, "payment rejected").into_response(),
+            Ok(json) => (
+                StatusCode::PAYMENT_REQUIRED,
+                [("content-type", "application/json")],
+                json,
+            ).into_response(),
+            Err(_) => json_error(StatusCode::PAYMENT_REQUIRED, "payment rejected"),
         }
     }
 }
@@ -611,5 +618,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn post_with_large_body_returns_413() {
+        let app = build_router(test_driver(), test_config());
+        let big_body = vec![b'A'; 70_000]; // 70KB > 64KB limit
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::from(big_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE, "70KB body should be rejected by 64KB limit");
+    }
+
+    #[tokio::test]
+    async fn advertisement_error_returns_json_content_type() {
+        let resp = json_error(StatusCode::BAD_REQUEST, "test error");
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert!(ct.contains("application/json"), "json_error must set content-type to application/json, got: {ct}");
     }
 }
