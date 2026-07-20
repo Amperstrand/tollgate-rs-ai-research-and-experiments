@@ -124,6 +124,8 @@ metering_interval_secs: 5
 v1_compat:
   metric: "milliseconds"
   step_size: 5000
+  trust_proxy_headers: true
+  wallet_seed: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
   accepted_mints:
     - url: "https://testnut.cashu.exchange"
       price_per_step: 1

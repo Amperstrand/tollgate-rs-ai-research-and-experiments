@@ -85,8 +85,11 @@ def main():
         ssh("sudo", "mv", "/tmp/tollgate", "/usr/local/bin/tollgate")
         ssh("sudo", "chmod", "+x", "/usr/local/bin/tollgate")
 
-        cfg = f'listen: "0.0.0.0:{PORT}"\nunit: "milliseconds"\nmints:\n  - "{TEST_MINT}"\nfirewall: sets-only\nmetering_interval_secs: 5\nv1_compat:\n  metric: "milliseconds"\n  step_size: 5000\n  accepted_mints:\n    - url: "{TEST_MINT}"\n      price_per_step: 1\n      unit: "sat"\n      min_steps: 1\n'
+        cfg = f'listen: "0.0.0.0:{PORT}"\nunit: "milliseconds"\nmints:\n  - "{TEST_MINT}"\nfirewall: sets-only\nmetering_interval_secs: 5\nv1_compat:\n  metric: "milliseconds"\n  step_size: 5000\n  trust_proxy_headers: true\n  wallet_seed: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"\n  accepted_mints:\n    - url: "{TEST_MINT}"\n      price_per_step: 1\n      unit: "sat"\n      min_steps: 1\n'
         ssh(f"echo '{base64.b64encode(cfg.encode()).decode()}' | base64 -d | sudo tee /etc/tollgate.yaml > /dev/null")
+
+        my_ip = ssh("echo $SSH_CONNECTION").strip().split()[0] if ssh("echo $SSH_CONNECTION").strip() else ip
+        ssh(f"echo '9999999999 02:00:00:00:00:01 {my_ip} host client-id' | sudo tee /tmp/dhcp.leases > /dev/null")
 
         print(f"Starting tollgate on :{PORT}...")
         ssh(f"nohup /usr/local/bin/tollgate --config /etc/tollgate.yaml serve --listen 0.0.0.0:{PORT} > /tmp/tollgate.log 2>&1 &")
