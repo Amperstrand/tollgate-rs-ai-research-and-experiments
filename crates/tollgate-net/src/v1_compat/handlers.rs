@@ -21,6 +21,44 @@ fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
         .into_response()
 }
 
+fn extract_token_amount_and_allotment(token: &str, config: &V1ServerConfig) -> (u64, u64) {
+    let amount = decode_cashu_amount(token).unwrap_or(0);
+    if amount == 0 {
+        return (0, 0);
+    }
+    let mint_url = config
+        .accepted_mints
+        .first()
+        .map(|m| m.url.as_str())
+        .unwrap_or("");
+    let allotment = merchant::calculate_allotment(amount, mint_url, config).unwrap_or(0);
+    (amount, allotment)
+}
+
+fn decode_cashu_amount(token: &str) -> Option<u64> {
+    let payload = token
+        .strip_prefix("cashuA")
+        .or_else(|| token.strip_prefix("cashua"))?;
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(payload))
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    let amount = json
+        .get("token")
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| entry.get("proofs").and_then(|p| p.as_array()))
+                .flatten()
+                .filter_map(|proof| proof.get("amount").and_then(|a| a.as_u64()))
+                .sum::<u64>()
+        })
+        .unwrap_or(0);
+    Some(amount)
+}
+
 pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
     Router::new()
         .route(
@@ -93,6 +131,8 @@ async fn handle_post_payment(
     let result = adapter::admit_peer_with_token(&driver, &peer_hex, client_ip, &token).await;
 
     if result.accepted {
+        let (amount_sat, allotment) = extract_token_amount_and_allotment(&token, &config);
+
         let session = merchant::CustomerSession {
             mac_address: peer_hex.clone(),
             start_time: std::time::SystemTime::now()
@@ -100,13 +140,13 @@ async fn handle_post_payment(
                 .unwrap_or_default()
                 .as_secs() as i64,
             metric: config.metric.clone(),
-            allotment: 0,
+            allotment,
         };
         match merchant::build_session_event(
             &session,
             &config,
             &peer_hex,
-            0,
+            amount_sat,
             "cashu",
         ) {
             Ok(event_json) => (
