@@ -24,6 +24,17 @@ pub enum FrameError {
     Truncated { offset: usize },
 }
 
+impl core::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            FrameError::TooLong => write!(f, "frame body exceeds MAX_FRAME_LEN ({MAX_FRAME_LEN})"),
+            FrameError::Truncated { offset } => write!(f, "truncated frame at offset {offset}"),
+        }
+    }
+}
+
+impl core::error::Error for FrameError {}
+
 /// Append `body` to `out` as a length-prefixed frame (2-byte little-endian
 /// length + body).
 pub fn encode_frame(body: &[u8], out: &mut Vec<u8>) -> Result<(), FrameError> {

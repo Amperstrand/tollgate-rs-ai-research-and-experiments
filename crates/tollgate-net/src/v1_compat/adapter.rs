@@ -98,11 +98,42 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_peer_hex_returns_none_without_dhcp() {
-        // /tmp/dhcp.leases doesn't have 10.99.99.99 (and may not exist at all).
         let result = resolve_peer_hex(Some(std::net::IpAddr::V4([10, 99, 99, 99].into()))).await;
         assert!(
             result.is_none(),
             "resolve_peer_hex must return None when DHCP fails, got: {result:?}"
         );
+    }
+
+    #[test]
+    fn mac_to_peer_hex_is_deterministic() {
+        let mac = "aa:bb:cc:dd:ee:ff";
+        let h1 = mac_to_peer_hex(mac);
+        let h2 = mac_to_peer_hex(mac);
+        assert_eq!(h1, h2, "same MAC must produce same peer_hex");
+        assert!(!h1.is_empty(), "peer_hex must not be empty");
+    }
+
+    #[test]
+    fn mac_to_peer_hex_format_invariant() {
+        let colon = mac_to_peer_hex("aa:bb:cc:dd:ee:ff");
+        let dash = mac_to_peer_hex("aa-bb-cc-dd-ee-ff");
+        let bare = mac_to_peer_hex("aabbccddeeff");
+        assert_eq!(colon, dash, "colon and dash formats must match");
+        assert_eq!(colon, bare, "colon and bare formats must match");
+    }
+
+    #[test]
+    fn mac_to_peer_hex_different_macs_produce_different_outputs() {
+        let a = mac_to_peer_hex("00:00:00:00:00:01");
+        let b = mac_to_peer_hex("00:00:00:00:00:02");
+        assert_ne!(a, b, "different MACs must produce different peer_hex values");
+    }
+
+    #[test]
+    fn mac_to_peer_hex_output_is_66_char_hex() {
+        let h = mac_to_peer_hex("01:23:45:67:89:ab");
+        assert_eq!(h.len(), 66, "compressed pubkey hex must be 66 chars (33 bytes), got {}", h.len());
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "must be valid hex");
     }
 }

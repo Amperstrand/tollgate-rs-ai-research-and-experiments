@@ -140,19 +140,19 @@ pub struct DummySyncNetworking;
 
 impl SpilmanClientNetworking for DummySyncNetworking {
     fn call_mint_swap(&self, _mint_url: &str, _json: &str) -> Result<String, String> {
-        panic!("sync networking not used — use async path instead")
+        Err("sync networking not supported".to_string())
     }
 
     fn call_mint_keysets(&self, _mint_url: &str) -> Result<String, String> {
-        panic!("sync networking not used — use async path instead")
+        Err("sync networking not supported".to_string())
     }
 
     fn call_mint_keys(&self, _mint_url: &str, _keyset_id: &str) -> Result<String, String> {
-        panic!("sync networking not used — use async path instead")
+        Err("sync networking not supported".to_string())
     }
 
     fn call_mint_restore(&self, _mint_url: &str, _json: &str) -> Result<String, String> {
-        panic!("sync networking not used — use async path instead")
+        Err("sync networking not supported".to_string())
     }
 }
 
