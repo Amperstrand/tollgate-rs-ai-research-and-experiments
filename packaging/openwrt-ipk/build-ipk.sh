@@ -37,7 +37,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 ARCH="aarch64"
-FEATURES="${TOLLGATE_FEATURES:-v1-compat,spilman}"
+FEATURES="${TOLLGATE_FEATURES:-v1-compat}"
 BIN_DIR=""   # if set, use prebuilt binaries from here instead of compiling
 
 while [[ $# -gt 0 ]]; do

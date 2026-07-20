@@ -21,9 +21,10 @@ PKG_BUILD_DEPENDS:=rust/host
 PKG_BUILD_PARALLEL:=1
 
 # Cargo feature flags to enable. v1-compat adds Go v1 router interoperability
-# (Cashu token payments, nostr relay); spilman adds streaming payment channels.
-# Override from the SDK environment with: TOLLGATE_FEATURES="v1-compat"
-TOLLGATE_FEATURES?=v1-compat,spilman
+# (Cashu token payments, nostr relay). spilman adds streaming payment channels
+# but requires cdk-sqlite which breaks MIPS cross-compilation (issue #33).
+# Override from the SDK environment with: TOLLGATE_FEATURES="v1-compat,spilman"
+TOLLGATE_FEATURES?=v1-compat
 
 include $(INCLUDE_DIR)/package.mk
 

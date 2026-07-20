@@ -93,7 +93,7 @@ block) and `build-ipk.sh` (the `case` block).
 # Pick an architecture:
 ./packaging/openwrt-ipk/build-ipk.sh --arch x86_64
 
-# Override cargo features (default: v1-compat,spilman):
+# Override cargo features (default: v1-compat):
 ./packaging/openwrt-ipk/build-ipk.sh --features v1-compat
 TOLLGATE_FEATURES="v1-compat,spilman" ./packaging/openwrt-ipk/build-ipk.sh
 
