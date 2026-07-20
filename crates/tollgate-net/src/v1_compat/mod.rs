@@ -39,6 +39,9 @@ pub mod recovery;
 
 use std::sync::Arc;
 
-pub fn build_v1_router(driver: crate::driver::Driver, config: Arc<merchant::V1ServerConfig>) -> axum::Router {
+pub fn build_v1_router(
+    driver: crate::driver::Driver,
+    config: Arc<merchant::V1ServerConfig>,
+) -> axum::Router {
     handlers::build_router(driver, config)
 }

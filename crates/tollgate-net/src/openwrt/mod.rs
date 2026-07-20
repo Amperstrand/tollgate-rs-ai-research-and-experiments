@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 pub mod network_monitor;
-pub mod uci_ops;
 pub mod ubus_client;
-pub mod wifi_scanner;
+pub mod uci_ops;
 pub mod wifi_connector;
+pub mod wifi_scanner;

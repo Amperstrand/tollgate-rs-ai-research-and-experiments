@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use std::net::SocketAddr;
 
 use crate::driver::Driver;
@@ -61,15 +61,15 @@ fn decode_cashu_amount(token: &str) -> Option<u64> {
 
 pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
     Router::new()
-        .route(
-            "/",
-            get(handle_get_details).post(handle_post_payment),
-        )
+        .route("/", get(handle_get_details).post(handle_post_payment))
         .route("/pay", get(handle_get_details))
         .route("/usage", get(handle_usage))
         .route("/whoami", get(handle_whoami))
         .route("/balance", get(handle_balance))
-        .route("/ln-invoice", get(handle_get_ln_invoice).post(handle_post_ln_invoice))
+        .route(
+            "/ln-invoice",
+            get(handle_get_ln_invoice).post(handle_post_ln_invoice),
+        )
         .layer(axum::Extension(config))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .with_state(driver)
@@ -77,7 +77,10 @@ pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
 
 fn extract_payment_token(body: &str) -> Option<String> {
     let trimmed = body.trim();
-    if trimmed.starts_with("cashu") || trimmed.starts_with("cashuA") || trimmed.starts_with("cashuB") {
+    if trimmed.starts_with("cashu")
+        || trimmed.starts_with("cashuA")
+        || trimmed.starts_with("cashuB")
+    {
         return Some(trimmed.to_owned());
     }
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
@@ -92,13 +95,11 @@ async fn handle_get_details(
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
 ) -> Response {
     match merchant::build_advertisement(&config) {
-        Ok(json) => (
-            StatusCode::OK,
-            [("content-type", "application/json")],
-            json,
-        )
-            .into_response(),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to build advertisement: {e}")),
+        Ok(json) => (StatusCode::OK, [("content-type", "application/json")], json).into_response(),
+        Err(e) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to build advertisement: {e}"),
+        ),
     }
 }
 
@@ -112,8 +113,12 @@ async fn handle_post_payment(
         Some(t) => t,
         None => {
             let json = serde_json::json!({"error": "missing or invalid token"});
-            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
-                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
         }
     };
 
@@ -123,8 +128,12 @@ async fn handle_post_payment(
         Some(hex) => hex,
         None => {
             let json = serde_json::json!({"error": "could not resolve client identity"});
-            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
-                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
         }
     };
 
@@ -142,20 +151,17 @@ async fn handle_post_payment(
             metric: config.metric.clone(),
             allotment,
         };
-        match merchant::build_session_event(
-            &session,
-            &config,
-            &peer_hex,
-            amount_sat,
-            "cashu",
-        ) {
+        match merchant::build_session_event(&session, &config, &peer_hex, amount_sat, "cashu") {
             Ok(event_json) => (
                 StatusCode::OK,
                 [("content-type", "application/json")],
                 event_json,
             )
                 .into_response(),
-            Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("session event error: {e}")),
+            Err(e) => json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session event error: {e}"),
+            ),
         }
     } else {
         let notice = merchant::build_notice_event(
@@ -170,7 +176,8 @@ async fn handle_post_payment(
                 StatusCode::PAYMENT_REQUIRED,
                 [("content-type", "application/json")],
                 json,
-            ).into_response(),
+            )
+                .into_response(),
             Err(_) => json_error(StatusCode::PAYMENT_REQUIRED, "payment rejected"),
         }
     }
@@ -182,21 +189,33 @@ async fn handle_usage(
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)), config.trust_proxy_headers);
+    let client_ip = extract_ip_full(
+        &headers,
+        Some(&ConnectInfo(addr)),
+        config.trust_proxy_headers,
+    );
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(h) => h,
         None => {
             let json = serde_json::json!({"error": "unknown client"});
-            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
-                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
         }
     };
     match adapter::get_usage_text(&driver, &peer_hex).await {
         Some(text) => (StatusCode::OK, text).into_response(),
         None => {
             let json = serde_json::json!({"error": "no active session"});
-            (StatusCode::NOT_FOUND, [("content-type", "application/json")],
-             serde_json::to_string(&json).unwrap_or_default()).into_response()
+            (
+                StatusCode::NOT_FOUND,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response()
         }
     }
 }
@@ -206,7 +225,11 @@ async fn handle_whoami(
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)), config.trust_proxy_headers);
+    let client_ip = extract_ip_full(
+        &headers,
+        Some(&ConnectInfo(addr)),
+        config.trust_proxy_headers,
+    );
     let ip_str = client_ip.map(|ip| ip.to_string()).unwrap_or_default();
 
     let resolver = crate::v1_compat::mac_resolver::DhcpLeasesResolver;
@@ -223,13 +246,21 @@ async fn handle_balance(
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    let client_ip = extract_ip_full(&headers, Some(&ConnectInfo(addr)), config.trust_proxy_headers);
+    let client_ip = extract_ip_full(
+        &headers,
+        Some(&ConnectInfo(addr)),
+        config.trust_proxy_headers,
+    );
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(h) => h,
         None => {
             let json = serde_json::json!({"error": "unknown client"});
-            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
-                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
         }
     };
     match adapter::get_balance_json(&driver, &peer_hex).await {
@@ -241,8 +272,12 @@ async fn handle_balance(
             .into_response(),
         None => {
             let json = serde_json::json!({"error": "no active session"});
-            (StatusCode::NOT_FOUND, [("content-type", "application/json")],
-             serde_json::to_string(&json).unwrap_or_default()).into_response()
+            (
+                StatusCode::NOT_FOUND,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response()
         }
     }
 }
@@ -284,7 +319,8 @@ async fn handle_post_ln_invoice(
                 .into_response()
         }
         Err(e) => {
-            let json = serde_json::json!({"error": format!("mint quote failed: {e}"), "amount": amount});
+            let json =
+                serde_json::json!({"error": format!("mint quote failed: {e}"), "amount": amount});
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 [("content-type", "application/json")],
@@ -303,8 +339,12 @@ async fn handle_get_ln_invoice(
         Some(id) => id.as_str(),
         None => {
             let json = serde_json::json!({"error": "missing quote parameter"});
-            return (StatusCode::BAD_REQUEST, [("content-type", "application/json")],
-                    serde_json::to_string(&json).unwrap_or_default()).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
         }
     };
 
@@ -332,7 +372,8 @@ async fn handle_get_ln_invoice(
                 .into_response()
         }
         Err(e) => {
-            let json = serde_json::json!({"error": format!("quote check failed: {e}"), "quote": quote_id});
+            let json =
+                serde_json::json!({"error": format!("quote check failed: {e}"), "quote": quote_id});
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 [("content-type", "application/json")],
@@ -372,9 +413,9 @@ fn extract_ip_full(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapter::IpAdapter;
     use crate::config::{Config, Identity};
     use crate::wallet::BootstrapWallet;
-    use crate::adapter::IpAdapter;
     use axum::body::Body;
     use axum::http::Request;
     use nostr::key::Keys;
@@ -414,7 +455,10 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
         let ip = extract_ip(&headers, false);
-        assert!(ip.is_none(), "extract_ip must ignore XFF when trust=false, got: {ip:?}");
+        assert!(
+            ip.is_none(),
+            "extract_ip must ignore XFF when trust=false, got: {ip:?}"
+        );
     }
 
     #[test]
@@ -429,7 +473,13 @@ mod tests {
     async fn get_advertisement_returns_nostr_10021() {
         let app = build_router(test_driver(), test_config());
         let resp = app
-            .oneshot(Request::builder().method("GET").uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -513,8 +563,8 @@ mod tests {
             "POST /ln-invoice must return 503 when wallet is not configured"
         );
         let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body)
-            .expect("ln-invoice 503 response must be valid JSON");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("ln-invoice 503 response must be valid JSON");
         assert_eq!(
             json["error"], "wallet not configured",
             "POST /ln-invoice 503 must explain 'wallet not configured' (B2 contract); got: {json}"
@@ -540,8 +590,8 @@ mod tests {
             "GET /ln-invoice must return 503 when wallet is not configured"
         );
         let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body)
-            .expect("ln-invoice 503 response must be valid JSON");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("ln-invoice 503 response must be valid JSON");
         assert_eq!(
             json["error"], "wallet not configured",
             "GET /ln-invoice 503 must explain 'wallet not configured' (B2 contract); got: {json}"
@@ -568,14 +618,24 @@ mod tests {
     async fn advertisement_has_metric_and_step_size_tags() {
         let app = build_router(test_driver(), test_config());
         let resp = app
-            .oneshot(Request::builder().method("GET").uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let tags = json["tags"].as_array().unwrap();
-        let has_metric = tags.iter().any(|t| t.as_array().unwrap().first().unwrap() == "metric");
-        let has_step = tags.iter().any(|t| t.as_array().unwrap().first().unwrap() == "step_size");
+        let has_metric = tags
+            .iter()
+            .any(|t| t.as_array().unwrap().first().unwrap() == "metric");
+        let has_step = tags
+            .iter()
+            .any(|t| t.as_array().unwrap().first().unwrap() == "step_size");
         assert!(has_metric, "advertisement must have metric tag");
         assert!(has_step, "advertisement must have step_size tag");
     }
@@ -584,15 +644,21 @@ mod tests {
     async fn advertisement_has_price_per_step_tag() {
         let app = build_router(test_driver(), test_config());
         let resp = app
-            .oneshot(Request::builder().method("GET").uri("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let tags = json["tags"].as_array().unwrap();
-        let has_price = tags.iter().any(|t| {
-            t.as_array().unwrap().first().unwrap() == "price_per_step"
-        });
+        let has_price = tags
+            .iter()
+            .any(|t| t.as_array().unwrap().first().unwrap() == "price_per_step");
         assert!(has_price, "advertisement must have price_per_step tag");
     }
 
@@ -638,7 +704,13 @@ mod tests {
     async fn get_pay_alias_returns_advertisement() {
         let app = build_router(test_driver(), test_config());
         let resp = app
-            .oneshot(Request::builder().method("GET").uri("/pay").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/pay")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -663,10 +735,16 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = String::from_utf8(
-            axum::body::to_bytes(resp.into_body(), 1024).await.unwrap().to_vec(),
+            axum::body::to_bytes(resp.into_body(), 1024)
+                .await
+                .unwrap()
+                .to_vec(),
         )
         .unwrap();
-        assert!(body.contains("unknown client"), "whoami must return JSON 'unknown client' for unregistered peer, got: {body}");
+        assert!(
+            body.contains("unknown client"),
+            "whoami must return JSON 'unknown client' for unregistered peer, got: {body}"
+        );
     }
 
     #[tokio::test]
@@ -717,13 +795,25 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE, "70KB body should be rejected by 64KB limit");
+        assert_eq!(
+            resp.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "70KB body should be rejected by 64KB limit"
+        );
     }
 
     #[tokio::test]
     async fn advertisement_error_returns_json_content_type() {
         let resp = json_error(StatusCode::BAD_REQUEST, "test error");
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
-        assert!(ct.contains("application/json"), "json_error must set content-type to application/json, got: {ct}");
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            ct.contains("application/json"),
+            "json_error must set content-type to application/json, got: {ct}"
+        );
     }
 }

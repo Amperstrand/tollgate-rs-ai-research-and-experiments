@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       features:
-        description: 'Cargo features (default: v1-compat,spilman)'
-        default: 'v1-compat,spilman'
+        description: 'Cargo features (default: v1-compat)'
+        default: 'v1-compat'
 
 env:
-  FEATURES: ${{ github.event.inputs.features || 'v1-compat,spilman' }}
+  FEATURES: ${{ github.event.inputs.features || 'v1-compat' }}
 
 jobs:
   build-ipk:

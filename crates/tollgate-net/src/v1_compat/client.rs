@@ -275,7 +275,9 @@ impl V1Client {
 
         println!("BOLT11 Invoice:");
         println!("{}", resp.invoice.as_ref().unwrap_or(&String::new()));
-        println!("\nPlease pay this invoice using your Lightning wallet and wait for the server to grant access.");
+        println!(
+            "\nPlease pay this invoice using your Lightning wallet and wait for the server to grant access."
+        );
         println!("Quote ID: {quote}");
         println!("Expires in: {} seconds", resp.expiry.unwrap_or(0));
 

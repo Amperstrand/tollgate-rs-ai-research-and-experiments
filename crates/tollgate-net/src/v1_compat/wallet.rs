@@ -377,9 +377,7 @@ impl CdkWallet {
                 }
             }
         }
-        Err(anyhow::anyhow!(
-            "mint failed after 3 attempts: {last_err}"
-        ))
+        Err(anyhow::anyhow!("mint failed after 3 attempts: {last_err}"))
     }
 
     /// Request a mint quote from the mint (NUT-04).
@@ -558,7 +556,6 @@ impl CdkWallet {
             .get_unspent_proofs()
             .await
             .map_err(|e| anyhow::anyhow!("get_proofs: {e}"))?;
-        serde_json::to_string(&proofs)
-            .map_err(|e| anyhow::anyhow!("serialize proofs: {e}"))
+        serde_json::to_string(&proofs).map_err(|e| anyhow::anyhow!("serialize proofs: {e}"))
     }
 }

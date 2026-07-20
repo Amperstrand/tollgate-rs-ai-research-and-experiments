@@ -38,8 +38,8 @@ use tokio_util::sync::CancellationToken;
 use netlink_packet_core::{NetlinkMessage, NetlinkPayload};
 use netlink_packet_route::address::AddressAttribute;
 use netlink_packet_route::link::LinkFlags;
-use netlink_packet_route::{AddressFamily, RouteNetlinkMessage};
 use netlink_packet_route::route::{RouteAddress, RouteAttribute, RouteMessage};
+use netlink_packet_route::{AddressFamily, RouteNetlinkMessage};
 use rtnetlink::MulticastGroup;
 
 // ---------------------------------------------------------------------------
@@ -877,10 +877,10 @@ mod tests {
         let mut map: HashMap<ThrottleKey, Instant> = HashMap::new();
         let now = Instant::now();
 
-        assert!(map.get(&key).is_none());
+        assert!(!map.contains_key(&key));
         map.insert(key.clone(), now);
 
-        assert!(map.get(&key).is_some());
+        assert!(map.contains_key(&key));
         let last = map.get(&key).unwrap();
         assert!(now.duration_since(*last) < Duration::from_secs(2));
     }
@@ -894,7 +894,7 @@ mod tests {
         let mut map: HashMap<ThrottleKey, Instant> = HashMap::new();
         map.insert(key1, Instant::now());
 
-        assert!(map.get(&key2).is_none());
+        assert!(!map.contains_key(&key2));
     }
 
     #[test]

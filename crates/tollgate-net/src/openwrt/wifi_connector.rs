@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use super::uci_ops::{execute_shell, UciOp, UciOpBuilder};
+use super::uci_ops::{UciOp, UciOpBuilder, execute_shell};
 use super::wifi_scanner::{CommandExecutor, EncryptionType, SystemCommandExecutor, WifiScanError};
 
 /// Errors from WiFi connector operations.
@@ -709,9 +709,10 @@ mod tests {
 
         assert!(ops.len() >= 2);
 
-        assert!(ops
-            .iter()
-            .any(|op| matches!(op, UciOp::Commit { config } if config == "wireless")));
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, UciOp::Commit { config } if config == "wireless"))
+        );
     }
 
     #[test]
@@ -720,9 +721,10 @@ mod tests {
         let ops = connector.build_cleanup_ops();
 
         assert!(ops.len() >= 2);
-        assert!(ops
-            .iter()
-            .any(|op| matches!(op, UciOp::Commit { config } if config == "wireless")));
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, UciOp::Commit { config } if config == "wireless"))
+        );
     }
 
     #[test]

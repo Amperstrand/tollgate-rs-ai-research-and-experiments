@@ -104,11 +104,7 @@ pub fn affordable_steps(balance: u64, price_per_step: u64, min_steps: u64) -> u6
         return 0;
     }
     let steps = balance / price_per_step;
-    if steps < min_steps {
-        0
-    } else {
-        steps
-    }
+    if steps < min_steps { 0 } else { steps }
 }
 
 /// Validate a pubkey against blocklist, allowlist, and default trust policy.

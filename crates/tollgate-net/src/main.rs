@@ -183,9 +183,12 @@ async fn main() -> anyhow::Result<()> {
         }
         #[cfg(feature = "v1-compat")]
         Command::V1Consume {
-            gateway, mint, amount, interval,
+            gateway,
+            mint,
+            amount,
+            interval,
             #[cfg(feature = "spilman")]
-                spilman,
+            spilman,
         } => {
             #[cfg(feature = "spilman")]
             if spilman {
@@ -197,9 +200,12 @@ async fn main() -> anyhow::Result<()> {
             v1_consume(&gateway, &mint, amount, interval).await
         }
         #[cfg(feature = "v1-compat")]
-        Command::V1Auto { mint, amount, interval, scan_interfaces } => {
-            v1_auto(&mint, amount, interval, scan_interfaces).await
-        }
+        Command::V1Auto {
+            mint,
+            amount,
+            interval,
+            scan_interfaces,
+        } => v1_auto(&mint, amount, interval, scan_interfaces).await,
     }
 }
 
@@ -294,15 +300,12 @@ async fn build_v1_wallet(
         .ok_or_else(|| anyhow::anyhow!("v1_compat.wallet_seed not set"))?;
     let seed_bytes = hex::decode(seed_hex.trim())
         .map_err(|e| anyhow::anyhow!("invalid wallet_seed hex: {e}"))?;
-    let seed: [u8; 64] = seed_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "wallet_seed must decode to exactly 64 bytes, got {}",
-                seed_bytes.len()
-            )
-        })?;
+    let seed: [u8; 64] = seed_bytes.as_slice().try_into().map_err(|_| {
+        anyhow::anyhow!(
+            "wallet_seed must decode to exactly 64 bytes, got {}",
+            seed_bytes.len()
+        )
+    })?;
 
     let mint_url = v1
         .accepted_mints
@@ -410,18 +413,14 @@ async fn consume(
 }
 
 #[cfg(feature = "v1-compat")]
-async fn v1_consume(
-    gateway: &str,
-    mint: &str,
-    amount: u64,
-    interval: u64,
-) -> anyhow::Result<()> {
+async fn v1_consume(gateway: &str, mint: &str, amount: u64, interval: u64) -> anyhow::Result<()> {
     use v1_compat::client::V1ClientConfig;
     use v1_compat::wallet::CdkWallet;
 
     tracing::info!(%gateway, %mint, amount, interval, "v1 consume: paying upstream Go router");
 
-    let wallet = CdkWallet::new(mint, [0u8; 64]).await
+    let wallet = CdkWallet::new(mint, [0u8; 64])
+        .await
         .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
 
     let base_url = if gateway.starts_with("http") {
@@ -445,7 +444,9 @@ async fn v1_consume(
     tracing::info!(gateway = %base_url, "v1 client configured; starting consume loop");
 
     let mut client = v1_compat::client::V1Client::new(config);
-    client.run(std::sync::Arc::new(wallet)).await
+    client
+        .run(std::sync::Arc::new(wallet))
+        .await
         .map_err(|e| anyhow::anyhow!("v1 client error: {e}"))?;
 
     Ok(())
@@ -459,24 +460,31 @@ async fn v1_consume_spilman(
     interval: u64,
 ) -> anyhow::Result<()> {
     use cashu::nuts::SecretKey;
-    use v1_compat::http_client::TollGateHttpClient;
-    use v1_compat::wallet::CdkWallet;
     use spilman::service::{ReqwestNetworking, SpilmanService};
     use spilman::wallet::fetch_active_keyset_info;
+    use v1_compat::http_client::TollGateHttpClient;
+    use v1_compat::wallet::CdkWallet;
 
     tracing::info!(%gateway, %mint, amount, "v1 consume (spilman mode): opening payment channel");
 
-    let base_url = if gateway.starts_with("http") { gateway.to_string() } else { format!("http://{gateway}") };
+    let base_url = if gateway.starts_with("http") {
+        gateway.to_string()
+    } else {
+        format!("http://{gateway}")
+    };
 
     tracing::info!("Fetching advertisement from gateway...");
     let http = TollGateHttpClient::new_with_base_url(&base_url);
-    let ad = http.fetch_advertisement().await
+    let ad = http
+        .fetch_advertisement()
+        .await
         .map_err(|e| anyhow::anyhow!("advertisement fetch failed: {e}"))?;
     let gateway_pubkey = ad.pubkey().to_hex();
     tracing::info!(gateway_pubkey = %gateway_pubkey, "Got gateway pubkey from advertisement");
 
     tracing::info!("Fetching keyset info from mint...");
-    let (mint_url, keyset_info) = fetch_active_keyset_info(mint).await
+    let (mint_url, keyset_info) = fetch_active_keyset_info(mint)
+        .await
         .map_err(|e| anyhow::anyhow!("keyset fetch failed: {e}"))?;
     let keyset_info_json = serde_json::to_string(&keyset_info)
         .map_err(|e| anyhow::anyhow!("keyset serialization failed: {e}"))?;
@@ -489,23 +497,29 @@ async fn v1_consume_spilman(
     tracing::info!(sender = %service.sender_pubkey(), "SpilmanService initialized");
 
     tracing::info!("Creating CdkWallet to fund channel...");
-    let wallet = CdkWallet::new(mint, [0u8; 64]).await
+    let wallet = CdkWallet::new(mint, [0u8; 64])
+        .await
         .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
-    let token = wallet.create_token(amount, mint).await
+    let token = wallet
+        .create_token(amount, mint)
+        .await
         .map_err(|e| anyhow::anyhow!("token creation failed: {e}"))?;
-    let token_str = String::from_utf8(token)
-        .map_err(|e| anyhow::anyhow!("token not UTF-8: {e}"))?;
+    let token_str =
+        String::from_utf8(token).map_err(|e| anyhow::anyhow!("token not UTF-8: {e}"))?;
     tracing::info!("Funding token created");
 
     tracing::info!("Opening Spilman channel...");
-    let channel = service.open_channel(
-        &token_str,
-        &gateway_pubkey,
-        3600,
-        &keyset_info_json,
-        amount,
-        &net,
-    ).await.map_err(|e| anyhow::anyhow!("channel open failed: {e}"))?;
+    let channel = service
+        .open_channel(
+            &token_str,
+            &gateway_pubkey,
+            3600,
+            &keyset_info_json,
+            amount,
+            &net,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("channel open failed: {e}"))?;
 
     let channel_id = channel.channel_id.clone();
     tracing::info!(channel_id = %channel_id, "Channel opened successfully!");

@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use cdk_spilman::{construct_proofs, parse_keyset_info_from_json, KeysetInfo};
+use cdk_spilman::{KeysetInfo, construct_proofs, parse_keyset_info_from_json};
 use serde_json::Value;
 
 /// Fetches the active sat keyset from the given mint URL.

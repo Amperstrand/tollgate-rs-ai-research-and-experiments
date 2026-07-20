@@ -27,9 +27,9 @@ impl Price {
         let time = (elapsed_ms as i128) * (self.per_second as i128) / 1000;
         let unit = (units as i128) * (self.per_unit as i128);
         let total = time + unit;
-        total.try_into().unwrap_or_else(|_| {
-            if total > 0 { i64::MAX } else { i64::MIN }
-        })
+        total
+            .try_into()
+            .unwrap_or(if total > 0 { i64::MAX } else { i64::MIN })
     }
 }
 
@@ -153,7 +153,10 @@ mod tests {
             per_unit_floor: Some(1),
             per_unit_ceiling: Some(50),
         };
-        let price = Price { per_second: 200, per_unit: 0 };
+        let price = Price {
+            per_second: 200,
+            per_unit: 0,
+        };
         let clamped = price.clamp(&bounds);
         assert_eq!(clamped.per_second, 100);
         assert_eq!(clamped.per_unit, 1);
@@ -161,7 +164,10 @@ mod tests {
 
     #[test]
     fn apply_multiplier_scales_both_dimensions() {
-        let price = Price { per_second: 100, per_unit: 200 };
+        let price = Price {
+            per_second: 100,
+            per_unit: 200,
+        };
         let scaled = price.apply_multiplier(0.5);
         assert_eq!(scaled.per_second, 50);
         assert_eq!(scaled.per_unit, 100);
@@ -175,7 +181,10 @@ mod tests {
             per_unit_floor: None,
             per_unit_ceiling: None,
         };
-        let price = Price { per_second: 100, per_unit: 50 };
+        let price = Price {
+            per_second: 100,
+            per_unit: 50,
+        };
         let adjusted = price.adjust(&bounds, Some(0.2), None);
         assert_eq!(adjusted.per_second, 20);
         assert_eq!(adjusted.per_unit, 10);
@@ -183,7 +192,10 @@ mod tests {
 
     #[test]
     fn adjust_with_active_peer_factor_boosts_price() {
-        let price = Price { per_second: 100, per_unit: 100 };
+        let price = Price {
+            per_second: 100,
+            per_unit: 100,
+        };
         let adjusted = price.adjust(&PriceBounds::default(), None, Some(0.5));
         assert_eq!(adjusted.per_second, 150);
         assert_eq!(adjusted.per_unit, 150);
@@ -191,7 +203,10 @@ mod tests {
 
     #[test]
     fn clamp_with_no_bounds_returns_original() {
-        let price = Price { per_second: 42, per_unit: -7 };
+        let price = Price {
+            per_second: 42,
+            per_unit: -7,
+        };
         let clamped = price.clamp(&PriceBounds::default());
         assert_eq!(clamped, price);
     }

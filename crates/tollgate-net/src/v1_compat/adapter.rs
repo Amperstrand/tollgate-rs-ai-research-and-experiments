@@ -127,13 +127,24 @@ mod tests {
     fn mac_to_peer_hex_different_macs_produce_different_outputs() {
         let a = mac_to_peer_hex("00:00:00:00:00:01");
         let b = mac_to_peer_hex("00:00:00:00:00:02");
-        assert_ne!(a, b, "different MACs must produce different peer_hex values");
+        assert_ne!(
+            a, b,
+            "different MACs must produce different peer_hex values"
+        );
     }
 
     #[test]
     fn mac_to_peer_hex_output_is_66_char_hex() {
         let h = mac_to_peer_hex("01:23:45:67:89:ab");
-        assert_eq!(h.len(), 66, "compressed pubkey hex must be 66 chars (33 bytes), got {}", h.len());
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "must be valid hex");
+        assert_eq!(
+            h.len(),
+            66,
+            "compressed pubkey hex must be 66 chars (33 bytes), got {}",
+            h.len()
+        );
+        assert!(
+            h.chars().all(|c| c.is_ascii_hexdigit()),
+            "must be valid hex"
+        );
     }
 }

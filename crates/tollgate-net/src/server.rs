@@ -21,7 +21,9 @@ pub async fn serve(
     listen: &str,
     driver: Driver,
     cfg: &crate::config::Config,
-    #[cfg(feature = "v1-compat")] wallet: Option<std::sync::Arc<crate::v1_compat::wallet::CdkWallet>>,
+    #[cfg(feature = "v1-compat")] wallet: Option<
+        std::sync::Arc<crate::v1_compat::wallet::CdkWallet>,
+    >,
 ) -> anyhow::Result<()> {
     let app = router(
         driver,
@@ -44,10 +46,18 @@ pub fn build_v1_config(
     v1: &crate::config::V1CompatConfig,
     wallet: Option<std::sync::Arc<crate::v1_compat::wallet::CdkWallet>>,
 ) -> std::sync::Arc<crate::v1_compat::merchant::V1ServerConfig> {
-    use std::sync::Arc;
     use crate::v1_compat::merchant::{AcceptedMint, V1ServerConfig};
-    let metric = if v1.metric.is_empty() { "milliseconds".to_string() } else { v1.metric.clone() };
-    let step_size = if v1.step_size == 0 { 60_000 } else { v1.step_size };
+    use std::sync::Arc;
+    let metric = if v1.metric.is_empty() {
+        "milliseconds".to_string()
+    } else {
+        v1.metric.clone()
+    };
+    let step_size = if v1.step_size == 0 {
+        60_000
+    } else {
+        v1.step_size
+    };
     let accepted_mints: Vec<AcceptedMint> = if v1.accepted_mints.is_empty() {
         vec![AcceptedMint {
             url: "http://localhost:3338".to_string(),
@@ -56,12 +66,27 @@ pub fn build_v1_config(
             min_steps: 1,
         }]
     } else {
-        v1.accepted_mints.iter().map(|m| AcceptedMint {
-            url: if m.url.is_empty() { "http://localhost:3338".to_string() } else { m.url.clone() },
-            price_per_step: if m.price_per_step == 0 { 1 } else { m.price_per_step },
-            unit: if m.unit.is_empty() { "sat".to_string() } else { m.unit.clone() },
-            min_steps: if m.min_steps == 0 { 1 } else { m.min_steps },
-        }).collect()
+        v1.accepted_mints
+            .iter()
+            .map(|m| AcceptedMint {
+                url: if m.url.is_empty() {
+                    "http://localhost:3338".to_string()
+                } else {
+                    m.url.clone()
+                },
+                price_per_step: if m.price_per_step == 0 {
+                    1
+                } else {
+                    m.price_per_step
+                },
+                unit: if m.unit.is_empty() {
+                    "sat".to_string()
+                } else {
+                    m.unit.clone()
+                },
+                min_steps: if m.min_steps == 0 { 1 } else { m.min_steps },
+            })
+            .collect()
     };
     let nostr_keys = match &v1.nostr_secret_key {
         Some(hex) => nostr::key::Keys::parse(hex).unwrap_or_else(|_| nostr::key::Keys::generate()),
@@ -81,7 +106,9 @@ pub fn build_v1_config(
 pub fn router(
     driver: Driver,
     cfg: &crate::config::Config,
-    #[cfg(feature = "v1-compat")] wallet: Option<std::sync::Arc<crate::v1_compat::wallet::CdkWallet>>,
+    #[cfg(feature = "v1-compat")] wallet: Option<
+        std::sync::Arc<crate::v1_compat::wallet::CdkWallet>,
+    >,
 ) -> Router {
     #[cfg(feature = "v1-compat")]
     let v1_driver = driver.clone();

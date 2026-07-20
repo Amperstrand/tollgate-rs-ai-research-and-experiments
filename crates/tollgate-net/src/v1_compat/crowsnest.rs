@@ -369,12 +369,8 @@ impl Crowsnest {
             }
 
             for gateway_ip in &config.gateway_ips {
-                let probe_result = probe_gateway(
-                    gateway_ip,
-                    config.probe_timeout,
-                    config.verify_signature,
-                )
-                .await;
+                let probe_result =
+                    probe_gateway(gateway_ip, config.probe_timeout, config.verify_signature).await;
 
                 match probe_result {
                     Ok(Some(_discovered)) => {
@@ -439,9 +435,7 @@ impl Crowsnest {
                                 failures = *count,
                                 "Crowsnest: gateway unreachable after consecutive failures, disconnecting"
                             );
-                            if let Err(e) = handler
-                                .handle_disconnect(&config.interface_name)
-                                .await
+                            if let Err(e) = handler.handle_disconnect(&config.interface_name).await
                             {
                                 tracing::warn!(
                                     %gateway_ip,

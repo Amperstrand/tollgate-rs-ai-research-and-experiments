@@ -112,7 +112,10 @@ mod tests {
 
     #[test]
     fn truncated_length_prefix_errors() {
-        assert_eq!(decode_frames(&[0x05]), Err(FrameError::Truncated { offset: 0 }));
+        assert_eq!(
+            decode_frames(&[0x05]),
+            Err(FrameError::Truncated { offset: 0 })
+        );
     }
 
     #[test]

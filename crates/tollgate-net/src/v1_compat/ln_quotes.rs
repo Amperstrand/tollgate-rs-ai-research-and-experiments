@@ -107,7 +107,10 @@ pub trait LightningQuoteStore: Send + Sync {
     /// Insert a new quote record.
     fn insert(&self, record: LightningQuoteRecord) -> BoxFuture<'_, Result<(), QuoteStoreError>>;
     /// Look up a quote by ID.
-    fn get(&self, quote_id: &str) -> BoxFuture<'_, Result<Option<LightningQuoteRecord>, QuoteStoreError>>;
+    fn get(
+        &self,
+        quote_id: &str,
+    ) -> BoxFuture<'_, Result<Option<LightningQuoteRecord>, QuoteStoreError>>;
     /// Look up a quote by ID, verifying the MAC address matches.
     fn get_for_mac(
         &self,
@@ -130,7 +133,9 @@ pub trait LightningQuoteStore: Send + Sync {
     ) -> BoxFuture<'_, Result<Vec<LightningQuoteRecord>, QuoteStoreError>>;
     /// Return all quotes whose cached state is Paid or Issued but not yet
     /// processed (not `processing`, not `session_granted`).
-    fn list_paid_unprocessed(&self) -> BoxFuture<'_, Result<Vec<LightningQuoteRecord>, QuoteStoreError>>;
+    fn list_paid_unprocessed(
+        &self,
+    ) -> BoxFuture<'_, Result<Vec<LightningQuoteRecord>, QuoteStoreError>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +163,10 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
         })
     }
 
-    fn get(&self, quote_id: &str) -> BoxFuture<'_, Result<Option<LightningQuoteRecord>, QuoteStoreError>> {
+    fn get(
+        &self,
+        quote_id: &str,
+    ) -> BoxFuture<'_, Result<Option<LightningQuoteRecord>, QuoteStoreError>> {
         let quote_id = quote_id.to_owned();
         Box::pin(async move {
             let map = self.map.lock().await;
@@ -242,7 +250,9 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
         })
     }
 
-    fn list_paid_unprocessed(&self) -> BoxFuture<'_, Result<Vec<LightningQuoteRecord>, QuoteStoreError>> {
+    fn list_paid_unprocessed(
+        &self,
+    ) -> BoxFuture<'_, Result<Vec<LightningQuoteRecord>, QuoteStoreError>> {
         Box::pin(async move {
             let map = self.map.lock().await;
             let unpaid_unprocessed: Vec<LightningQuoteRecord> = map
@@ -387,9 +397,7 @@ pub fn spawn_quote_monitor(
             record.cached_state = Some(QuoteState::Issued);
             let _ = store.update(&quote_id, record).await;
 
-            tracing::info!(
-                "quote monitor: granted access for {quote_id} allotment={allotment}"
-            );
+            tracing::info!("quote monitor: granted access for {quote_id} allotment={allotment}");
             return;
         }
     })

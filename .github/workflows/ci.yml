@@ -26,14 +26,28 @@ jobs:
         run: cargo clippy --workspace --all-targets --features v1-compat -- -D warnings
       - name: Clippy (spilman)
         run: cargo clippy --workspace --all-targets --features v1-compat,spilman -- -D warnings
+      - name: Clippy (openwrt)
+        run: cargo clippy --workspace --all-targets --features openwrt -- -D warnings
       - name: Build (default)
         run: cargo build --workspace --all-targets
       - name: Build (v1-compat+spilman)
         run: cargo build --workspace --all-targets --features v1-compat,spilman
+      - name: Build (openwrt)
+        run: cargo build --workspace --all-targets --features openwrt
       - name: Test (default)
         run: cargo test --workspace
       - name: Test (v1-compat)
         run: cargo test --workspace --features v1-compat
+      - name: Test (openwrt)
+        run: cargo test --workspace --features openwrt
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   # Guards the constraint that the core libraries stay no_std (esp32-ready):
   # they must build against a target that has no std.
