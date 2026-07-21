@@ -21,6 +21,8 @@ pub mod merchant;
 
 pub mod ln_quotes;
 
+pub mod mint_health;
+
 pub mod crowsnest;
 
 pub mod adapter;

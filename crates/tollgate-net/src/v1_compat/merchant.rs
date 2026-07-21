@@ -57,6 +57,7 @@ pub struct V1ServerConfig {
     pub nostr_keys: Keys,
     pub trust_proxy_headers: bool,
     pub wallet: Option<Arc<CdkWallet>>,
+    pub mint_health: Option<Arc<super::mint_health::MintHealthTracker>>,
 }
 
 /// A customer session record.
@@ -95,13 +96,23 @@ pub enum AllotmentError {
 
 /// Build a TollGate advertisement event (Nostr kind 10021) as JSON.
 ///
-/// Encodes the server's metric, step size, accepted mints, pricing, and
-/// implemented TIP numbers into a signed Nostr event. The resulting JSON
-/// can be parsed back with
-/// [`super::nostr::TollGateAdvertisement::from_json`].
-pub fn build_advertisement(
+/// Drops unreachable mints when a [`MintHealthTracker`] is attached, and
+/// returns [`build_degraded_advertisement`] when all mints are unreachable.
+///
+/// [`MintHealthTracker`]: super::mint_health::MintHealthTracker
+pub async fn build_advertisement(
     config: &V1ServerConfig,
 ) -> Result<String, nostr::event::builder::Error> {
+    let reachable: Vec<AcceptedMint> = if let Some(tracker) = &config.mint_health {
+        tracker.get_reachable_mints(&config.accepted_mints).await
+    } else {
+        config.accepted_mints.clone()
+    };
+
+    if reachable.is_empty() {
+        return build_degraded_advertisement(config);
+    }
+
     let mut tags: Vec<Tag> = vec![
         Tag::custom(TagKind::Custom("metric".into()), [config.metric.clone()]),
         Tag::custom(
@@ -110,7 +121,7 @@ pub fn build_advertisement(
         ),
     ];
 
-    for mint in &config.accepted_mints {
+    for mint in &reachable {
         tags.push(Tag::custom(
             TagKind::Custom("price_per_step".into()),
             [
@@ -131,6 +142,43 @@ pub fn build_advertisement(
     let event = EventBuilder::new(Kind::Custom(10_021), "")
         .tags(Tags::from_list(tags))
         .sign_with_keys(&config.nostr_keys)?;
+
+    Ok(event.as_json())
+}
+
+/// Build a degraded-mode TollGate advertisement (kind 10021) as JSON.
+///
+/// Emitted when no accepted mints are reachable. Carries `level=warning`
+/// and `code=no-reachable-mints` tags so clients can branch on degraded
+/// state while still using the advertisement kind for discovery.
+pub fn build_degraded_advertisement(
+    config: &V1ServerConfig,
+) -> Result<String, nostr::event::builder::Error> {
+    let tags: Vec<Tag> = vec![
+        Tag::custom(
+            TagKind::Custom("metric".into()),
+            [config.metric.clone()],
+        ),
+        Tag::custom(
+            TagKind::Custom("step_size".into()),
+            [config.step_size.to_string()],
+        ),
+        Tag::custom(
+            TagKind::Custom("level".into()),
+            ["warning".to_owned()],
+        ),
+        Tag::custom(
+            TagKind::Custom("code".into()),
+            ["no-reachable-mints".to_owned()],
+        ),
+    ];
+
+    let event = EventBuilder::new(
+        Kind::Custom(10_021),
+        "TollGate is in degraded mode. No reachable mints detected.",
+    )
+    .tags(Tags::from_list(tags))
+    .sign_with_keys(&config.nostr_keys)?;
 
     Ok(event.as_json())
 }

@@ -92,6 +92,20 @@ pub fn build_v1_config(
         Some(hex) => nostr::key::Keys::parse(hex).unwrap_or_else(|_| nostr::key::Keys::generate()),
         None => nostr::key::Keys::generate(),
     };
+    let mint_health = if !accepted_mints.is_empty() {
+        let tracker = Arc::new(crate::v1_compat::mint_health::MintHealthTracker::new(
+            &accepted_mints.iter().map(|m| m.url.clone()).collect::<Vec<_>>(),
+        ));
+        let tracker_clone = tracker.clone();
+        tokio::spawn(async move {
+            tracker_clone.run_initial_probe().await;
+            tracing::info!("mint health initial probe complete");
+        });
+        tracker.start_proactive_checks();
+        Some(tracker)
+    } else {
+        None
+    };
     Arc::new(V1ServerConfig {
         metric,
         step_size,
@@ -99,6 +113,7 @@ pub fn build_v1_config(
         nostr_keys,
         trust_proxy_headers: v1.trust_proxy_headers,
         wallet,
+        mint_health,
     })
 }
 

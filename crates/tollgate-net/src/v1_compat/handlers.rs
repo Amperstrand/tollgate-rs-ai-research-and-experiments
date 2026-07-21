@@ -91,10 +91,14 @@ fn extract_payment_token(body: &str) -> Option<String> {
     None
 }
 
+fn extract_mint_from_token(_token: &str) -> Option<String> {
+    None
+}
+
 async fn handle_get_details(
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
 ) -> Response {
-    match merchant::build_advertisement(&config) {
+    match merchant::build_advertisement(&config).await {
         Ok(json) => (StatusCode::OK, [("content-type", "application/json")], json).into_response(),
         Err(e) => json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -164,6 +168,15 @@ async fn handle_post_payment(
             ),
         }
     } else {
+        if let Some(tracker) = &config.mint_health {
+            let reason = result.reason.as_deref().unwrap_or("");
+            if !reason.contains("spent") && !reason.contains("Spent") {
+                if let Some(mint_url) = extract_mint_from_token(&token) {
+                    tracker.mark_unreachable(&mint_url).await;
+                    tracing::warn!(mint = %mint_url, "marked mint unreachable due to payment failure");
+                }
+            }
+        }
         let notice = merchant::build_notice_event(
             "error",
             "payment_rejected",
@@ -440,6 +453,7 @@ mod tests {
             nostr_keys: Keys::generate(),
             trust_proxy_headers: false,
             wallet: None,
+            mint_health: None,
         })
     }
 
