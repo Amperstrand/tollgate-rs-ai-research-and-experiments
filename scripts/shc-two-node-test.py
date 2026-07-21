@@ -24,8 +24,10 @@ import subprocess
 import base64
 import re
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.environ.get("SHC_TOOLKIT_PATH", "/home/ubuntu/src/shc-toolkit"))
 from shc_toolkit.client import SHCClient  # noqa: E402
+from shc_helpers import get_access  # noqa: E402
 
 # ── Paths ────────────────────────────────────────────────────────────────
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -60,28 +62,28 @@ CONSUME_POLLS = 5     # number of consume poll cycles
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
-def ssh(ip, *cmd, timeout=30):
-    """Run a command on *ip* as ``debian``.  Returns ``CompletedProcess``."""
+def ssh(host, *cmd, port=22, timeout=30):
+    """Run a command on *host* as ``debian``.  Returns ``CompletedProcess``."""
     return subprocess.run(
-        SSH_BASE + [f"debian@{ip}"] + list(cmd),
+        SSH_BASE + ["-p", str(port), f"debian@{host}"] + list(cmd),
         capture_output=True,
         timeout=timeout,
     )
 
 
-def ssh_shell(ip, command, timeout=30):
-    """Run a shell command string on *ip* (for redirections / backgrounding)."""
+def ssh_shell(host, command, port=22, timeout=30):
+    """Run a shell command string on *host* (for redirections / backgrounding)."""
     return subprocess.run(
-        SSH_BASE + [f"debian@{ip}", command],
+        SSH_BASE + ["-p", str(port), f"debian@{host}", command],
         capture_output=True,
         timeout=timeout,
     )
 
 
-def scp(local, ip, remote, timeout=600):
-    """Copy *local* to *ip:remote*."""
+def scp(local, host, remote, port=22, timeout=600):
+    """Copy *local* to *host:remote*."""
     return subprocess.run(
-        SCP_BASE + [local, f"debian@{ip}:{remote}"],
+        SCP_BASE + ["-P", str(port), local, f"debian@{host}:{remote}"],
         capture_output=True,
         timeout=timeout,
     )
@@ -140,7 +142,7 @@ def wait_for_vm(client, service_id, label):
     return None, None
 
 
-def deploy_binary(ip, local_path, remote_path, label=""):
+def deploy_binary(host, local_path, remote_path, label="", port=22):
     """SCP a binary to the VM and make it executable (gzip-compressed transfer)."""
     size_mb = os.path.getsize(local_path) // 1_048_576
     name = os.path.basename(remote_path)
@@ -149,14 +151,14 @@ def deploy_binary(ip, local_path, remote_path, label=""):
         subprocess.run(["gzip", "-c", local_path], stdout=_f, check=True)
     gz_mb = os.path.getsize(_gz) // 1_048_576
     print(f"  [{label}] Deploying {name} ({size_mb} MB → {gz_mb} MB gz)...")
-    scp(_gz, ip, "/tmp/_deploy_bin.gz")
-    ssh_shell(ip, f"gunzip -f /tmp/_deploy_bin.gz && sudo mv /tmp/_deploy_bin {remote_path} && sudo chmod +x {remote_path}")
+    scp(_gz, host, "/tmp/_deploy_bin.gz", port=port)
+    ssh_shell(host, f"gunzip -f /tmp/_deploy_bin.gz && sudo mv /tmp/_deploy_bin {remote_path} && sudo chmod +x {remote_path}", port=port)
 
 
-def write_remote_config(ip, config_yaml, remote_path="/etc/tollgate.yaml"):
+def write_remote_config(host, config_yaml, remote_path="/etc/tollgate.yaml", port=22):
     """Write *config_yaml* to *remote_path* on the VM via base64 piping."""
     b64 = base64.b64encode(config_yaml.encode()).decode()
-    ssh_shell(ip, f"echo '{b64}' | base64 -d | sudo tee {remote_path} > /dev/null")
+    ssh_shell(host, f"echo '{b64}' | base64 -d | sudo tee {remote_path} > /dev/null", port=port)
 
 
 def wait_for_http(url, attempts=30, interval=2):
@@ -277,22 +279,30 @@ def main():
         print(f"\nGateway IP: {gw_ip}")
         print(f"Client  IP: {cl_ip}")
 
+        # ── Establish gateway access (direct SSH or tunnel fallback) ─
+        print("\n" + "-" * 60)
+        print("  Establishing gateway access (direct SSH or tunnel fallback)")
+        print("-" * 60)
+        gw_ssh_host, gw_ssh_port, gw_http_base = get_access(gw_sid, GW_PORT)
+        print(f"  Gateway SSH : debian@{gw_ssh_host}:{gw_ssh_port}")
+        print(f"  Gateway HTTP: {gw_http_base}")
+
         # ── Deploy fake-mint to gateway ─────────────────────────────
         print("\n" + "-" * 60)
         print("  Deploying fake-mint to gateway")
         print("-" * 60)
-        scp(FAKE_MINT, gw_ip, "/tmp/fake-mint.py")
-        ssh_shell(gw_ip, "nohup python3 /tmp/fake-mint.py "
-                         f"{MINT_PORT} > /tmp/fake-mint.log 2>&1 &")
+        scp(FAKE_MINT, gw_ssh_host, "/tmp/fake-mint.py", port=gw_ssh_port)
+        ssh_shell(gw_ssh_host, "nohup python3 /tmp/fake-mint.py "
+                         f"{MINT_PORT} > /tmp/fake-mint.log 2>&1 &", port=gw_ssh_port)
         time.sleep(2)
 
         # Verify fake-mint is responding.
-        r = ssh(gw_ip, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                f"http://127.0.0.1:{MINT_PORT}/v1/info")
+        r = ssh(gw_ssh_host, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                f"http://127.0.0.1:{MINT_PORT}/v1/info", port=gw_ssh_port)
         fm_code = r.stdout.decode().strip()
         if fm_code != "200":
             print(f"  WARNING: fake-mint returned HTTP {fm_code}, checking log:")
-            ssh(gw_ip, "cat", "/tmp/fake-mint.log")
+            ssh(gw_ssh_host, "cat", "/tmp/fake-mint.log", port=gw_ssh_port)
         else:
             print(f"  fake-mint is UP on :{MINT_PORT}")
 
@@ -303,7 +313,7 @@ def main():
         if cross_code != "200":
             print(f"  WARNING: Client cannot reach gateway:{MINT_PORT} (HTTP {cross_code})")
             print("  fake-mint may need to bind to 0.0.0.0 or firewall needs opening")
-            ssh_shell(gw_ip, f"sudo iptables -I INPUT -p tcp --dport {MINT_PORT} -j ACCEPT 2>/dev/null; sudo iptables -I INPUT -p tcp --dport {GW_PORT} -j ACCEPT 2>/dev/null; true")
+            ssh_shell(gw_ssh_host, f"sudo iptables -I INPUT -p tcp --dport {MINT_PORT} -j ACCEPT 2>/dev/null; sudo iptables -I INPUT -p tcp --dport {GW_PORT} -j ACCEPT 2>/dev/null; true", port=gw_ssh_port)
             time.sleep(1)
             r = ssh(cl_ip, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
                     f"http://{gw_ip}:{MINT_PORT}/v1/info", timeout=10)
@@ -316,8 +326,8 @@ def main():
         print("\n" + "-" * 60)
         print("  Deploying tollgate + tolltop to gateway")
         print("-" * 60)
-        deploy_binary(gw_ip, BINARY, "/usr/local/bin/tollgate", "gw")
-        deploy_binary(gw_ip, TOLLTOP, "/usr/local/bin/tolltop", "gw")
+        deploy_binary(gw_ssh_host, BINARY, "/usr/local/bin/tollgate", "gw", port=gw_ssh_port)
+        deploy_binary(gw_ssh_host, TOLLTOP, "/usr/local/bin/tolltop", "gw", port=gw_ssh_port)
 
         # ── Deploy tollgate to client ───────────────────────────────
         print("\n" + "-" * 60)
@@ -342,20 +352,21 @@ def main():
             '    price_per_second: 0\n'
             '    price_per_unit: 1\n'
         )
-        write_remote_config(gw_ip, gw_config)
+        write_remote_config(gw_ssh_host, gw_config, port=gw_ssh_port)
         print("  Gateway config written to /etc/tollgate.yaml")
 
         print("  Starting gateway server...")
         ssh_shell(
-            gw_ip,
+            gw_ssh_host,
             f"nohup /usr/local/bin/tollgate --config /etc/tollgate.yaml "
             f"serve --listen 0.0.0.0:{GW_PORT} > /tmp/tollgate.log 2>&1 &",
+            port=gw_ssh_port,
         )
 
         print("  Waiting for gateway to accept connections...")
-        if not wait_for_http(f"http://{gw_ip}:{GW_PORT}/"):
+        if not wait_for_http(f"{gw_http_base}/"):
             print("  FATAL: Gateway server did not come up. Log tail:")
-            ssh(gw_ip, "tail", "-30", "/tmp/tollgate.log")
+            ssh(gw_ssh_host, "tail", "-30", "/tmp/tollgate.log", port=gw_ssh_port)
             return
         print("  Gateway server is UP!")
 
@@ -428,7 +439,7 @@ def main():
         print("  STEP 3: tolltop --once  (on gateway)")
         print("=" * 60)
         time.sleep(3)  # Let the gateway settle after the consume loop.
-        r = ssh(gw_ip, "/usr/local/bin/tolltop", "--once", timeout=15)
+        r = ssh(gw_ssh_host, "/usr/local/bin/tolltop", "--once", port=gw_ssh_port, timeout=15)
         tolltop_output = r.stdout.decode()
         tolltop_err = r.stderr.decode()
         print(f"  exit code: {r.returncode}")
@@ -483,7 +494,7 @@ def main():
 
         # Print gateway log excerpt for debugging.
         print("\n--- Gateway tollgate log (last 15 lines) ---")
-        ssh(gw_ip, "tail", "-15", "/tmp/tollgate.log")
+        ssh(gw_ssh_host, "tail", "-15", "/tmp/tollgate.log", port=gw_ssh_port)
 
     finally:
         # ── Cleanup: cancel BOTH VMs ────────────────────────────────

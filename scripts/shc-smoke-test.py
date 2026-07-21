@@ -3,6 +3,7 @@
 import os, sys, time, subprocess, base64, re
 
 sys.path.insert(0, os.environ.get("SHC_TOOLKIT_PATH", "/home/ubuntu/src/shc-toolkit"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shc_toolkit.client import SHCClient
 
 BINARY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "target", "release", "tollgate")
@@ -16,9 +17,9 @@ def get_ip(d):
         return d["ips"][0].get("ip")
     return d.get("ip_address") or d.get("ip")
 
-def ssh_ok(ip, user):
+def ssh_ok(host, user, port=22):
     r = subprocess.run(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-         "-o", "ConnectTimeout=5", "-o", "LogLevel=ERROR", "-i", SSH_PRIV, f"{user}@{ip}", "echo", "OK"],
+         "-o", "ConnectTimeout=5", "-o", "LogLevel=ERROR", "-i", SSH_PRIV, "-p", str(port), f"{user}@{host}", "echo", "OK"],
         capture_output=True, timeout=10)
     return r.returncode == 0 and b"OK" in r.stdout
 
@@ -52,6 +53,9 @@ def main():
     if not ip:
         print("FAILED"); c.cancel_vm(sid, immediate=True); return
 
+    from shc_helpers import get_access
+    ssh_host, ssh_port, http_base = get_access(sid, PORT)
+
     print("Applying SSH key live...")
     try: c.apply_ssh_key_live(sid, pubkey)
     except: pass
@@ -61,17 +65,17 @@ def main():
     print("Waiting for SSH...")
     for _ in range(12):
         for u in ["debian", "root"]:
-            if ssh_ok(ip, u):
+            if ssh_ok(ssh_host, u, ssh_port):
                 user = u; break
         if user:
-            print(f"  SSH OK: {user}@{ip}"); break
+            print(f"  SSH OK: {user}@{ssh_host}:{ssh_port}"); break
         time.sleep(10)
 
     if not user:
         print("SSH failed"); c.cancel_vm(sid, immediate=True); return
 
     ssh = lambda *cmd: subprocess.run(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", "-i", SSH_PRIV, f"{user}@{ip}"] + list(cmd),
+        "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", "-i", SSH_PRIV, "-p", str(ssh_port), f"{user}@{ssh_host}"] + list(cmd),
         capture_output=True, timeout=30)
 
     try:
@@ -80,7 +84,7 @@ def main():
             subprocess.run(["gzip", "-c", BINARY], stdout=_f, check=True)
         print(f"Deploying binary ({os.path.getsize(BINARY)//1048576}MB → {os.path.getsize(_gz)//1048576}MB gz)...")
         subprocess.run(["scp", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, _gz, f"{user}@{ip}:/tmp/tollgate.gz"], check=True, timeout=300)
+            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, "-P", str(ssh_port), _gz, f"{user}@{ssh_host}:/tmp/tollgate.gz"], check=True, timeout=300)
         ssh("gunzip", "-f", "/tmp/tollgate.gz")
         ssh("sudo", "mv", "/tmp/tollgate", "/usr/local/bin/tollgate")
         ssh("sudo", "chmod", "+x", "/usr/local/bin/tollgate")
@@ -97,22 +101,22 @@ def main():
         print("Waiting for server...")
         for _ in range(20):
             time.sleep(2)
-            r = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"http://{ip}:{PORT}/"],
+            r = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"{http_base}/"],
                 capture_output=True, timeout=5)
             if r.stdout.decode().strip() == "200":
                 print("  Server UP!"); break
         else:
             print("Server failed"); ssh("tail", "-20", "/tmp/tollgate.log"); return
 
-        print(f"\n{'='*50}\n  SMOKE TESTS: {ip}:{PORT}\n{'='*50}\n")
+        print(f"\n{'='*50}\n  SMOKE TESTS: {http_base}\n{'='*50}\n")
         tests = [
-            ("GET / ad", f"http://{ip}:{PORT}/", "200", r'"kind"'),
-            ("GET /whoami", f"http://{ip}:{PORT}/whoami", "200", r"mac="),
-            ("GET /usage", f"http://{ip}:{PORT}/usage", "404", ""),
-            ("GET /balance", f"http://{ip}:{PORT}/balance", "404", ""),
-            ("GET /pay", f"http://{ip}:{PORT}/pay", "200", r'"kind"'),
-            ("POST / bad token", f"http://{ip}:{PORT}/", "400", ""),
-            ("v2 exchange (POST)", f"http://{ip}:{PORT}/tollgate/v1/exchange", "200", ""),
+            ("GET / ad", f"{http_base}/", "200", r'"kind"'),
+            ("GET /whoami", f"{http_base}/whoami", "200", r"mac="),
+            ("GET /usage", f"{http_base}/usage", "404", ""),
+            ("GET /balance", f"{http_base}/balance", "404", ""),
+            ("GET /pay", f"{http_base}/pay", "200", r'"kind"'),
+            ("POST / bad token", f"{http_base}/", "400", ""),
+            ("v2 exchange (POST)", f"{http_base}/tollgate/v1/exchange", "200", ""),
         ]
         p = f_ = 0
         for name, url, wc, wb in tests:

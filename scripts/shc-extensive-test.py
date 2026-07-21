@@ -6,6 +6,7 @@ physical-router-test-automation/tests/api/test_rust_v1_api.py.
 """
 import os, sys, time, subprocess, base64, re, json
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.environ.get("SHC_TOOLKIT_PATH", "/home/ubuntu/src/shc-toolkit"))
 from shc_toolkit.client import SHCClient
 
@@ -20,10 +21,11 @@ def get_ip(d):
         return d["ips"][0].get("ip")
     return d.get("ip_address") or d.get("ip")
 
-def ssh_cmd(ip, user, *cmd):
+def ssh_cmd(host, user, *cmd, port=22):
     return subprocess.run(
         ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-         "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", "-i", SSH_PRIV, f"{user}@{ip}"] + list(cmd),
+         "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", "-i", SSH_PRIV,
+         "-p", str(port), f"{user}@{host}"] + list(cmd),
         capture_output=True, timeout=30)
 
 def curl(url, *args):
@@ -69,6 +71,10 @@ def main():
     if not ip:
         print("FAILED"); c.cancel_vm(sid, immediate=True); return
 
+    print("Establishing access (direct SSH or tunnel fallback)...")
+    from shc_helpers import get_access
+    ssh_host, ssh_port, http_base = get_access(sid, PORT)
+
     print("Applying SSH key...")
     try: c.apply_ssh_key_live(sid, pubkey)
     except: pass
@@ -77,7 +83,7 @@ def main():
     user = None
     for _ in range(12):
         for u in ["debian", "root"]:
-            r = ssh_cmd(ip, u, "echo", "OK")
+            r = ssh_cmd(ssh_host, u, "echo", "OK", port=ssh_port)
             if r.returncode == 0 and b"OK" in r.stdout:
                 user = u; break
         if user: break
@@ -86,7 +92,7 @@ def main():
         print("SSH failed"); c.cancel_vm(sid, immediate=True); return
 
     def ssh(*cmd):
-        return ssh_cmd(ip, user, *cmd)
+        return ssh_cmd(ssh_host, user, *cmd, port=ssh_port)
 
     try:
         _gz = "/tmp/tollgate.gz"
@@ -94,7 +100,8 @@ def main():
             subprocess.run(["gzip", "-c", BINARY], stdout=_f, check=True)
         print(f"Deploying binary ({os.path.getsize(BINARY)//1048576}MB → {os.path.getsize(_gz)//1048576}MB gz)...")
         subprocess.run(["scp", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, _gz, f"{user}@{ip}:/tmp/tollgate.gz"], check=True, timeout=300)
+            "-o", "LogLevel=ERROR", "-i", SSH_PRIV, "-P", str(ssh_port),
+            _gz, f"{user}@{ssh_host}:/tmp/tollgate.gz"], check=True, timeout=300)
         ssh("gunzip", "-f", "/tmp/tollgate.gz")
         ssh("sudo", "mv", "/tmp/tollgate", "/usr/local/bin/tollgate")
         ssh("sudo", "chmod", "+x", "/usr/local/bin/tollgate")
@@ -108,20 +115,20 @@ def main():
         print("Waiting for server...")
         for _ in range(20):
             time.sleep(2)
-            r = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"http://{ip}:{PORT}/"],
+            r = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"{http_base}/"],
                 capture_output=True, timeout=5)
             if r.stdout.decode().strip() == "200":
                 print("  Server UP!"); break
         else:
             print("Server failed"); ssh("tail", "-20", "/tmp/tollgate.log"); return
 
-        BASE = f"http://{ip}:{PORT}"
+        BASE = http_base
         XFF = "-H" f"X-Forwarded-For: 10.0.0.42"
         results = []
 
         print(f"\n{'='*60}")
         print(f"  EXTENSIVE TEST SUITE (adapted from PRTA test_rust_v1_api.py)")
-        print(f"  Target: {ip}:{PORT}")
+        print(f"  Target: {ssh_host}:{ssh_port} (HTTP: {http_base})")
         print(f"{'='*60}\n")
 
         # Test 1: Advertisement

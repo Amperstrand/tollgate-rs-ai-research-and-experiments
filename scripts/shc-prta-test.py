@@ -13,18 +13,28 @@ PORT = 2121
 ROOT_PW = "tollgate"
 
 sys.path.insert(0, os.environ.get("SHC_TOOLKIT_PATH", "/home/ubuntu/src/shc-toolkit"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shc_toolkit.client import SHCClient
 
+# Set by main() via get_access() — ssh()/scp() read these so they work through
+# tunnel fallback when direct SSH to the VM is blocked.
+ssh_host = None
+ssh_port = 22
+
 def ssh(ip, cmd, timeout=30):
+    # ip param kept for signature compat; actual target is ssh_host/ssh_port.
     return subprocess.run(
         ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-         "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", "-i", SSH_PRIV, f"debian@{ip}", cmd],
+         "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", "-i", SSH_PRIV,
+         "-p", str(ssh_port), f"debian@{ssh_host}", cmd],
         capture_output=True, timeout=timeout)
 
 def scp(local, ip, remote, timeout=180):
+    # ip param kept for signature compat; actual target is ssh_host/ssh_port.
     return subprocess.run(
         ["scp", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-         "-o", "LogLevel=ERROR", "-i", SSH_PRIV, local, f"debian@{ip}:{remote}"],
+         "-o", "LogLevel=ERROR", "-i", SSH_PRIV,
+         "-P", str(ssh_port), local, f"debian@{ssh_host}:{remote}"],
         capture_output=True, timeout=timeout)
 
 def get_ip(d):
@@ -64,6 +74,12 @@ def main():
         print("FAILED"); c.cancel_vm(sid, immediate=True); return
 
     try:
+        # Establish SSH/HTTP access (direct first, tunnel fallback if blocked).
+        global ssh_host, ssh_port
+        from shc_helpers import get_access
+        ssh_host, ssh_port, http_base = get_access(sid, PORT, ssh_key=SSH_PRIV)
+        print(f"Access: ssh -p {ssh_port} debian@{ssh_host} | http via {http_base}")
+
         c.apply_ssh_key_live(sid, pubkey)
         time.sleep(5)
 
@@ -71,7 +87,7 @@ def main():
         for _ in range(15):
             r = ssh(ip, "echo OK", timeout=10)
             if r.returncode == 0 and b"OK" in r.stdout:
-                print(f"  SSH OK: debian@{ip}")
+                print(f"  SSH OK: debian@{ssh_host}:{ssh_port}")
                 break
             time.sleep(10)
 
@@ -82,10 +98,10 @@ def main():
         ssh(ip, "sudo systemctl restart sshd")
         time.sleep(2)
 
-        # Verify root SSH works
+        # Verify root SSH works (via ssh_host:ssh_port — direct or tunnel)
         r = subprocess.run(
             ["sshpass", "-e", "ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-             "-o", "LogLevel=ERROR", f"root@{ip}", "echo ROOT_OK"],
+             "-o", "LogLevel=ERROR", "-p", str(ssh_port), f"root@{ssh_host}", "echo ROOT_OK"],
             capture_output=True, timeout=10,
             env={**os.environ, "SSHPASS": ROOT_PW})
         if b"ROOT_OK" not in r.stdout:
@@ -93,7 +109,7 @@ def main():
             subprocess.run(["sudo", "apt-get", "install", "-y", "sshpass"], capture_output=True)
             r = subprocess.run(
                 ["sshpass", "-e", "ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                 "-o", "LogLevel=ERROR", f"root@{ip}", "echo ROOT_OK"],
+                 "-o", "LogLevel=ERROR", "-p", str(ssh_port), f"root@{ssh_host}", "echo ROOT_OK"],
                 capture_output=True, timeout=10,
                 env={**os.environ, "SSHPASS": ROOT_PW})
         if b"ROOT_OK" in r.stdout:
@@ -177,7 +193,8 @@ v1_compat:
         env = os.environ.copy()
         env.update({
             "TOLLGATE_BACKEND": "rust",
-            "TOLLGATE_SSH_HOST": ip,
+            "TOLLGATE_SSH_HOST": ssh_host,
+            "TOLLGATE_SSH_PORT": str(ssh_port),
             "TOLLGATE_SSH_USER": "root",
             "TOLLGATE_SSH_PASSWORD": ROOT_PW,
             "TOLLGATE_SSH_KEY": "",
