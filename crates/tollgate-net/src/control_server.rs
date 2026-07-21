@@ -316,9 +316,11 @@ mod tests {
     #[tokio::test]
     async fn json_config_get_returns_serialized_config() {
         let driver = test_driver();
-        let mut cfg = Config::default();
-        cfg.unit = "wh".to_string();
-        cfg.listen = "0.0.0.0:9999".to_string();
+        let cfg = Config {
+            unit: "wh".to_string(),
+            listen: "0.0.0.0:9999".to_string(),
+            ..Config::default()
+        };
         let out = process_line(
             r#"{"command":"config","args":["get"]}"#,
             &driver,

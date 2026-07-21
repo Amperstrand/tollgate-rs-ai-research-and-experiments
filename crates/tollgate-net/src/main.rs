@@ -12,6 +12,7 @@ mod driver;
 mod server;
 mod ssl;
 mod wallet;
+mod web_ui;
 
 #[cfg(feature = "v1-compat")]
 mod v1_compat;

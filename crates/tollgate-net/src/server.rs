@@ -128,10 +128,16 @@ pub fn router(
     #[cfg(feature = "v1-compat")]
     let v1_driver = driver.clone();
 
+    // The admin dashboard is always served (not behind v1-compat). It owns its
+    // own state (`WebUiState { driver, config }`) so it merges cleanly into the
+    // base router — both end up `Router<()>` after their `.with_state(...)`.
+    let web_ui = crate::web_ui::router(driver.clone(), std::sync::Arc::new(cfg.clone()));
+
     let base = Router::new()
         .route("/tollgate/v1/exchange", axum::routing::post(http_exchange))
         .route("/tollgate/v1/ws", get(ws_upgrade))
-        .with_state(driver);
+        .with_state(driver)
+        .merge(web_ui);
 
     #[cfg(feature = "v1-compat")]
     {
