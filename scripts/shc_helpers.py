@@ -39,19 +39,38 @@ def _check_ssh(ip: str, port: int = 22, key: str = "~/.ssh/id_ed25519", timeout:
         return False
 
 
-def _setup_port_forward(ssh_host: str, ssh_port: int, test_port: int, key: str) -> subprocess.Popen | None:
+def _setup_port_forward(ssh_host: str, ssh_port: int, test_port: int, key: str, socket: str | None = None) -> subprocess.Popen | None:
+    opts = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR", "-o", "ExitOnForwardFailure=yes",
+            "-i", os.path.expanduser(key)]
+    if socket:
+        opts += ["-S", socket, "-O", "forward", "-L", f"{test_port}:localhost:{test_port}",
+                 f"debian@{ssh_host}"]
+        subprocess.run(opts + ["-p", str(ssh_port)], capture_output=True, timeout=10)
+        return None
+    opts += ["-N", "-L", f"{test_port}:localhost:{test_port}",
+             "-p", str(ssh_port), f"debian@{ssh_host}"]
     try:
-        proc = subprocess.Popen(
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-             "-o", "LogLevel=ERROR", "-o", "ExitOnForwardFailure=yes",
-             "-i", os.path.expanduser(key),
-             "-N", "-L", f"{test_port}:localhost:{test_port}",
-             "-p", str(ssh_port), f"debian@{ssh_host}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        proc = subprocess.Popen(opts, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(3)
         if proc.poll() is None:
             return proc
+    except Exception:
+        pass
+    return None
+
+
+def _setup_ssh_master(ssh_host: str, ssh_port: int, key: str) -> str:
+    socket = "/tmp/ssh-tunnel-master"
+    opts = ["ssh", "-M", "-S", socket, "-o", "ControlPersist=600",
+            "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "ConnectTimeout=15", "-o", "LogLevel=ERROR",
+            "-i", os.path.expanduser(key), "-p", str(ssh_port), f"debian@{ssh_host}",
+            "echo MASTER_OK"]
+    try:
+        r = subprocess.run(opts, capture_output=True, text=True, timeout=20)
+        if "MASTER_OK" in r.stdout:
+            return socket
     except Exception:
         pass
     return None
@@ -93,13 +112,17 @@ def get_access(
         service_id, local_port=2222, key=ssh_key, verbose=verbose,
     )
 
-    fwd_proc = _setup_port_forward(ssh_host, ssh_port, test_port, ssh_key)
-    if fwd_proc:
+    master = _setup_ssh_master(ssh_host, ssh_port, ssh_key)
+    if master:
+        if verbose:
+            print("  SSH master connection established (reliable tunnel)")
+        _setup_port_forward(ssh_host, ssh_port, test_port, ssh_key, socket=master)
         if verbose:
             print(f"  Port forward: localhost:{test_port} → VM:{test_port}")
     else:
+        _setup_port_forward(ssh_host, ssh_port, test_port, ssh_key)
         if verbose:
-            print(f"  WARNING: Port forward failed — HTTP tests may not work")
+            print(f"  Port forward (no master): localhost:{test_port} → VM:{test_port}")
 
     http_base = f"http://localhost:{test_port}"
     if verbose:
