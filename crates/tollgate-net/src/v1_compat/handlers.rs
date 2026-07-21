@@ -374,8 +374,13 @@ async fn handle_get_ln_invoice(
         Err(e) => {
             let json =
                 serde_json::json!({"error": format!("quote check failed: {e}"), "quote": quote_id});
+            let status = if format!("{e}").to_lowercase().contains("unknown") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status,
                 [("content-type", "application/json")],
                 serde_json::to_string(&json).unwrap_or_default(),
             )
