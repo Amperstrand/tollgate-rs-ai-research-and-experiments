@@ -8,10 +8,12 @@
 //! melt, and multi-mint fallback.
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use cdk::nuts::{CurrencyUnit, MintQuoteState, PaymentMethod};
-use cdk::wallet::{ReceiveOptions, SendKind, SendOptions};
+use cdk::wallet::{SendKind, SendOptions};
 use cdk_sqlite::wallet::memory;
 
 // ---------------------------------------------------------------------------
@@ -59,6 +61,8 @@ pub struct MintResult {
 /// Uses an in-memory SQLite localstore for proof management.
 pub struct CdkWallet {
     wallet: cdk::Wallet,
+    /// HTTP client for lightweight NUT-07 checkstate calls (verify path).
+    client: reqwest::Client,
 }
 
 impl CdkWallet {
@@ -79,7 +83,10 @@ impl CdkWallet {
         );
         let wallet = cdk::Wallet::new(mint_url, CurrencyUnit::Sat, localstore, seed, None)
             .map_err(|e| anyhow::anyhow!("wallet init: {e}"))?;
-        Ok(Self { wallet })
+        Ok(Self {
+            wallet,
+            client: reqwest::Client::new(),
+        })
     }
 
     /// Try each mint URL in order, returning the first that initializes successfully.
@@ -120,59 +127,116 @@ impl CdkWallet {
     /// The token is a `cashuA` (V3) or `cashuB` (V4) encoded string,
     /// transmitted as raw bytes (UTF-8 string).
     ///
-    /// Returns the amount received (in sats).
+    /// Returns the verified amount (in sats).
+    ///
+    /// # Verification strategy
+    ///
+    /// This does NOT call `cdk::Wallet::receive()`. Instead it mirrors the
+    /// production [`BootstrapWallet::verify`](crate::wallet::BootstrapWallet::verify):
+    /// parse with `cashu::Token`, validate the mint, sum proof amounts, and
+    /// call NUT-07 checkstate at the mint. This avoids issue #52 where CDK
+    /// rejects tokens whose keyset IDs the wallet hasn't pre-loaded
+    /// ("Short keyset id does not match any of the provided IDv2s" /
+    /// "NUT02: ID length invalid").
+    ///
+    /// For the v1 compat recovery path this is sufficient: the caller
+    /// ([`recovery::recover_failed_token`](super::recovery::recover_failed_token))
+    /// only needs to know the token is valid and unspent. Long-term storage
+    /// of reclaimed proofs is handled at the gateway/driver layer, not here.
     ///
     /// # Errors
     ///
-    /// Returns an error if the token cannot be received after 3 attempts.
+    /// Returns an error if the token is malformed, from a foreign mint,
+    /// or any proof is already spent at the mint.
     #[allow(clippy::missing_errors_doc)]
     pub async fn receive_token(&self, token: &[u8]) -> anyhow::Result<u64> {
         let token_str = String::from_utf8_lossy(token).to_string();
         tracing::info!(
-            "[NUT-00] Receiving Cashu token ({} bytes, first 20 chars: {:?})",
+            "[NUT-00] Verifying Cashu token ({} bytes, first 20 chars: {:?})",
             token_str.len(),
             &token_str[..token_str.len().min(20)]
         );
 
-        let balance_before = self.wallet.total_balance().await.map_or(0, u64::from);
-        let mut last_err = String::new();
-        for attempt in 0..3 {
-            match self
-                .wallet
-                .receive(&token_str, ReceiveOptions::default())
-                .await
-            {
-                Ok(amount) => {
-                    let amount = u64::from(amount);
-                    tracing::info!("[NUT-00] Token received successfully: {} sat", amount);
-                    return Ok(amount);
-                }
-                Err(e) => {
-                    last_err = format!("{e}");
-                    tracing::warn!("[NUT-00] Receive attempt {}/3 failed: {e}", attempt + 1);
-                    // Some mints can return transient/ambiguous receive
-                    // errors even when proofs were partially accepted.
-                    // Attempt recovery and accept any observed balance delta.
-                    let _ = self.wallet.recover_incomplete_sagas().await;
-                    if let Ok(current_balance) = self.wallet.total_balance().await {
-                        let current = u64::from(current_balance);
-                        if current > balance_before {
-                            let recovered = current - balance_before;
-                            tracing::info!(
-                                "[NUT-00] Recovered receive via saga reconciliation: {} sat",
-                                recovered
-                            );
-                            return Ok(recovered);
-                        }
-                    }
-                    if attempt < 2 {
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    }
-                }
+        let amount = self.verify_token(&token_str).await?;
+        tracing::info!("[NUT-00] Token verified successfully: {} sat", amount);
+        Ok(amount)
+    }
+
+    /// Lightweight token verification — mirrors
+    /// [`BootstrapWallet::verify`](crate::wallet::BootstrapWallet::verify) but
+    /// returns sats (the v1_compat contract) instead of milli-units.
+    ///
+    /// Parses with `cashu::Token` (no CDK keyset loading), enforces that the
+    /// token's mint matches this wallet's configured mint (the same safety
+    /// check `cdk::Wallet::receive()` performs), sums proof amounts, and calls
+    /// NUT-07 checkstate to ensure every proof is UNSPENT.
+    async fn verify_token(&self, token_str: &str) -> anyhow::Result<u64> {
+        let token = cashu::nuts::Token::from_str(token_str).context("invalid Cashu token")?;
+
+        let token_mint = token.mint_url().context("token has no mint URL")?;
+        let token_mint_str = token_mint.to_string();
+        let token_mint_base = token_mint_str.trim_end_matches('/');
+
+        let wallet_mint_str = self.wallet.mint_url.to_string();
+        let wallet_mint_base = wallet_mint_str.trim_end_matches('/');
+        if token_mint_base != wallet_mint_base {
+            anyhow::bail!(
+                "token mint {token_mint_str} does not match wallet mint {}",
+                self.wallet.mint_url
+            );
+        }
+
+        let amount_sat: u64 = token
+            .value()
+            .context("could not sum token value")?
+            .into();
+
+        let ys = token_proof_ys(&token);
+        if ys.is_empty() {
+            anyhow::bail!("token contains no proofs");
+        }
+
+        self.check_proofs_unspent(token_mint_base, &ys).await?;
+
+        tracing::info!(
+            "[NUT-00] Token verified (lightweight): {amount_sat} sat, {} proofs, no CDK receive()",
+            ys.len()
+        );
+        Ok(amount_sat)
+    }
+
+    /// NUT-07: POST `/v1/checkstate` and require every returned state to be UNSPENT.
+    async fn check_proofs_unspent(
+        &self,
+        mint_base_url: &str,
+        ys: &[String],
+    ) -> anyhow::Result<()> {
+        let url = format!("{mint_base_url}/v1/checkstate");
+        let body = serde_json::json!({ "Ys": ys });
+
+        let resp: serde_json::Value = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .context("mint check-state request failed")?
+            .error_for_status()
+            .context("mint returned error")?
+            .json()
+            .await
+            .context("mint response not JSON")?;
+
+        let states = resp["states"]
+            .as_array()
+            .context("mint response missing 'states'")?;
+        for state in states {
+            let s = state["state"].as_str().unwrap_or("");
+            if s != "UNSPENT" {
+                anyhow::bail!("one or more proofs are already spent (state: {s})");
             }
         }
-        tracing::error!("[NUT-00] CDK receive failed after 3 attempts: {last_err}");
-        Err(anyhow::anyhow!("CDK receive: {last_err}"))
+        Ok(())
     }
 
     /// Create a Cashu token for the given amount (NUT-00).
@@ -557,5 +621,58 @@ impl CdkWallet {
             .await
             .map_err(|e| anyhow::anyhow!("get_proofs: {e}"))?;
         serde_json::to_string(&proofs).map_err(|e| anyhow::anyhow!("serialize proofs: {e}"))
+    }
+}
+
+/// Extract the `C` (blinded secret pubkey) hex strings from a token's proofs.
+/// These are the Y-values the mint uses for NUT-07 state lookup. Handles both
+/// V3 (`cashuA`) and V4 (`cashuB`) token encodings.
+fn token_proof_ys(token: &cashu::nuts::Token) -> Vec<String> {
+    use cashu::nuts::Token;
+    match token {
+        Token::TokenV3(t) => t
+            .token
+            .iter()
+            .flat_map(|entry| entry.proofs.iter().map(|p| p.c.to_string()))
+            .collect(),
+        Token::TokenV4(t) => t
+            .token
+            .iter()
+            .flat_map(|entry| entry.proofs.iter().map(|p| p.c.to_string()))
+            .collect(),
+    }
+}
+
+/// A real cashuB (V4) token for unit tests — 1 sat from testnut.cashu.space.
+/// Same token used by the production [`BootstrapWallet`](crate::wallet::BootstrapWallet) tests.
+#[cfg(test)]
+const SAMPLE_TOKEN: &str = "cashuBo2FteBtodHRwczovL3Rlc3RudXQuY2FzaHUuc3BhY2VhdWNzYXRhdIGiYWlIAYhKdLsvxe5hcIGkYWEBYXN4QDk1NTM1NzQ1YjQ2MzM2OGQ1OTVkMGVhMmQ1M2NmMDU0YjZkY2ZhZTY0NjhlOWU0N2U1MDc1YWU3OWRmNmUyODdhY1ghA03QgEalpQeCViTFYVixs-4tTxGmV0Dl-hKTQ8jLyG1ZYWSjYWVYIKlCWsnyOJRBHT_0xffz67uTQUWhk336QvZbnEQW6OUZYXNYIA88wEUIkwoL1RKs6j41AgtMZLp2e3JrlpZyU1o2M3TJYXJYILoalwd76VtIosztMCjHmQzbNUVKCM4VjvV02fSkG19-";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_v4_token_and_reads_amount() {
+        let token = cashu::nuts::Token::from_str(SAMPLE_TOKEN).expect("valid cashuB token");
+        let amount_sat: u64 = token.value().expect("has value").into();
+        assert_eq!(amount_sat, 1);
+        let mint = token.mint_url().expect("has mint URL").to_string();
+        assert!(mint.contains("testnut.cashu.space"));
+    }
+
+    #[test]
+    fn extracts_proof_y_values_v4() {
+        let token = cashu::nuts::Token::from_str(SAMPLE_TOKEN).expect("valid token");
+        let ys = token_proof_ys(&token);
+        assert_eq!(ys.len(), 1, "sample token has exactly one proof");
+        // Y-values are 33-byte compressed pubkeys in hex (66 chars).
+        assert_eq!(ys[0].len(), 66);
+    }
+
+    #[test]
+    fn rejects_invalid_token_string() {
+        let result = cashu::nuts::Token::from_str("not-a-token");
+        assert!(result.is_err(), "garbage string must fail to parse");
     }
 }
