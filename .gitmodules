@@ -1,0 +1,3 @@
+[submodule "reference/fips"]
+	path = reference/fips
+	url = https://github.com/jmcorgan/fips.git

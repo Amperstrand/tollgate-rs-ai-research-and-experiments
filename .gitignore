@@ -19,7 +19,8 @@ agents/
 
 deploy/
 
-reference/
+reference/*
+!reference/fips
 
 dist/
 *.ipk
