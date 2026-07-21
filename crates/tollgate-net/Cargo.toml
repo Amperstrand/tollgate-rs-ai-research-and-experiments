@@ -50,6 +50,8 @@ netlink-packet-route = { version = "0.30", optional = true }
 netlink-packet-core = { version = "0.8", optional = true }
 # spilman channel dependencies
 cdk-spilman = { git = "https://github.com/SatsAndSports/cashu_spilman_channels", branch = "main", optional = true }
+# ssl: parse PEM cert expiry for `tollgate ssl status`
+x509-parser = "0.17"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

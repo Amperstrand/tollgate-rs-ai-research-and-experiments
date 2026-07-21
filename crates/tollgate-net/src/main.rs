@@ -10,6 +10,7 @@ mod config;
 mod control_server;
 mod driver;
 mod server;
+mod ssl;
 mod wallet;
 
 #[cfg(feature = "v1-compat")]
@@ -140,6 +141,39 @@ enum Command {
         #[arg(long, value_delimiter = ',')]
         scan_interfaces: Option<Vec<String>>,
     },
+    /// Manage SSL/TLS certificates (Let's Encrypt via certbot).
+    Ssl {
+        #[command(subcommand)]
+        subcommand: SslSubcommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SslSubcommand {
+    /// Issue (or renew) a Let's Encrypt certificate for the given domain.
+    Apply {
+        /// Domain to issue a certificate for (e.g. "example.com").
+        #[arg(long)]
+        domain: String,
+        /// Contact email registered with Let's Encrypt.
+        #[arg(long)]
+        email: String,
+        /// Use a DNS-01 challenge via the named certbot plugin (e.g. "cloudflare").
+        /// Defaults to the HTTP-01 standalone challenge.
+        #[arg(long)]
+        dns: Option<String>,
+        /// Use Let's Encrypt's staging environment (does not issue a trusted cert).
+        #[arg(long)]
+        staging: bool,
+    },
+    /// Remove the certificate for a domain and clean up certbot state.
+    Remove {
+        /// Domain whose certificate should be removed.
+        #[arg(long)]
+        domain: String,
+    },
+    /// List managed domains and each certificate's expiry.
+    Status,
 }
 
 #[tokio::main]
@@ -206,6 +240,20 @@ async fn main() -> anyhow::Result<()> {
             interval,
             scan_interfaces,
         } => v1_auto(&mint, amount, interval, scan_interfaces).await,
+        Command::Ssl { subcommand } => ssl_dispatch(subcommand),
+    }
+}
+
+fn ssl_dispatch(subcommand: SslSubcommand) -> anyhow::Result<()> {
+    match subcommand {
+        SslSubcommand::Apply {
+            domain,
+            email,
+            dns,
+            staging,
+        } => ssl::apply(&domain, &email, dns.as_deref(), staging),
+        SslSubcommand::Remove { domain } => ssl::remove(&domain),
+        SslSubcommand::Status => ssl::status(),
     }
 }
 
