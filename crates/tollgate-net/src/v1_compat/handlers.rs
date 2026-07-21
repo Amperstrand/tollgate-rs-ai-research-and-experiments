@@ -98,7 +98,7 @@ fn extract_mint_from_token(_token: &str) -> Option<String> {
 async fn handle_get_details(
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
 ) -> Response {
-    match merchant::build_advertisement(&config).await {
+    match merchant::build_advertisement(&config) {
         Ok(json) => (StatusCode::OK, [("content-type", "application/json")], json).into_response(),
         Err(e) => json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -172,7 +172,7 @@ async fn handle_post_payment(
             let reason = result.reason.as_deref().unwrap_or("");
             if !reason.contains("spent") && !reason.contains("Spent") {
                 if let Some(mint_url) = extract_mint_from_token(&token) {
-                    tracker.mark_unreachable(&mint_url).await;
+                    tracker.mark_unreachable(&mint_url);
                     tracing::warn!(mint = %mint_url, "marked mint unreachable due to payment failure");
                 }
             }
@@ -833,6 +833,81 @@ mod tests {
         assert!(
             ct.contains("application/json"),
             "json_error must set content-type to application/json, got: {ct}"
+        );
+    }
+
+    #[tokio::test]
+    async fn advertisement_returns_degraded_when_all_mints_unreachable() {
+        use crate::v1_compat::mint_health::MintHealthTracker;
+
+        let mint_url = "http://down.example".to_string();
+        let tracker =
+            std::sync::Arc::new(MintHealthTracker::new(&[mint_url.clone()]));
+        tracker.mark_unreachable(&mint_url);
+        assert!(tracker.all_unreachable());
+
+        let config = std::sync::Arc::new(V1ServerConfig {
+            metric: "milliseconds".to_string(),
+            step_size: 60_000,
+            accepted_mints: vec![merchant::AcceptedMint {
+                url: mint_url,
+                price_per_step: 1,
+                unit: "sat".to_string(),
+                min_steps: 1,
+            }],
+            nostr_keys: Keys::generate(),
+            trust_proxy_headers: false,
+            wallet: None,
+            mint_health: Some(tracker),
+        });
+
+        let app = build_router(test_driver(), config);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("degraded advertisement must be valid JSON");
+        assert_eq!(json["kind"], 10021, "degraded advertisement keeps kind 10021");
+        assert_eq!(
+            json["content"],
+            "TollGate is in degraded mode. No reachable mints detected."
+        );
+
+        let tags = json["tags"]
+            .as_array()
+            .expect("degraded advertisement must have tags array");
+        let has_warning = tags.iter().any(|t| {
+            let arr = t.as_array().unwrap();
+            arr.first().and_then(|s| s.as_str()) == Some("level")
+                && arr.get(1).and_then(|s| s.as_str()) == Some("warning")
+        });
+        let has_code = tags.iter().any(|t| {
+            let arr = t.as_array().unwrap();
+            arr.first().and_then(|s| s.as_str()) == Some("code")
+                && arr.get(1).and_then(|s| s.as_str()) == Some("no-reachable-mints")
+        });
+        let has_price = tags.iter().any(|t| {
+            t.as_array().unwrap().first().and_then(|s| s.as_str())
+                == Some("price_per_step")
+        });
+        assert!(has_warning, "degraded advertisement must carry level=warning");
+        assert!(
+            has_code,
+            "degraded advertisement must carry code=no-reachable-mints"
+        );
+        assert!(
+            !has_price,
+            "degraded advertisement must NOT advertise price_per_step"
         );
     }
 }

@@ -100,11 +100,11 @@ pub enum AllotmentError {
 /// returns [`build_degraded_advertisement`] when all mints are unreachable.
 ///
 /// [`MintHealthTracker`]: super::mint_health::MintHealthTracker
-pub async fn build_advertisement(
+pub fn build_advertisement(
     config: &V1ServerConfig,
 ) -> Result<String, nostr::event::builder::Error> {
     let reachable: Vec<AcceptedMint> = if let Some(tracker) = &config.mint_health {
-        tracker.get_reachable_mints(&config.accepted_mints).await
+        tracker.get_reachable_mints(&config.accepted_mints)
     } else {
         config.accepted_mints.clone()
     };
