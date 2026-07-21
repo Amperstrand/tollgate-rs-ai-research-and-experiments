@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tollgate_protocol::{
     DEFAULT_PRICING_SCALE, IntervalRange, MintOption, MintPrice, PriceSheet, ProductEntry,
     option_id, product_id,
@@ -20,7 +20,7 @@ const DEFAULT_MIN_INTERVAL_MS: u32 = 5_000;
 const DEFAULT_MAX_INTERVAL_MS: u32 = 60_000;
 
 /// Node configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// Path to a file holding the hex-encoded secp256k1 secret key. If the file
@@ -72,7 +72,7 @@ impl Default for Config {
 }
 
 /// How `tollgate-net` manages the host firewall.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FirewallMode {
     /// Install a `policy drop` forward chain that enforces payment on its own.
@@ -93,7 +93,7 @@ impl FirewallMode {
 }
 
 /// A single static product offer with optional dynamic pricing bounds.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ProductConfig {
     pub pricing_scale: u32,
@@ -106,7 +106,7 @@ pub struct ProductConfig {
 }
 
 /// Dynamic pricing strategy configuration.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct DynamicPricingConfig {
     pub enabled: bool,
@@ -117,7 +117,7 @@ pub struct DynamicPricingConfig {
 }
 
 /// Per-peer pricing override keyed by pubkey hex.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PeerOverride {
     pub price_multiplier: Option<f64>,
@@ -126,7 +126,7 @@ pub struct PeerOverride {
 
 /// An upstream peer this node *buys* from — it connects, pays, and auto-tops-up,
 /// tracking the relationship like any other peer (the inbound/mesh direction).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpstreamConfig {
     /// Peer HTTP origin, e.g. `http://peer:4747`.
@@ -153,7 +153,7 @@ pub struct UpstreamConfig {
 }
 
 /// v1 Go-router compatibility server configuration.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct V1CompatConfig {
     pub metric: String,
@@ -164,7 +164,7 @@ pub struct V1CompatConfig {
     pub wallet_seed: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct V1AcceptedMint {
     pub url: String,

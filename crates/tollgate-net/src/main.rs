@@ -262,8 +262,9 @@ async fn serve(
     {
         let driver = driver.clone();
         let socket = cfg.control_socket.clone();
+        let control_cfg = cfg.clone();
         tokio::spawn(async move {
-            if let Err(e) = control_server::serve(&socket, driver).await {
+            if let Err(e) = control_server::serve(&socket, driver, control_cfg).await {
                 tracing::warn!(err = %e, socket = %socket.display(), "control socket stopped");
             }
         });
