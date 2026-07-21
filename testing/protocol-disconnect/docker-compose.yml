@@ -1,0 +1,45 @@
+# Protocol Disconnect test: Python client sends Announce + Disconnect,
+# verifies the gateway handles orderly teardown.
+#
+#   gateway ←── python-client (sends Disconnect)
+#
+# The gateway runs the tollgate binary; the client is a python:3-slim
+# container running tg_client.py (stdlib only, no pip needed). The upstream
+# tollgate binary cannot send Disconnect, so we craft the CBOR ourselves.
+
+services:
+  gateway:
+    image: tollgate-test:latest
+    container_name: tg-proto-disc-gateway
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./gateway.yaml:/etc/tollgate/tollgate.yaml:ro
+    command: ["--config", "/etc/tollgate/tollgate.yaml", "serve"]
+    environment:
+      RUST_LOG: info
+    networks:
+      tollnet:
+        aliases:
+          - gateway
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "-X", "POST", "--data-binary", "", "http://localhost:4747/tollgate/v1/exchange"]
+      interval: 1s
+      timeout: 2s
+      retries: 15
+
+  client:
+    image: python:3-slim
+    container_name: tg-proto-disc-client
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - ../lib/tg_client.py:/tg_client.py:ro
+    command: ["python3", "/tg_client.py", "http://gateway:4747", "disconnect", "0x0E"]
+    networks:
+      - tollnet
+
+networks:
+  tollnet:
+    driver: bridge

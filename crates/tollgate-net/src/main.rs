@@ -348,11 +348,11 @@ async fn connect(
 /// product's first mint option, or a `mints=0` form when a product lists none.
 fn format_price_sheet(sheet: &tollgate_protocol::PriceSheet) -> String {
     let products = sheet.products.len();
-    match sheet.products.first().and_then(|p| p.mints.first()) {
+    match sheet.products.first().and_then(|p| p.mint_options.first()) {
         Some(mint) => format!(
             "PRICESHEET products={} mints={} per_second={} per_unit={} mint_unit={}",
             products,
-            sheet.products.first().map_or(0, |p| p.mints.len()),
+            sheet.products.first().map_or(0, |p| p.mint_options.len()),
             mint.price_per_second,
             mint.price_per_unit,
             mint.mint_unit
@@ -629,7 +629,26 @@ async fn v1_auto(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tollgate_protocol::{MintPrice, PriceSheet, ProductOffer};
+    use tollgate_protocol::{
+        IntervalRange, MintOption, MintPrice, PriceSheet, ProductEntry, option_id, product_id,
+    };
+
+    fn test_product(scale: u32, prices: &[MintPrice]) -> ProductEntry {
+        let pid = product_id(scale, prices, &[]);
+        let opts: Vec<MintOption> = prices
+            .iter()
+            .map(|m| {
+                MintOption::new(
+                    option_id(&m.mint_url, &m.mint_unit),
+                    m.mint_url.clone(),
+                    m.price_per_second,
+                    m.price_per_unit,
+                    m.mint_unit.clone(),
+                )
+            })
+            .collect();
+        ProductEntry::new(pid.0, vec![], scale, opts)
+    }
 
     #[test]
     fn format_price_sheet_summarizes_first_mint_option() {
@@ -639,7 +658,10 @@ mod tests {
             price_per_unit: 7,
             mint_unit: "sat".to_string(),
         }];
-        let sheet = PriceSheet::new(vec![ProductOffer::new(1000, &prices, vec![])], 5000, 60000);
+        let sheet = PriceSheet::new(
+            vec![test_product(1000, &prices)],
+            IntervalRange::new(5000, 60000),
+        );
         let line = format_price_sheet(&sheet);
         assert!(line.contains("products=1"), "{line}");
         assert!(line.contains("mints=1"), "{line}");
@@ -651,7 +673,10 @@ mod tests {
     #[test]
     fn format_price_sheet_handles_product_without_mints() {
         // A product configured with no accepted mints (the detect-only case).
-        let sheet = PriceSheet::new(vec![ProductOffer::new(1000, &[], vec![])], 5000, 60000);
+        let sheet = PriceSheet::new(
+            vec![test_product(1000, &[])],
+            IntervalRange::new(5000, 60000),
+        );
         assert_eq!(format_price_sheet(&sheet), "PRICESHEET products=1 mints=0");
     }
 }

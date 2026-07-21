@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde::Deserialize;
-use tollgate_protocol::{DEFAULT_PRICING_SCALE, MintPrice, PriceSheet, ProductOffer};
+use tollgate_protocol::{
+    DEFAULT_PRICING_SCALE, IntervalRange, MintOption, MintPrice, PriceSheet, ProductEntry,
+    option_id, product_id,
+};
 
 /// Metering interval range advertised in the PriceSheet (ms). The server meters
 /// every 5s; the range is what a peer may negotiate to once interval handling
@@ -250,10 +253,25 @@ impl Config {
                         mint_unit: "sat".to_string(),
                     })
                     .collect();
-                ProductOffer::new(scale, &prices, Vec::new())
+                let extensions = Vec::new();
+                let pid = product_id(scale, &prices, &extensions);
+                let mint_options: Vec<MintOption> = prices
+                    .iter()
+                    .map(|mp| {
+                        let oid = option_id(&mp.mint_url, &mp.mint_unit);
+                        MintOption::new(
+                            oid,
+                            mp.mint_url.clone(),
+                            mp.price_per_second,
+                            mp.price_per_unit,
+                            mp.mint_unit.clone(),
+                        )
+                    })
+                    .collect();
+                ProductEntry::new(pid.0, extensions, scale, mint_options)
             })
             .collect();
-        PriceSheet::new(offers, DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS)
+        PriceSheet::new(offers, IntervalRange::new(DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS))
     }
 }
 
@@ -366,15 +384,15 @@ mod tests {
 
         let sheet = cfg.price_sheet();
         assert_eq!(
-            sheet.interval_ms,
-            (DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS)
+            sheet.interval,
+            IntervalRange::new(DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS)
         );
         assert_eq!(sheet.products.len(), 1);
         let offer = &sheet.products[0];
         assert_eq!(offer.pricing_scale, 1000);
-        assert_eq!(offer.mints.len(), 2);
+        assert_eq!(offer.mint_options.len(), 2);
         // Each mint option carries the product's single rate and the sat unit.
-        for mint in &offer.mints {
+        for mint in &offer.mint_options {
             assert_eq!(mint.price_per_unit, 7);
             assert_eq!(mint.price_per_second, 0);
             assert_eq!(mint.mint_unit, "sat");
@@ -396,7 +414,7 @@ mod tests {
         let no_mints: Config = serde_yaml::from_str("products:\n  - price_per_unit: 1\n").unwrap();
         let sheet = no_mints.price_sheet();
         assert_eq!(sheet.products.len(), 1);
-        assert!(sheet.products[0].mints.is_empty());
+        assert!(sheet.products[0].mint_options.is_empty());
 
         // No products at all → an empty sheet (a node that sells nothing).
         let empty: Config = serde_yaml::from_str("{}").unwrap();

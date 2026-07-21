@@ -89,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [detect, bootstrap, exhaust, metering, drift]
+        suite: [detect, bootstrap, exhaust, metering, drift, protocol-disconnect, protocol-reject]
     steps:
       - uses: actions/checkout@v5
       - name: Download image artifact

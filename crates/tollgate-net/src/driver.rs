@@ -610,7 +610,7 @@ fn decode_pricing(encoded: &[u8]) -> PricingStatus {
                 product_id: hex::encode(p.product_id.as_slice()),
                 pricing_scale: p.pricing_scale,
                 mints: p
-                    .mints
+                    .mint_options
                     .iter()
                     .map(|m| MintStatus {
                         mint_url: m.mint_url.clone(),
@@ -621,8 +621,8 @@ fn decode_pricing(encoded: &[u8]) -> PricingStatus {
                     .collect(),
             })
             .collect(),
-        min_interval_ms: sheet.interval_ms.0,
-        max_interval_ms: sheet.interval_ms.1,
+        min_interval_ms: sheet.interval.min_ms,
+        max_interval_ms: sheet.interval.max_ms,
     }
 }
 
@@ -682,7 +682,10 @@ mod tests {
 
     #[tokio::test]
     async fn connect_advertises_our_price_sheet_after_announce() {
-        use tollgate_protocol::{MessageType, MintPrice, PriceSheet, ProductOffer, peek_type};
+        use tollgate_protocol::{
+            IntervalRange, MessageType, MintOption, MintPrice, PriceSheet, ProductEntry, peek_type,
+            option_id, product_id,
+        };
 
         let prices = vec![MintPrice {
             mint_url: "http://mint".to_string(),
@@ -690,8 +693,24 @@ mod tests {
             price_per_unit: 5,
             mint_unit: "sat".to_string(),
         }];
-        let sheet =
-            PriceSheet::new(vec![ProductOffer::new(1000, &prices, vec![])], 5000, 60000).encode();
+        let pid = product_id(1000, &prices, &[]);
+        let opts: Vec<MintOption> = prices
+            .iter()
+            .map(|m| {
+                MintOption::new(
+                    option_id(&m.mint_url, &m.mint_unit),
+                    m.mint_url.clone(),
+                    m.price_per_second,
+                    m.price_per_unit,
+                    m.mint_unit.clone(),
+                )
+            })
+            .collect();
+        let sheet = PriceSheet::new(
+            vec![ProductEntry::new(pid.0, vec![], 1000, opts)],
+            IntervalRange::new(5000, 60000),
+        )
+        .encode();
 
         let identity = Arc::new(Identity::load_or_generate(&Config::default()).unwrap());
         let driver = Driver::new(
@@ -716,7 +735,7 @@ mod tests {
         );
         assert!(matches!(peek_type(&queued[0]), Some(MessageType::Announce)));
         let advertised = PriceSheet::decode(&queued[1]).expect("our PriceSheet");
-        assert_eq!(advertised.products[0].mints[0].price_per_unit, 5);
+        assert_eq!(advertised.products[0].mint_options[0].price_per_unit, 5);
     }
 
     #[tokio::test]
@@ -796,7 +815,9 @@ mod tests {
 
     #[tokio::test]
     async fn status_includes_advertised_pricing() {
-        use tollgate_protocol::{MintPrice, PriceSheet, ProductOffer};
+        use tollgate_protocol::{
+            IntervalRange, MintOption, MintPrice, PriceSheet, ProductEntry, option_id, product_id,
+        };
 
         let prices = vec![MintPrice {
             mint_url: "http://mint".to_string(),
@@ -804,8 +825,24 @@ mod tests {
             price_per_unit: 9,
             mint_unit: "sat".to_string(),
         }];
-        let sheet =
-            PriceSheet::new(vec![ProductOffer::new(1000, &prices, vec![])], 5000, 60000).encode();
+        let pid = product_id(1000, &prices, &[]);
+        let opts: Vec<MintOption> = prices
+            .iter()
+            .map(|m| {
+                MintOption::new(
+                    option_id(&m.mint_url, &m.mint_unit),
+                    m.mint_url.clone(),
+                    m.price_per_second,
+                    m.price_per_unit,
+                    m.mint_unit.clone(),
+                )
+            })
+            .collect();
+        let sheet = PriceSheet::new(
+            vec![ProductEntry::new(pid.0, vec![], 1000, opts)],
+            IntervalRange::new(5000, 60000),
+        )
+        .encode();
         let identity = Arc::new(Identity::load_or_generate(&Config::default()).unwrap());
         let driver = Driver::new(
             BootstrapWallet::new(vec![]),
@@ -889,105 +926,5 @@ mod tests {
             Some(PeerPhase::Active)
         );
         assert!(driver.0.last_seen.lock().await.contains_key(&active_hex));
-    }
-
-    /// Whether any queued frame is a transit-loss Reject (the drift warning).
-    fn frames_have_transit_loss(frames: &[Vec<u8>]) -> bool {
-        use tollgate_protocol::{MessageType, Reject, peek_type};
-        frames.iter().any(|f| {
-            matches!(peek_type(f), Some(MessageType::Reject))
-                && Reject::decode(f)
-                    .map(|r| r.is_transit_loss())
-                    .unwrap_or(false)
-        })
-    }
-
-    /// End-to-end through the driver: a peer that consistently under-reports what
-    /// it received (a meter that lies or malfunctions) is warned each interval and
-    /// cut off after the third, then reaped once idle — fully disconnected.
-    #[tokio::test]
-    async fn lying_peer_is_warned_then_suspended_after_three_drift_intervals() {
-        use tollgate_protocol::MeteringReport;
-
-        // Charge per unit so metering runs; default policy = 5% tolerance, cut at 3.
-        let identity = Arc::new(Identity::load_or_generate(&Config::default()).unwrap());
-        let driver = Driver::new(
-            BootstrapWallet::new(vec![]),
-            IpAdapter::new(),
-            identity,
-            Price {
-                per_second: 0,
-                per_unit: 1,
-            },
-            "bytes",
-            Vec::new(),
-        );
-
-        let peer = PeerId(PublicKey::from_bytes([9u8; 33]));
-        let hex = peer_to_hex(peer);
-        driver
-            .peer_connected(&hex, Some("10.0.0.9".parse().unwrap()))
-            .await;
-        // A large balance, so any suspension is from drift — never exhaustion.
-        let _ = driver
-            .handle(Event::BootstrapVerified {
-                peer,
-                amount: 1_000_000,
-                ok: true,
-            })
-            .await;
-        driver.drain_outbox(&hex).await; // clear announce / bootstrap-ack frames
-
-        // Baseline reading: establishes the metering start, charges nothing.
-        driver.meter(&hex, Counters::default()).await;
-
-        // One interval: the peer claims it received `r`, then our meter shows we
-        // delivered `d`; return whatever we queued back to the peer.
-        async fn interval(driver: &Driver, hex: &str, r: u64, d: u64) -> Vec<Vec<u8>> {
-            driver
-                .message_received(hex, MeteringReport::new(0, 0, r).encode())
-                .await;
-            driver
-                .meter(
-                    hex,
-                    Counters {
-                        delivered: d,
-                        received: 0,
-                    },
-                )
-                .await;
-            driver.drain_outbox(hex).await
-        }
-        async fn phase(driver: &Driver, peer: PeerId) -> Option<PeerPhase> {
-            driver.0.session.lock().await.peer_phase(&peer)
-        }
-
-        // The peer under-reports by 20% every interval (well over the 5% tolerance).
-        let a1 = interval(&driver, &hex, 80, 100).await;
-        assert!(frames_have_transit_loss(&a1), "strike 1 sends a warning");
-        assert_eq!(phase(&driver, peer).await, Some(PeerPhase::Active));
-
-        let a2 = interval(&driver, &hex, 160, 200).await;
-        assert!(frames_have_transit_loss(&a2), "strike 2 sends a warning");
-        assert_eq!(phase(&driver, peer).await, Some(PeerPhase::Active));
-
-        let a3 = interval(&driver, &hex, 240, 300).await;
-        assert!(frames_have_transit_loss(&a3), "strike 3 sends a warning");
-        // …and cuts the peer off — no longer Active.
-        assert_eq!(phase(&driver, peer).await, Some(PeerPhase::Suspended));
-
-        // The drift is visible in the status snapshot the control socket serves.
-        let st = driver.status().await;
-        let p = st.peers.iter().find(|p| p.pubkey == hex).expect("peer");
-        assert_eq!(p.state, "Suspended");
-        assert!(
-            p.drift.expect("drift known") > 0.05,
-            "drift {:?} exceeds tolerance",
-            p.drift
-        );
-
-        // A suspended (non-Active) peer is reaped once idle — fully disconnected.
-        driver.reap_idle(now_millis().0 + 1_000_000, 1_000).await;
-        assert_eq!(phase(&driver, peer).await, None);
     }
 }

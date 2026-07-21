@@ -124,7 +124,7 @@ fn balance_exhausted(messages: &[Vec<u8>]) -> bool {
 fn price_from_sheet(sheet: Option<&PriceSheet>) -> Price {
     sheet
         .and_then(|s| s.products.first())
-        .and_then(|p| p.mints.first())
+        .and_then(|p| p.mint_options.first())
         .map(|m| Price {
             per_second: m.price_per_second,
             per_unit: m.price_per_unit,
@@ -494,7 +494,26 @@ fn build_test_token(mint_url: &str, amount_sat: u64) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tollgate_protocol::{MintPrice, ProductOffer};
+    use tollgate_protocol::{
+        IntervalRange, MintOption, MintPrice, PriceSheet, ProductEntry, option_id, product_id,
+    };
+
+    fn test_product(scale: u32, prices: &[MintPrice]) -> ProductEntry {
+        let pid = product_id(scale, prices, &[]);
+        let opts: Vec<MintOption> = prices
+            .iter()
+            .map(|m| {
+                MintOption::new(
+                    option_id(&m.mint_url, &m.mint_unit),
+                    m.mint_url.clone(),
+                    m.price_per_second,
+                    m.price_per_unit,
+                    m.mint_unit.clone(),
+                )
+            })
+            .collect();
+        ProductEntry::new(pid.0, vec![], scale, opts)
+    }
 
     fn sample_sheet(per_unit: i64) -> Vec<u8> {
         let prices = vec![MintPrice {
@@ -503,7 +522,11 @@ mod tests {
             price_per_unit: per_unit,
             mint_unit: "sat".to_string(),
         }];
-        PriceSheet::new(vec![ProductOffer::new(1000, &prices, vec![])], 5000, 60000).encode()
+        PriceSheet::new(
+            vec![test_product(1000, &prices)],
+            IntervalRange::new(5000, 60000),
+        )
+        .encode()
     }
 
     #[test]
@@ -515,7 +538,7 @@ mod tests {
             BootstrapAck::accepted().encode(),
         ];
         let found = find_price_sheet(&messages).expect("a PriceSheet among the frames");
-        assert_eq!(found.products[0].mints[0].price_per_unit, 3);
+        assert_eq!(found.products[0].mint_options[0].price_per_unit, 3);
     }
 
     #[test]
