@@ -27,7 +27,7 @@ impl Price {
         let time = (elapsed_ms as i128) * (self.per_second as i128) / 1000;
         let unit = (units as i128) * (self.per_unit as i128);
         let total = time + unit;
-        total.try_into().unwrap_or_else(|_| {
+        total.try_into().unwrap_or({
             if total > 0 { i64::MAX } else { i64::MIN }
         })
     }

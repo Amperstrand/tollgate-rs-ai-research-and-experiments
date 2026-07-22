@@ -31,10 +31,14 @@ pub async fn serve(listen: &str, driver: Driver) -> anyhow::Result<()> {
 }
 
 fn router(driver: Driver) -> Router {
-    Router::new()
+    let base = Router::new()
         .route("/tollgate/v1/exchange", axum::routing::post(http_exchange))
-        .route("/tollgate/v1/ws", get(ws_upgrade))
-        .with_state(driver)
+        .route("/tollgate/v1/ws", get(ws_upgrade));
+
+    #[cfg(feature = "v1-compat")]
+    let base = base.merge(crate::v1_compat::handlers::build_router());
+
+    base.with_state(driver)
 }
 
 /// HTTP polling transport. The request body is zero or more length-prefixed

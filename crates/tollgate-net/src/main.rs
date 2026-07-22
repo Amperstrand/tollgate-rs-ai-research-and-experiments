@@ -10,6 +10,8 @@ mod config;
 mod control_server;
 mod driver;
 mod server;
+#[cfg(feature = "v1-compat")]
+mod v1_compat;
 mod wallet;
 
 use std::path::PathBuf;

@@ -35,6 +35,12 @@ bytes = { workspace = true }
 # tolltop TUI (also pulls crossterm as its default backend).
 ratatui = "0.29"
 
+[features]
+default = []
+# v1-compat: Go v1 REST API compatibility endpoints (/v1/usage, /v1/balance,
+# /v1/whoami, /v1/log-beacon). See Issue #42, #69.
+v1-compat = []
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 
