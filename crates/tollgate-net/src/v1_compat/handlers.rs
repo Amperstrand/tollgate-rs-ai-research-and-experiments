@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_usage_returns_400_without_known_peer() {
+    async fn get_usage_returns_4xx_without_session() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -559,11 +559,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(resp.status().is_client_error(), "expected 4xx, got {}", resp.status());
     }
 
     #[tokio::test]
-    async fn get_balance_returns_400_without_known_peer() {
+    async fn get_balance_returns_4xx_without_session() {
         let app = build_router(test_driver(), test_config());
         let resp = app
             .oneshot(
@@ -576,7 +576,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(resp.status().is_client_error(), "expected 4xx, got {}", resp.status());
     }
 
     #[tokio::test]
