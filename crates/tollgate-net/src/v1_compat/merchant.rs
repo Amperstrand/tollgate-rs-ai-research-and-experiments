@@ -139,6 +139,11 @@ pub fn build_advertisement(
         ["1", "2", "3", "4"],
     ));
 
+    tags.push(Tag::custom(
+        TagKind::Custom("step".into()),
+        [config.step_size.to_string()],
+    ));
+
     let event = EventBuilder::new(Kind::Custom(10_021), "")
         .tags(Tags::from_list(tags))
         .sign_with_keys(&config.nostr_keys)?;

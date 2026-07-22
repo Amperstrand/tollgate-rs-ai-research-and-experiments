@@ -70,6 +70,7 @@ pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
             "/ln-invoice",
             get(handle_get_ln_invoice).post(handle_post_ln_invoice),
         )
+        .route("/log-beacon", axum::routing::post(handle_log_beacon))
         .layer(axum::Extension(config))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .with_state(driver)
@@ -219,8 +220,22 @@ async fn handle_usage(
                 .into_response();
         }
     };
-    match adapter::get_usage_text(&driver, &peer_hex).await {
-        Some(text) => (StatusCode::OK, text).into_response(),
+    match adapter::get_usage_json(&driver, &peer_hex).await {
+        Some(usage) => {
+            let json = serde_json::json!({
+                "remaining": usage.balance,
+                "allotment": usage.allotment,
+                "step_size": config.step_size,
+                "metric": config.metric,
+                "delivered": usage.delivered,
+            });
+            (
+                StatusCode::OK,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response()
+        }
         None => {
             let json = serde_json::json!({"error": "no active session"});
             (
@@ -399,6 +414,28 @@ async fn handle_get_ln_invoice(
             )
                 .into_response()
         }
+    }
+}
+
+async fn handle_log_beacon(body: String) -> Response {
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(v) => {
+            let level = v.get("level").and_then(|l| l.as_str()).unwrap_or("info");
+            let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("");
+            let client = v.get("client").and_then(|c| c.as_str()).unwrap_or("unknown");
+            match level {
+                "error" => tracing::error!(client = %client, "log-beacon: {msg}"),
+                "warn" => tracing::warn!(client = %client, "log-beacon: {msg}"),
+                _ => tracing::info!(client = %client, "log-beacon: {msg}"),
+            }
+            (
+                StatusCode::OK,
+                [("content-type", "application/json")],
+                r#"{"logged":true}"#,
+            )
+                .into_response()
+        }
+        Err(_) => json_error(StatusCode::BAD_REQUEST, "invalid JSON body"),
     }
 }
 

@@ -71,19 +71,30 @@ pub async fn find_peer_status(driver: &Driver, peer_hex: &str) -> Option<PeerSta
     status.peers.into_iter().find(|p| p.pubkey == peer_hex)
 }
 
-pub async fn get_usage_text(driver: &Driver, peer_hex: &str) -> Option<String> {
+pub struct UsageInfo {
+    pub delivered: u64,
+    pub balance: u64,
+    pub allotment: u64,
+}
+
+pub async fn get_usage_json(driver: &Driver, peer_hex: &str) -> Option<UsageInfo> {
     let peer = find_peer_status(driver, peer_hex).await?;
-    let delivered = peer.delivered;
     let balance = peer.their_balance.max(0) as u64;
-    Some(format!("{delivered}/{balance}"))
+    Some(UsageInfo {
+        delivered: peer.delivered,
+        balance,
+        allotment: balance,
+    })
 }
 
 pub async fn get_balance_json(driver: &Driver, peer_hex: &str) -> Option<serde_json::Value> {
     let peer = find_peer_status(driver, peer_hex).await?;
     let is_active = peer.state == "Active";
+    let remaining = peer.their_balance.max(0) as u64;
     Some(serde_json::json!({
         "balance": peer.their_balance,
-        "remaining": peer.their_balance.max(0),
+        "remaining": remaining,
+        "allotment": remaining,
         "delivered": peer.delivered,
         "received": peer.received,
         "state": peer.state,
