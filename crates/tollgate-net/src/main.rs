@@ -268,7 +268,47 @@ async fn serve(
     }
     tracing::info!(pubkey = %identity.pubkey_hex(), listen = %cfg.listen, "starting tollgate node");
 
-    let wallet = wallet::BootstrapWallet::new(cfg.mints.clone());
+    let mut bootstrap = wallet::BootstrapWallet::new(cfg.mints.clone());
+
+    if let Some(first_mint) = cfg.mints.first() {
+        let seed_bytes = cfg
+            .v1_compat
+            .wallet_seed
+            .as_deref()
+            .and_then(|s| hex::decode(s).ok())
+            .filter(|b| b.len() == 64)
+            .map(|b| {
+                let mut arr = [0u8; 64];
+                arr.copy_from_slice(&b);
+                arr
+            })
+            .unwrap_or([0u8; 64]);
+
+        match cdk_sqlite::wallet::memory::empty().await {
+            Ok(localstore) => {
+                match cdk::Wallet::new(
+                    first_mint,
+                    cdk::nuts::CurrencyUnit::Sat,
+                    std::sync::Arc::new(localstore),
+                    seed_bytes,
+                    None,
+                ) {
+                    Ok(cdk_wallet) => {
+                        tracing::info!("CDK receive() enabled for BootstrapWallet (double-spend prevention via swap)");
+                        bootstrap = bootstrap.with_cdk_wallet(std::sync::Arc::new(cdk_wallet));
+                    }
+                    Err(e) => {
+                        tracing::warn!("CDK wallet init failed, using checkstate-only: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("CDK localstore init failed, using checkstate-only: {e}");
+            }
+        }
+    }
+
+    let wallet = bootstrap;
     let adapter = adapter::IpAdapter::new();
     if let Err(e) = adapter.init(cfg.firewall.installs_forward_chain()) {
         tracing::warn!(err = %e, "firewall init failed; access may not be enforced (need root?)");

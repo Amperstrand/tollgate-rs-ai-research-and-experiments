@@ -5,16 +5,15 @@
 //! the same crate later without conflict.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use cashu::nuts::Token;
 
-/// Bootstrap-only wallet. Accepts a Cashu token string, verifies it with its
-/// mint (NUT-07 check-state), and returns the spendable amount in milli-units
-/// (pricing_scale = 1000, so 1 sat → 1000 milli-units).
 pub struct BootstrapWallet {
     accepted_mints: HashSet<String>,
     client: reqwest::Client,
+    cdk_wallet: Option<Arc<cdk::Wallet>>,
 }
 
 impl BootstrapWallet {
@@ -22,12 +21,37 @@ impl BootstrapWallet {
         Self {
             accepted_mints: mint_urls.into_iter().collect(),
             client: reqwest::Client::new(),
+            cdk_wallet: None,
         }
+    }
+
+    pub fn with_cdk_wallet(mut self, wallet: Arc<cdk::Wallet>) -> Self {
+        self.cdk_wallet = Some(wallet);
+        self
     }
 
     /// Parse and verify a Cashu token. Returns the amount in milli-sat if valid,
     /// or an error if invalid, already spent, or from an unaccepted mint.
     pub async fn verify(&self, token_str: &str) -> anyhow::Result<u64> {
+        if let Some(cdk_wallet) = &self.cdk_wallet {
+            match cdk_wallet
+                .receive(token_str, cdk::wallet::ReceiveOptions::default())
+                .await
+            {
+                Ok(amount) => {
+                    let amount_sat: u64 = amount.into();
+                    tracing::info!(
+                        "[NUT-03] CDK receive succeeded: {amount_sat} sat (proofs swapped + stored)"
+                    );
+                    return Ok(amount_sat * 1_000);
+                }
+                Err(e) => {
+                    tracing::info!("CDK receive rejected token: {e}");
+                    bail!("token rejected by mint: {e}");
+                }
+            }
+        }
+
         let token: Token = token_str.parse().context("invalid Cashu token")?;
 
         let mint_url = token.mint_url().context("token has no mint URL")?;
