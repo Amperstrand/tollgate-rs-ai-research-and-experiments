@@ -268,7 +268,10 @@ async fn serve(
     }
     tracing::info!(pubkey = %identity.pubkey_hex(), listen = %cfg.listen, "starting tollgate node");
 
-    let mut bootstrap = wallet::BootstrapWallet::new(cfg.mints.clone());
+    let mut bootstrap = wallet::BootstrapWallet::with_spent_file(
+        cfg.mints.clone(),
+        Some(std::path::PathBuf::from("/var/lib/tollgate/spent_proofs.txt")),
+    );
 
     if let Some(first_mint) = cfg.mints.first() {
         let seed_bytes = cfg

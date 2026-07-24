@@ -5,23 +5,56 @@
 //! the same crate later without conflict.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use cashu::nuts::Token;
+use tokio::sync::RwLock;
 
 pub struct BootstrapWallet {
     accepted_mints: HashSet<String>,
     client: reqwest::Client,
     cdk_wallet: Option<Arc<cdk::Wallet>>,
+    spent_yvalues: Arc<RwLock<HashSet<String>>>,
+    spent_file: Option<PathBuf>,
 }
 
 impl BootstrapWallet {
     pub fn new(mint_urls: Vec<String>) -> Self {
+        Self::with_spent_file(mint_urls, None)
+    }
+
+    pub fn with_spent_file(mint_urls: Vec<String>, spent_file: Option<PathBuf>) -> Self {
+        let yvalues = if let Some(ref path) = spent_file {
+            Self::load_spent_file(path)
+        } else {
+            HashSet::new()
+        };
         Self {
             accepted_mints: mint_urls.into_iter().collect(),
             client: reqwest::Client::new(),
             cdk_wallet: None,
+            spent_yvalues: Arc::new(RwLock::new(yvalues)),
+            spent_file,
+        }
+    }
+
+    fn load_spent_file(path: &PathBuf) -> HashSet<String> {
+        match std::fs::read_to_string(path) {
+            Ok(contents) => contents.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+            Err(_) => HashSet::new(),
+        }
+    }
+
+    async fn persist_yvalues(&self, yvalues: &[String]) {
+        if let Some(ref path) = self.spent_file {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                for y in yvalues {
+                    let _ = writeln!(f, "{y}");
+                }
+            }
         }
     }
 
@@ -33,6 +66,21 @@ impl BootstrapWallet {
     /// Parse and verify a Cashu token. Returns the amount in milli-sat if valid,
     /// or an error if invalid, already spent, or from an unaccepted mint.
     pub async fn verify(&self, token_str: &str) -> anyhow::Result<u64> {
+        let token: Token = token_str.parse().context("invalid Cashu token")?;
+        let ys = token_proof_ys(&token);
+        if ys.is_empty() {
+            bail!("token contains no proofs");
+        }
+
+        {
+            let spent = self.spent_yvalues.read().await;
+            for y in &ys {
+                if spent.contains(y) {
+                    bail!("proof already spent locally (double-spend detected): {y}");
+                }
+            }
+        }
+
         if let Some(cdk_wallet) = &self.cdk_wallet {
             match cdk_wallet
                 .receive(token_str, cdk::wallet::ReceiveOptions::default())
@@ -40,8 +88,15 @@ impl BootstrapWallet {
             {
                 Ok(amount) => {
                     let amount_sat: u64 = amount.into();
+                    let mut spent = self.spent_yvalues.write().await;
+                    for y in &ys {
+                        spent.insert(y.clone());
+                    }
+                    drop(spent);
+                    self.persist_yvalues(&ys).await;
                     tracing::info!(
-                        "[NUT-03] CDK receive succeeded: {amount_sat} sat (proofs swapped + stored)"
+                        "[NUT-03] CDK receive succeeded: {amount_sat} sat (proofs swapped + stored, {} y-values tracked)",
+                        ys.len()
                     );
                     return Ok(amount_sat * 1_000);
                 }
@@ -51,8 +106,6 @@ impl BootstrapWallet {
                 }
             }
         }
-
-        let token: Token = token_str.parse().context("invalid Cashu token")?;
 
         let mint_url = token.mint_url().context("token has no mint URL")?;
         let mint_url_str = mint_url.to_string();
@@ -67,17 +120,15 @@ impl BootstrapWallet {
 
         let amount_sat: u64 = token.value().context("could not sum token value")?.into();
 
-        // Y-values (compressed pubkey of each proof's blinded secret) for the
-        // NUT-07 check-state call — read from the token's raw proofs without
-        // needing keyset info.
-        let ys = token_proof_ys(&token);
-        if ys.is_empty() {
-            bail!("token contains no proofs");
-        }
-
         self.check_proofs_unspent(mint_base, &ys).await?;
 
-        // amount in milli-units (pricing_scale = 1000)
+        let mut spent = self.spent_yvalues.write().await;
+        for y in &ys {
+            spent.insert(y.clone());
+        }
+        drop(spent);
+        self.persist_yvalues(&ys).await;
+
         Ok(amount_sat * 1_000)
     }
 
