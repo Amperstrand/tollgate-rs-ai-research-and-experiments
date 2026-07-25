@@ -39,6 +39,7 @@ pub struct BootstrapWallet {
 }
 
 impl BootstrapWallet {
+    #[allow(dead_code)]
     pub fn new(mint_urls: Vec<String>) -> Self {
         Self::with_spent_file(mint_urls, None)
     }
