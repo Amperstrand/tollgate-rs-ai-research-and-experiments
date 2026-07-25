@@ -261,4 +261,111 @@ mod tests {
         let sat: u64 = token.value().expect("value").into();
         assert_eq!(sat * 1_000, 1_000);
     }
+
+    #[test]
+    fn normalize_trailing_slash() {
+        assert_eq!(normalize_mint_url("https://mint.example.com/"), "https://mint.example.com");
+        assert_eq!(normalize_mint_url("https://mint.example.com"), "https://mint.example.com");
+        assert_eq!(normalize_mint_url("https://mint.example.com/path/"), "https://mint.example.com/path");
+    }
+
+    #[test]
+    fn normalize_case_insensitive_host() {
+        assert_eq!(
+            normalize_mint_url("https://MINT.Example.COM/path"),
+            "https://mint.example.com/path"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_default_port() {
+        assert_eq!(
+            normalize_mint_url("https://mint.example.com:443/path"),
+            "https://mint.example.com/path"
+        );
+        assert_eq!(
+            normalize_mint_url("http://mint.example.com:80/path"),
+            "http://mint.example.com/path"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_custom_port() {
+        assert_eq!(
+            normalize_mint_url("https://mint.example.com:3338"),
+            "https://mint.example.com:3338"
+        );
+    }
+
+    #[test]
+    fn fuzzy_match_accepts_trailing_slash_diff() {
+        let wallet = BootstrapWallet::with_spent_file(
+            vec!["https://mint.example.com".to_string()],
+            None,
+        );
+        let token_mint = normalize_mint_url("https://mint.example.com/");
+        let accepted = wallet.accepted_mints.iter().any(|m| normalize_mint_url(m) == token_mint);
+        assert!(accepted, "trailing slash should match");
+    }
+
+    #[test]
+    fn fuzzy_match_accepts_case_diff() {
+        let wallet = BootstrapWallet::with_spent_file(
+            vec!["https://mint.example.com".to_string()],
+            None,
+        );
+        let token_mint = normalize_mint_url("https://MINT.EXAMPLE.COM");
+        let accepted = wallet.accepted_mints.iter().any(|m| normalize_mint_url(m) == token_mint);
+        assert!(accepted, "case difference should match");
+    }
+
+    #[test]
+    fn fuzzy_match_rejects_different_scheme() {
+        let a = normalize_mint_url("http://mint.example.com");
+        let b = normalize_mint_url("https://mint.example.com");
+        assert_ne!(a, b, "http vs https should not match");
+    }
+
+    #[test]
+    fn fuzzy_match_rejects_different_host() {
+        let a = normalize_mint_url("https://mint.example.com");
+        let b = normalize_mint_url("https://mint.other.com");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn spent_yvalues_track_proofs() {
+        let wallet = BootstrapWallet::with_spent_file(vec![], None);
+        let ys = vec!["abc123".to_string(), "def456".to_string()];
+        rt().block_on(async {
+            {
+                let mut spent = wallet.spent_yvalues.write().await;
+                for y in &ys {
+                    spent.insert(y.clone());
+                }
+            }
+            let spent = wallet.spent_yvalues.read().await;
+            assert!(spent.contains("abc123"));
+            assert!(spent.contains("def456"));
+            assert!(!spent.contains("ghi789"));
+        });
+    }
+
+    #[test]
+    fn spent_file_loads_on_init() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_spent_proofs.txt");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, "yvalue1").unwrap();
+            writeln!(f, "yvalue2").unwrap();
+        }
+        let wallet = BootstrapWallet::with_spent_file(vec![], Some(path.clone()));
+        let spent = wallet.spent_yvalues.try_read().unwrap();
+        assert!(spent.contains("yvalue1"));
+        assert!(spent.contains("yvalue2"));
+        drop(spent);
+        std::fs::remove_file(&path).ok();
+    }
 }
