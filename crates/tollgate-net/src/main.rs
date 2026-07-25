@@ -287,7 +287,11 @@ async fn serve(
             })
             .unwrap_or([0u8; 64]);
 
-        match cdk_sqlite::wallet::memory::empty().await {
+        match cdk_sqlite::wallet::WalletSqliteDatabase::new(
+            "/var/lib/tollgate/cdk-wallet.sqlite",
+        )
+        .await
+        {
             Ok(localstore) => {
                 match cdk::Wallet::new(
                     first_mint,

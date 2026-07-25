@@ -12,6 +12,24 @@ use anyhow::{Context, bail};
 use cashu::nuts::Token;
 use tokio::sync::RwLock;
 
+fn normalize_mint_url(url: &str) -> String {
+    let mut normalized = url.trim_end_matches('/').to_string();
+    if let Ok(parsed) = url::Url::parse(&normalized) {
+        let scheme = parsed.scheme();
+        let host = parsed.host_str().unwrap_or("").to_lowercase();
+        let port = parsed.port();
+        let path = parsed.path().trim_end_matches('/');
+        normalized = match port {
+            Some(p) if (scheme == "https" && p == 443) || (scheme == "http" && p == 80) => {
+                format!("{scheme}://{host}{path}")
+            }
+            Some(p) => format!("{scheme}://{host}:{p}{path}"),
+            None => format!("{scheme}://{host}{path}"),
+        };
+    }
+    normalized
+}
+
 pub struct BootstrapWallet {
     accepted_mints: HashSet<String>,
     client: reqwest::Client,
@@ -109,18 +127,17 @@ impl BootstrapWallet {
 
         let mint_url = token.mint_url().context("token has no mint URL")?;
         let mint_url_str = mint_url.to_string();
-        let mint_base = mint_url_str.trim_end_matches('/');
+        let mint_normalized = normalize_mint_url(&mint_url_str);
 
         if !self.accepted_mints.is_empty()
-            && !self.accepted_mints.contains(mint_base)
-            && !self.accepted_mints.contains(&mint_url_str)
+            && !self.accepted_mints.iter().any(|m| normalize_mint_url(m) == mint_normalized)
         {
             bail!("mint {} not accepted", mint_url_str);
         }
 
         let amount_sat: u64 = token.value().context("could not sum token value")?.into();
 
-        self.check_proofs_unspent(mint_base, &ys).await?;
+        self.check_proofs_unspent(&mint_normalized, &ys).await?;
 
         let mut spent = self.spent_yvalues.write().await;
         for y in &ys {
