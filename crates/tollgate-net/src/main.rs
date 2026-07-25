@@ -12,6 +12,8 @@ mod driver;
 mod server;
 mod ssl;
 mod wallet;
+
+use std::str::FromStr;
 mod web_ui;
 
 #[cfg(feature = "v1-compat")]
@@ -273,7 +275,7 @@ async fn serve(
         Some(std::path::PathBuf::from("/var/lib/tollgate/spent_proofs.txt")),
     );
 
-    if let Some(first_mint) = cfg.mints.first() {
+    if !cfg.mints.is_empty() {
         let seed_bytes = cfg
             .v1_compat
             .wallet_seed
@@ -293,19 +295,51 @@ async fn serve(
         .await
         {
             Ok(localstore) => {
-                match cdk::Wallet::new(
-                    first_mint,
-                    cdk::nuts::CurrencyUnit::Sat,
-                    std::sync::Arc::new(localstore),
-                    seed_bytes,
-                    None,
-                ) {
-                    Ok(cdk_wallet) => {
-                        tracing::info!("CDK receive() enabled for BootstrapWallet (double-spend prevention via swap)");
-                        bootstrap = bootstrap.with_cdk_wallet(std::sync::Arc::new(cdk_wallet));
+                match cdk::wallet::WalletRepositoryBuilder::new()
+                    .localstore(std::sync::Arc::new(localstore))
+                    .seed(seed_bytes)
+                    .build()
+                    .await
+                {
+                    Ok(repo) => {
+                        let repo = std::sync::Arc::new(repo);
+                        let mut added = 0;
+                        for mint_url in &cfg.mints {
+                            if let Ok(mint) = cdk::mint_url::MintUrl::from_str(mint_url) {
+                                match repo.add_wallet(mint).await {
+                                    Ok(wallets) => {
+                                        tracing::info!("CDK wallet added for mint: {mint_url} ({} units)", wallets.len());
+                                        added += 1;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to add CDK wallet for {mint_url}: {e}");
+                                    }
+                                }
+                            }
+                        }
+                        for mint_cfg in &cfg.v1_compat.accepted_mints {
+                            let url = &mint_cfg.url;
+                            if !cfg.mints.iter().any(|m| normalize_str(m) == normalize_str(url)) {
+                                if let Ok(mint) = cdk::mint_url::MintUrl::from_str(url) {
+                                    match repo.add_wallet(mint).await {
+                                        Ok(wallets) => {
+                                            tracing::info!("CDK wallet added for v1_compat mint: {url} ({} units)", wallets.len());
+                                            added += 1;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Failed to add CDK wallet for v1_compat mint {url}: {e}");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+    if added > 0 {
+                            tracing::info!("CDK WalletRepository enabled ({added} mints) — multi-mint double-spend prevention via NUT-03 swap");
+                            bootstrap = bootstrap.with_wallet_repo(repo);
+                        }
                     }
                     Err(e) => {
-                        tracing::warn!("CDK wallet init failed, using checkstate-only: {e}");
+                        tracing::warn!("CDK WalletRepository build failed, using checkstate-only: {e}");
                     }
                 }
             }
@@ -313,6 +347,10 @@ async fn serve(
                 tracing::warn!("CDK localstore init failed, using checkstate-only: {e}");
             }
         }
+    }
+
+    fn normalize_str(s: &str) -> String {
+        s.trim_end_matches('/').to_lowercase()
     }
 
     let wallet = bootstrap;

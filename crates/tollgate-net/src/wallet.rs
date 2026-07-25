@@ -33,7 +33,7 @@ fn normalize_mint_url(url: &str) -> String {
 pub struct BootstrapWallet {
     accepted_mints: HashSet<String>,
     client: reqwest::Client,
-    cdk_wallet: Option<Arc<cdk::Wallet>>,
+    wallet_repo: Option<Arc<cdk::wallet::WalletRepository>>,
     spent_yvalues: Arc<RwLock<HashSet<String>>>,
     spent_file: Option<PathBuf>,
 }
@@ -52,7 +52,7 @@ impl BootstrapWallet {
         Self {
             accepted_mints: mint_urls.into_iter().collect(),
             client: reqwest::Client::new(),
-            cdk_wallet: None,
+            wallet_repo: None,
             spent_yvalues: Arc::new(RwLock::new(yvalues)),
             spent_file,
         }
@@ -76,8 +76,8 @@ impl BootstrapWallet {
         }
     }
 
-    pub fn with_cdk_wallet(mut self, wallet: Arc<cdk::Wallet>) -> Self {
-        self.cdk_wallet = Some(wallet);
+    pub fn with_wallet_repo(mut self, repo: Arc<cdk::wallet::WalletRepository>) -> Self {
+        self.wallet_repo = Some(repo);
         self
     }
 
@@ -99,8 +99,13 @@ impl BootstrapWallet {
             }
         }
 
-        if let Some(cdk_wallet) = &self.cdk_wallet {
-            match cdk_wallet
+        if let Some(repo) = &self.wallet_repo {
+            let token_mint = token.mint_url().context("token has no mint URL")?;
+            let wallet = repo
+                .get_wallet(&token_mint, &cdk::nuts::CurrencyUnit::Sat)
+                .await
+                .map_err(|e| anyhow::anyhow!("no wallet for mint {token_mint}: {e}"))?;
+            match wallet
                 .receive(token_str, cdk::wallet::ReceiveOptions::default())
                 .await
             {
