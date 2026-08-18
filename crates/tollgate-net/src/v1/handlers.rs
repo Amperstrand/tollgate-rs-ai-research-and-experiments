@@ -25,7 +25,7 @@ fn is_captive_probe_host(host: &str) -> bool {
         "nmcheck.gnome.org",
     ];
     let host_part = host.split(':').next().unwrap_or(host);
-    PROBE_DOMAINS.iter().any(|d| host_part == *d)
+    PROBE_DOMAINS.contains(&host_part)
 }
 
 fn derive_gateway_ip(client_ip: IpAddr) -> String {
@@ -173,7 +173,7 @@ async fn handle_get_details(
     let creqa = create_creqa(
         state.config.price_per_step,
         &state.config.unit,
-        &[state.config.mint_url.clone()],
+        std::slice::from_ref(&state.config.mint_url),
         "TollGate internet access",
         &post_endpoint,
     );
@@ -266,7 +266,7 @@ async fn handle_portal(
     let creqa = create_creqa(
         state.config.price_per_step,
         &state.config.unit,
-        &[state.config.mint_url.clone()],
+        std::slice::from_ref(&state.config.mint_url),
         "TollGate internet access",
         &post_endpoint,
     );
@@ -695,10 +695,13 @@ fn create_creqa(
     description: &str,
     post_endpoint: &str,
 ) -> String {
-    let id = format!("{:016x}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis());
+    let id = format!(
+        "{:016x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
     let mut buf = Vec::new();
     {
         let mut e = Encoder::new(&mut buf);
@@ -764,25 +767,56 @@ fn format_price(config: &V1Config) -> String {
         "milliseconds" => {
             let seconds = config.step_size / 1000;
             if seconds >= 3600 && seconds % 3600 == 0 {
-                format!("{} {}/{}h", config.price_per_step, config.unit, seconds / 3600)
+                format!(
+                    "{} {}/{}h",
+                    config.price_per_step,
+                    config.unit,
+                    seconds / 3600
+                )
             } else if seconds >= 60 && seconds % 60 == 0 {
-                format!("{} {}/{}min", config.price_per_step, config.unit, seconds / 60)
+                format!(
+                    "{} {}/{}min",
+                    config.price_per_step,
+                    config.unit,
+                    seconds / 60
+                )
             } else {
                 format!("{} {}/{}s", config.price_per_step, config.unit, seconds)
             }
         }
         "bytes" => {
             if config.step_size >= 1_073_741_824 && config.step_size % 1_073_741_824 == 0 {
-                format!("{} {}/{}GB", config.price_per_step, config.unit, config.step_size / 1_073_741_824)
+                format!(
+                    "{} {}/{}GB",
+                    config.price_per_step,
+                    config.unit,
+                    config.step_size / 1_073_741_824
+                )
             } else if config.step_size >= 1_048_576 && config.step_size % 1_048_576 == 0 {
-                format!("{} {}/{}MB", config.price_per_step, config.unit, config.step_size / 1_048_576)
+                format!(
+                    "{} {}/{}MB",
+                    config.price_per_step,
+                    config.unit,
+                    config.step_size / 1_048_576
+                )
             } else if config.step_size >= 1024 && config.step_size % 1024 == 0 {
-                format!("{} {}/{}KB", config.price_per_step, config.unit, config.step_size / 1024)
+                format!(
+                    "{} {}/{}KB",
+                    config.price_per_step,
+                    config.unit,
+                    config.step_size / 1024
+                )
             } else {
-                format!("{} {}/{}B", config.price_per_step, config.unit, config.step_size)
+                format!(
+                    "{} {}/{}B",
+                    config.price_per_step, config.unit, config.step_size
+                )
             }
         }
-        _ => format!("{} {}/{} {}", config.price_per_step, config.unit, config.step_size, config.metric),
+        _ => format!(
+            "{} {}/{} {}",
+            config.price_per_step, config.unit, config.step_size, config.metric
+        ),
     }
 }
 
@@ -1168,6 +1202,10 @@ fn cors_response(mut response: Response, origin: Option<&str>, is_local: bool) -
         if let Some(origin_val) = origin {
             if let Ok(hv) = HeaderValue::from_str(origin_val) {
                 headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, hv);
+                // Parity with Go #349: the echo decision varies per Origin;
+                // without Vary, caches can serve one origin's CORS verdict
+                // to another (MDN).
+                headers.insert(header::VARY, HeaderValue::from_static("Origin"));
             }
         }
     }
@@ -1304,6 +1342,95 @@ mod tests {
     fn public_origin_blocked() {
         assert!(!is_local_origin("https://example.com"));
         assert!(!is_local_origin("http://8.8.8.8"));
+    }
+
+    // ---- CORS policy contract (parity with Go tollgate-module-basic-go #349) ----
+    // These pin the cross-implementation policy: local-origin echo only,
+    // never a wildcard, methods/headers always present. The parity-bug
+    // class this guards against: PRTA's rust_basic fixture asserts
+    // `Access-Control-Allow-Origin: *` (physical-router-test-automation#88)
+    // while no production module may emit it.
+
+    fn cors_test_response(origin: Option<&str>, is_local: bool) -> Response {
+        cors_response(json_response(StatusCode::OK, "{}".into()), origin, is_local)
+    }
+
+    #[test]
+    fn cors_contract_local_origin_echoed() {
+        let resp = cors_test_response(Some("http://192.168.1.1:2050"), true);
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "http://192.168.1.1:2050"
+        );
+    }
+
+    #[test]
+    fn cors_contract_public_origin_gets_no_allow_origin() {
+        let resp = cors_test_response(Some("https://evil.example"), false);
+        assert!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cors_contract_no_origin_gets_no_allow_origin() {
+        // Non-browser clients (curl) never need ACAO.
+        let resp = cors_test_response(None, false);
+        assert!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cors_contract_never_wildcard() {
+        for (origin, is_local) in [
+            (Some("http://192.168.1.1:2050"), true),
+            (Some("http://localhost:3000"), true),
+            (Some("https://evil.example"), false),
+            (None, false),
+        ] {
+            let resp = cors_test_response(origin, is_local);
+            if let Some(v) = resp.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN) {
+                assert_ne!(
+                    v, "*",
+                    "wildcard ACAO is forbidden (LAN-firewall-protected API, OWASP)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cors_contract_vary_origin_on_echo_only() {
+        let echoed = cors_test_response(Some("http://192.168.1.1:2050"), true);
+        assert_eq!(echoed.headers().get(header::VARY).unwrap(), "Origin");
+        let not_echoed = cors_test_response(Some("https://evil.example"), false);
+        assert!(not_echoed.headers().get(header::VARY).is_none());
+    }
+
+    #[test]
+    fn cors_contract_methods_and_headers_always_present() {
+        // Even when the origin is not echoed, preflight needs the verbs.
+        let resp = cors_test_response(None, false);
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+                .unwrap(),
+            "GET, POST, OPTIONS"
+        );
+        assert!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("Content-Type")
+        );
     }
 
     #[test]
