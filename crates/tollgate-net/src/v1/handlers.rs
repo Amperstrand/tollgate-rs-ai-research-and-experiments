@@ -25,7 +25,7 @@ fn is_captive_probe_host(host: &str) -> bool {
         "nmcheck.gnome.org",
     ];
     let host_part = host.split(':').next().unwrap_or(host);
-    PROBE_DOMAINS.iter().any(|d| host_part == *d)
+    PROBE_DOMAINS.contains(&host_part)
 }
 
 fn derive_gateway_ip(client_ip: IpAddr) -> String {
@@ -173,7 +173,7 @@ async fn handle_get_details(
     let creqa = create_creqa(
         state.config.price_per_step,
         &state.config.unit,
-        &[state.config.mint_url.clone()],
+        std::slice::from_ref(&state.config.mint_url),
         "TollGate internet access",
         &post_endpoint,
     );
@@ -266,7 +266,7 @@ async fn handle_portal(
     let creqa = create_creqa(
         state.config.price_per_step,
         &state.config.unit,
-        &[state.config.mint_url.clone()],
+        std::slice::from_ref(&state.config.mint_url),
         "TollGate internet access",
         &post_endpoint,
     );

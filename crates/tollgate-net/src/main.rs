@@ -126,7 +126,9 @@ async fn main() -> anyhow::Result<()> {
         None => serve(cfg, identity, None).await,
         Some(Command::Serve { listen }) => serve(cfg, identity, listen).await,
         Some(Command::Connect { peer }) => connect(&cfg, &identity, &peer).await,
-        Some(Command::Pay { peer, mint, amount }) => pay(&cfg, &identity, &peer, &mint, amount).await,
+        Some(Command::Pay { peer, mint, amount }) => {
+            pay(&cfg, &identity, &peer, &mint, amount).await
+        }
         Some(Command::Consume {
             peer,
             mint,
@@ -356,7 +358,8 @@ async fn v1_serve(
 fn read_v1_mints() -> Option<Vec<String>> {
     let data = std::fs::read_to_string("/etc/tollgate/config.json").ok()?;
     let v: serde_json::Value = serde_json::from_str(&data).ok()?;
-    let mints: Vec<String> = v.get("accepted_mints")?
+    let mints: Vec<String> = v
+        .get("accepted_mints")?
         .as_array()?
         .iter()
         .filter_map(|m| m.get("url")?.as_str().map(String::from))
