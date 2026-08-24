@@ -1,0 +1,13 @@
+#!/bin/sh
+# Compile gate: never commit code the workspace can't build.
+# Earned 2026-08-24: a scripted string-replace silently no-oped (needle
+# mismatch) and the stale signature survived until the docker build stage.
+# cargo check catches that class in seconds when a toolchain is present.
+if command -v cargo >/dev/null 2>&1; then
+  cargo check --quiet --all-targets || {
+    echo "pre-commit: cargo check FAILED — fix before committing" >&2
+    exit 1
+  }
+else
+  echo "pre-commit: cargo not found — run the testing/docker build before pushing!" >&2
+fi

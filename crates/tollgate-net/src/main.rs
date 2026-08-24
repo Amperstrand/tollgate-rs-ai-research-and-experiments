@@ -59,6 +59,10 @@ enum Command {
         /// Token amount in sats.
         #[arg(long, default_value_t = 8)]
         amount: u64,
+        /// Pay a REAL pre-minted token (from a wallet) instead of a test token.
+        /// Required against production gateways that verify with a real mint.
+        #[arg(long)]
+        token: Option<String>,
     },
     /// Pay a peer and stay online: poll for MeteringReports and auto-top-up
     /// before the balance runs out.
@@ -126,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         None => serve(cfg, identity, None).await,
         Some(Command::Serve { listen }) => serve(cfg, identity, listen).await,
         Some(Command::Connect { peer }) => connect(&cfg, &identity, &peer).await,
-        Some(Command::Pay { peer, mint, amount }) => pay(&cfg, &identity, &peer, &mint, amount).await,
+        Some(Command::Pay { peer, mint, amount, token }) => pay(&cfg, &identity, &peer, &mint, amount, token.as_deref()).await,
         Some(Command::Consume {
             peer,
             mint,
@@ -264,9 +268,10 @@ async fn pay(
     peer: &str,
     mint: &str,
     amount: u64,
+    token_override: Option<&str>,
 ) -> anyhow::Result<()> {
     tracing::info!(pubkey = %identity.pubkey_hex(), %peer, %mint, amount, "paying bootstrap token");
-    let paid = client::pay(peer, identity, &cfg.unit, mint, amount).await?;
+    let paid = client::pay(peer, identity, &cfg.unit, mint, amount, token_override).await?;
     tracing::info!(
         peer_pubkey = %paid.peer_pubkey_hex,
         accepted = paid.accepted,

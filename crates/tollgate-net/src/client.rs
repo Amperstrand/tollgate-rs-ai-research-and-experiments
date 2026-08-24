@@ -17,8 +17,8 @@ use cashu::secret::Secret;
 
 use tollgate_core::Price;
 use tollgate_protocol::{
-    Announce, BootstrapAck, BootstrapToken, MessageType, MeteringReport, PROTOCOL_VERSION,
-    PriceSheet, PublicKey, Reject, decode_frames, encode_frame, frame, peek_type,
+    Accept, Announce, BootstrapAck, BootstrapToken, MessageType, MeteringReport,
+    PROTOCOL_VERSION, PriceSheet, PublicKey, Reject, decode_frames, encode_frame, frame, peek_type,
 };
 
 use crate::config::Identity;
@@ -148,21 +148,63 @@ pub async fn detect(base_url: &str, identity: &Identity, unit: &str) -> anyhow::
 
 /// Detect the peer and pay a bootstrap token of `amount_sat`, drawn on `mint_url`.
 /// Returns the peer identity and whether the bootstrap was accepted.
+///
+/// `token_override` pays a REAL pre-minted token (from a wallet) instead of a
+/// fabricated test token. Catalog gateways (multi-product PriceSheet) get an
+/// Accept for the first product first — the reference `pay` assumed
+/// single-product peers and sent no Accept at all.
 pub async fn pay(
     base_url: &str,
     identity: &Identity,
     unit: &str,
     mint_url: &str,
     amount_sat: u64,
+    token_override: Option<&str>,
 ) -> anyhow::Result<Paid> {
-    let token = build_test_token(mint_url, amount_sat).context("building bootstrap token")?;
+    let token = match token_override {
+        Some(t) => t.to_string(),
+        None => build_test_token(mint_url, amount_sat).context("building bootstrap token")?,
+    };
 
-    // One exchange carrying both our Announce (establishes identity) and the
-    // bootstrap token. The response should carry the peer's Announce and a
-    // BootstrapAck.
+    let mut accept_frame: Option<Vec<u8>> = None;
+    let mut probe_body = Vec::new();
+    encode_frame(&our_announce(identity, unit), &mut probe_body)
+        .map_err(|e| anyhow::anyhow!("framing: {e:?}"))?;
+    let probe = exchange(base_url, probe_body).await?;
+    if let Some(sheet) = find_price_sheet(&probe) {
+        if sheet.products.len() > 1 {
+            let product = &sheet.products[0];
+            let option = product
+                .mints
+                .iter()
+                .find(|m| mint_url.starts_with(m.mint_url.trim_end_matches('/')))
+                .unwrap_or(&product.mints[0]);
+            tracing::info!(
+                products = sheet.products.len(),
+                extensions = %String::from_utf8_lossy(&product.extensions),
+                mint = %option.mint_url,
+                "catalog peer: accepting first product"
+            );
+            let accept = Accept::new(
+                *product.product_id,
+                *option.option_id,
+                sheet.interval_ms.0,
+                sheet.interval_ms.1,
+                Vec::new(),
+            );
+            accept_frame = Some(accept.encode());
+        }
+    }
+
+    // One exchange carrying our Announce (establishes identity), the optional
+    // Accept, and the bootstrap token. The response should carry the peer's
+    // Announce and a BootstrapAck.
     let mut body = Vec::new();
     let frame_err = |e| anyhow::anyhow!("framing: {e:?}");
     encode_frame(&our_announce(identity, unit), &mut body).map_err(frame_err)?;
+    if let Some(a) = &accept_frame {
+        encode_frame(a, &mut body).map_err(frame_err)?;
+    }
     encode_frame(&BootstrapToken::new(token.into_bytes()).encode(), &mut body)
         .map_err(frame_err)?;
 
@@ -256,7 +298,7 @@ pub async fn run_consume(
     opts: ConsumeOpts,
     mut on_event: impl FnMut(&ConsumeEvent),
 ) -> anyhow::Result<()> {
-    let paid = pay(base_url, identity, unit, mint_url, opts.amount_sat).await?;
+    let paid = pay(base_url, identity, unit, mint_url, opts.amount_sat, None).await?;
     if !paid.accepted {
         anyhow::bail!(
             "initial bootstrap rejected: {}",
@@ -377,7 +419,7 @@ pub async fn run_consume(
         // never top up.
         let mut topped_up = false;
         if cut_off || (paid_scaled as i64).saturating_sub(cost) < topup_scaled as i64 {
-            let top = pay(base_url, identity, unit, mint_url, opts.topup_sat).await?;
+            let top = pay(base_url, identity, unit, mint_url, opts.topup_sat, None).await?;
             if top.accepted {
                 // A cut-off means the peer suspended us and reset its metering
                 // baseline on re-admit, so reset our accounting too; a proactive
