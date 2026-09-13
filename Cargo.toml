@@ -4,6 +4,7 @@ members = [
     "crates/tollgate-protocol",
     "crates/tollgate-core",
     "crates/tollgate-net",
+    "crates/tollgate-charger-host",
 ]
 
 [workspace.package]

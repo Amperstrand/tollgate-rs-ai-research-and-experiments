@@ -12,6 +12,8 @@ concept adds its glossary row in the same PR.** Companion notes:
 
 | Canonical | Definition | tollgate-rs | charger firmware (atom family) | pecan | provider adapters (SDKs) |
 |---|---|---|---|---|---|
+| **grant-ack** | The delivery agent's acceptance of a grant (wire: `start-acked`). | charger firmware | charger firmware | — | — |
+| **agent availability** | Delivery-agent online/offline presence, retained + LWT (wire: `charger/atom/status`). | — | `charger/atom/status` | daemon health | — |
 | **grant** | The scoped authorization a trust-holder issues to a delivery agent: caps + lease + nonce. A capability — holder can deliver up to caps, never re-grant. | session/channel open (implicit) | trigger w/ budget (MQTT start) | melt budget + slider start | start request after prestart quote |
 | **caps** | `{max_units, max_seconds, max_cost}` — whichever hits first ends delivery. Money cap is first-class (tariff granularity). | channel capacity | budget (units or seconds) | melt amount | quoted window cost bound |
 | **lease** | Expiry-if-not-exercised/refreshed terms on a grant. Makes crash recovery self-healing. | channel exhaustion / rollover threshold | connect timeout | quote expiry / refund window | plug/arrival timeout (e.g. pending-session window) |

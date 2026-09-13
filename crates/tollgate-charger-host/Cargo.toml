@@ -1,0 +1,15 @@
+[package]
+name = "tollgate-charger-host"
+description = "Meter-module delivery driver for the charger MQTT contract — pure message translation around tollgate-core's DeliveryEngine."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tollgate-core = { workspace = true }
+
+[lints]
+workspace = true
