@@ -20,6 +20,8 @@ This repo contains:
 A constrained-device variant (`tollgate-net-esp32`) lives in a separate
 project and consumes the same `tollgate-core`.
 
+> **Shared vocabulary:** the ecosystem [glossary](docs/design/glossary.md) — canonical terms across tollgate-rs, charger firmware, pecan, and provider adapters. Any repo adding a concept adds its glossary row in the same PR.
+
 → **Start here:** [tollgate-intro.md](docs/design/core/tollgate-intro.md) — goals, architecture, payment model, security.
 
 > tollgate-rs is in the design phase. The protocol and design documents
