@@ -14,6 +14,7 @@ Meter/Delivery design line; canonical vocabulary in
 | `tollgate-charger-host` | Canonical driver translating the charger MQTT contract + in-process conformance mock | ✅ **7/7 conformance scenarios** |
 | Broker-parity tier | same scenarios vs the REAL ev-device-sim + mosquitto (`--features real-broker`) | ✅ **7/7 parity, 2026-09-13** |
 | pecan P3 canonical events | ev-charge daemon emits grant/progress/terminal/settle/refund JSONL (`--canonical-events`, additive, legacy untouched) | ✅ **pecan `263f3e9`, 17/17 tests** |
+| evmap M1 provider | `bymoslo` MapProvider (1,265 municipal chargers, live status, tariff pricing) | ✅ **evmap `93ae5de`, live-verified** |
 | Charger MQTT contract | canonical mapping of the wire format + known gaps (no meter ticks, silent stop, wall-vs-monotonic) | ✅ `charger-mqtt-contract.md` |
 | Provider captures | Two real-world provider APIs fully mapped (parking + charging lifecycles, auth, quotes, receipts) → SDKs + MCP server | ✅ `phoneautomation/…/{parking,bilioslo}/api/` |
 | evmap plan | bymøslo provider adapter (M1–M3) + start-action | ✅ `evmap/docs/bymoslo-provider-plan.md` |
