@@ -24,6 +24,7 @@ extern crate alloc;
 
 pub mod access;
 pub mod action;
+pub mod delivery;
 pub mod event;
 pub mod metering;
 pub mod peer;
@@ -33,6 +34,10 @@ pub mod time;
 
 pub use access::AccessLevel;
 pub use action::Action;
+pub use delivery::{
+    AlarmReason, BudgetGuard, Caps, DeliveryAction, DeliveryEngine, DeliveryEvent,
+    DeliveryPhase, Grant, Lease, Progress, Receipt, TerminalKind, TerminalReport,
+};
 pub use event::Event;
 pub use peer::PeerId;
 pub use pricing::{Price, Product};
