@@ -230,12 +230,11 @@ impl BudgetGuard {
 pub struct DeliveryEngine {
     phase: DeliveryPhase,
     guard: Option<BudgetGuard>,
-    issued_at: Option<Millis>,
 }
 
 impl DeliveryEngine {
     pub const fn new() -> Self {
-        Self { phase: DeliveryPhase::Idle, guard: None, issued_at: None }
+        Self { phase: DeliveryPhase::Idle, guard: None }
     }
 
     /// Crash recovery: rebuild from the journal (the grant and the last
@@ -251,7 +250,6 @@ impl DeliveryEngine {
                 DeliveryPhase::Delivering
             },
             guard: Some(guard),
-            issued_at: Some(last.at),
         }
     }
 
