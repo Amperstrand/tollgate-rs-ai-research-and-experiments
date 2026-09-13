@@ -12,6 +12,7 @@ Meter/Delivery design line; canonical vocabulary in
 | Glossary | Rosetta stone across tollgate-rs / firmware / pecan / provider SDKs + naming rules | ✅ linked from all repos' READMEs |
 | `tollgate-core::delivery` | Grant/Caps/Lease, timestamped Progress, 7-kind TerminalReport, BudgetGuard, DeliveryEngine (sans-IO, no_std) | ✅ **42/42 tests** incl. crash-resume equivalence |
 | `tollgate-charger-host` | Canonical driver translating the charger MQTT contract + in-process conformance mock | ✅ **7/7 conformance scenarios** |
+| Broker-parity tier | same scenarios vs the REAL ev-device-sim + mosquitto (`--features real-broker`) | ✅ **7/7 parity, 2026-09-13** |
 | Charger MQTT contract | canonical mapping of the wire format + known gaps (no meter ticks, silent stop, wall-vs-monotonic) | ✅ `charger-mqtt-contract.md` |
 | Provider captures | Two real-world provider APIs fully mapped (parking + charging lifecycles, auth, quotes, receipts) → SDKs + MCP server | ✅ `phoneautomation/…/{parking,bilioslo}/api/` |
 | evmap plan | bymøslo provider adapter (M1–M3) + start-action | ✅ `evmap/docs/bymoslo-provider-plan.md` |
@@ -25,9 +26,7 @@ Meter/Delivery design line; canonical vocabulary in
 
 ## Open / next (priority order)
 
-1. **Broker-parity tier** — run the conformance suite against the *real*
-   `ev-device-sim` + mosquitto (the mock claims parity; prove it). Small.
-2. **pecan P3 event alignment** — deposit flow emits canonical
+1. **pecan P3 event alignment** — deposit flow emits canonical
    Progress/Terminal events alongside legacy ledger names. First live-system
    dedup; do it once parity backs the vocabulary.
 3. **evmap M1 provider** — read-only charger catalog (1,265 sites, one

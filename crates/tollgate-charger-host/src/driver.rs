@@ -111,6 +111,11 @@ impl ChargerDriver {
         (self.grant, self.last)
     }
 
+    /// The grant's ack instant — the accrual baseline.
+    pub fn acked_at(&self) -> Option<Millis> {
+        self.acked_at
+    }
+
     /// Current engine phase (exposed for hosts and conformance suites).
     pub fn phase(&self) -> DeliveryPhase {
         self.engine.phase()

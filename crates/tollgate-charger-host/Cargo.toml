@@ -11,5 +11,13 @@ authors.workspace = true
 [dependencies]
 tollgate-core = { workspace = true }
 
+# Real-broker parity tier: only compiled with --features real-broker so the
+# default build/test path stays dependency-free (pure driver + mock).
+rumqttc = { version = "0.24", optional = true }
+tokio = { workspace = true, optional = true }
+
+[features]
+real-broker = ["dep:rumqttc", "dep:tokio"]
+
 [lints]
 workspace = true

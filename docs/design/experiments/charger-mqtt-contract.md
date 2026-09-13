@@ -33,6 +33,18 @@ behavioral gain — dedup happens at the seams.*
    canonical leases are monotonic `Millis`. Translation happens in the host
    shell only.
 
+## Parity
+
+Proven 2026-09-13: all seven conformance scenarios (full window, seconds
+cap with silent stop, money-cap clamp, button abort, revoke, crash-resume
+against a live countdown, free delivery) pass against the REAL
+`ev-device-sim` over mosquitto — `cargo test -p tollgate-charger-host
+--features real-broker --test broker_parity` (sim + broker required).
+
+Known mock-vs-real divergence: the real sim **re-acks a `start` for an
+already-running device** (kills the old countdown); the mock refuses.
+Irrelevant to the scenarios; align the mock when it matters.
+
 ## Reference implementations
 
 - `tollgate-charger-host` (this repo): canonical driver + in-process
