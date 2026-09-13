@@ -13,6 +13,7 @@ Meter/Delivery design line; canonical vocabulary in
 | `tollgate-core::delivery` | Grant/Caps/Lease, timestamped Progress, 7-kind TerminalReport, BudgetGuard, DeliveryEngine (sans-IO, no_std) | ✅ **42/42 tests** incl. crash-resume equivalence |
 | `tollgate-charger-host` | Canonical driver translating the charger MQTT contract + in-process conformance mock | ✅ **7/7 conformance scenarios** |
 | Broker-parity tier | same scenarios vs the REAL ev-device-sim + mosquitto (`--features real-broker`) | ✅ **7/7 parity, 2026-09-13** |
+| P4 external-segment driver | `ExternalProviderPort` + `ExternalDriver` (quote→deposit, poll-as-tick, receipt-as-truth, nonce↔session idempotency, crash resume) vs mock municipal provider | ✅ **7/7, 2026-09-13** |
 | pecan P3 canonical events | ev-charge daemon emits grant/progress/terminal/settle/refund JSONL (`--canonical-events`, additive, legacy untouched) | ✅ **pecan `263f3e9`, 17/17 tests** |
 | evmap M1 provider | `bymoslo` MapProvider — revised to SEED mode (owner decision: no live credentials in the worker until ready; snapshot 1,265 sites, status `unknown`, live layer auto-enables via secrets later) | ✅ **evmap `448e06a`** |
 | evmap 5-lane review + fixes | cache-hit 502 fixed (proven), demo start allowlist + fail-closed MQTT, timeouts/single-flight, observability on, smoke 11 providers, provenance surface, ACTIVATION-CHECKLIST | ✅ **evmap `2512283`** |

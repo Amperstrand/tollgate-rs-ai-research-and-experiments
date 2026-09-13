@@ -15,7 +15,9 @@
 //! honors its time lease.
 
 mod driver;
+pub mod external;
 mod sim;
 
 pub use driver::{time_money_grant, ChargerDriver, Inbound, Outbound, PriceVector, PRICELESS};
+pub use external::{ExternalAction, ExternalDriver, ExternalProviderPort, ProviderError, Receipt};
 pub use sim::MockCharger;
