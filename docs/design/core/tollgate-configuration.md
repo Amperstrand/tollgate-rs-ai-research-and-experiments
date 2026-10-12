@@ -696,7 +696,9 @@ equal to hold one speed whatever the demand.
 
 **With `reserve: false`** the buyer pays for what it uses. It reserves nothing
 — or the peer's `min_reserved_rate`, if that is above `0` — and holds a budget
-of `budget` units.
+of `budget` units. Changed from `true` while it holds a reservation, it ends
+the reservation at once, with the purchase that brings its budget to
+`budget`, rather than leave the old rate draining it until its next purchase.
 
 Either way it **adds back what has drained**: each purchase brings the budget
 back up to the size it wants, never further, so the budget does not grow from
