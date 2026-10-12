@@ -5,10 +5,10 @@
 //! and the accounting are real, which is what lets the whole protocol be
 //! exercised on any platform.
 //!
-//! The shaper is a token bucket. A grant buys a rate that is fixed for the
-//! grant's life, so a bucket refilling at that rate and capped at a short burst
-//! is the natural enforcement: capacity left unused early is not banked, which
-//! is exactly what the cap expresses.
+//! The shaper is a token bucket. Core hands it one rate per peer, so a bucket
+//! refilling at that rate and capped at a short burst is the natural
+//! enforcement: capacity left unused early is not banked, which is exactly
+//! what the cap expresses.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -25,8 +25,8 @@ use super::Enforcer;
 ///
 /// Some slack absorbs scheduling jitter — a writer that wakes 30 ms late should
 /// still be able to send what it was owed. Too much and a buyer could idle and
-/// then burst, which is the thing grants exist to prevent, so this stays well
-/// under one window.
+/// then burst well past the rate it is shaped to, so this stays well under a
+/// second.
 const BURST_MS: u64 = 250;
 
 /// One peer's link, as the enforcer sees it.
@@ -39,7 +39,7 @@ struct Link {
     tokens: u64,
     /// Cumulative units delivered to and received from this peer, since the
     /// session started. Raw — the received multiplier is applied by core when
-    /// it draws the grant down, not here.
+    /// it draws the budget down, not here.
     counters: Counters,
     /// Units per second *we* want to pull from this peer. Drives our buying.
     demand: u64,
@@ -171,14 +171,14 @@ impl Loopback {
     pub fn record_delivered(&self, peer: PubKey, units: u64) {
         let mut links = self.links.lock().expect("not poisoned");
         let link = links.entry(peer).or_default();
-        link.counters.delivered = link.counters.delivered.saturating_add(units);
+        link.counters.to_payer = link.counters.to_payer.saturating_add(units);
     }
 
     /// Record units actually read from a peer — its upload.
     pub fn record_received(&self, peer: PubKey, units: u64) {
         let mut links = self.links.lock().expect("not poisoned");
         let link = links.entry(peer).or_default();
-        link.counters.received = link.counters.received.saturating_add(units);
+        link.counters.from_payer = link.counters.from_payer.saturating_add(units);
     }
 }
 
@@ -267,8 +267,8 @@ mod tests {
         assert_eq!(
             enforcer.counters(peer()),
             Counters {
-                delivered: 1_500,
-                received: 200
+                to_payer: 1_500,
+                from_payer: 200
             }
         );
     }

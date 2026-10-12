@@ -201,7 +201,7 @@ own policy, set in its configuration rather than in the protocol
 - a payer that reserved a rate is carried at least at that rate. With no
   burst set, which is the default, it is carried at exactly that rate
 - a payer that reserved nothing is carried at whatever speed the provider
-  chooses for it
+  chooses for it: up to a cap it sets, or as fast as the link allows
 
 Either way the enforcer is handed one number per payer, the speed it is
 shaped to, and draws are still `max(units moved, reserved rate × 1 s)`. A
@@ -259,8 +259,11 @@ purchase to the next. It buys again a little before its budget or its
 deadline would run out, whichever comes first, and only while something wants
 the link: observed demand, or a standing demand its operator set. It changes
 its reserved rate with the same purchase, raising it at once when demand
-outgrows it. There is nothing to forfeit, so there is no reason to hold back
-a purchase.
+outgrows it. A buyer that changes from time at a speed to pay per use ends
+its reservation at once too, with the purchase that brings its budget to the
+size it now wants: otherwise the old rate would go on draining the budget
+until the next purchase. There is
+nothing to forfeit, so there is no reason to hold back a purchase.
 
 It handles a refusal by its reason
 ([tollgate-protocol.md](tollgate-protocol.md#0x05-topupreject)):
