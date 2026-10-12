@@ -638,13 +638,14 @@ and anything above it is **spare capacity**, which the node may give or keep
 ```yaml
 burst:
   rate: 0                  # carry a payer that reserved less at up to this, units/s; 0 = no burst
-  unreserved_rate: null    # carry a payer that reserved nothing at this, units/s; null = the link
+  unreserved_rate: 0       # carry a payer that reserved nothing at up to this, units/s; 0 = no cap
 ```
 
 A payer that reserved a rate is carried at `max(reserved rate, burst.rate)`;
 with the default `0` that is exactly its reserved rate. A payer that reserved
-nothing is carried at `burst.unreserved_rate`, and at `0` it gets only the
-minimum flow allowance until it reserves. Either way the enforcer gets one
+nothing — it pays for what it uses — is carried at up to
+`burst.unreserved_rate`. That is a cap: at `0`, the default, there is none,
+and the payer is carried as fast as the link allows. Either way the enforcer gets one
 number per payer, and the node still draws `max(units moved, reserved rate ×
 1 s)`, so a payer that bursts pays for what it moves. Near the end of a budget
 the rate is clipped so the payer cannot move more in one tick than it has
@@ -663,7 +664,7 @@ or sets `unreserved_rate` low.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `rate` | `0` | No burst: each payer that reserved a rate is carried at exactly that rate. Per-peer override in `peers` |
-| `unreserved_rate` | `null` | A payer that reserved nothing is carried as fast as the link allows. `0` gives it only the minimum flow allowance. Per-peer override in `peers` |
+| `unreserved_rate` | `0` | No cap: a payer that reserved nothing is carried as fast as the link allows. Any other value caps it, in units per second. Per-peer override in `peers` |
 
 ---
 
@@ -885,6 +886,7 @@ Each daemon watches its own config file for changes and applies runtime-changeab
 | Smallest reserved rate | `min_reserved_rate`, advertised; `0` by default | One setting decides whether a node also sells pay per use |
 | Gap between purchases | `min_topup_gap_ms`, advertised, 1 s by default, checked before signatures | Nothing is forfeit by buying often, so this is what bounds the signature checks and disk writes a payer can cause |
 | Burst | Node-local `burst` block, per peer; no burst for reserved payers, the link for unreserved ones, by default | Speed above a reservation is spare capacity, the provider's to give. It never reaches the protocol, and the enforcer still gets one number |
+| Unreserved cap | `burst.unreserved_rate` is a cap in units per second; `0` is no cap | A cap of nothing would leave a payer that pays per use with only the minimum flow allowance: it would pay and get almost nothing. A node that does not sell pay per use says so with `min_reserved_rate`, before anyone pays. So `0` is free to mean no cap, and one number covers every case |
 | Buying | Reserve a rate that follows demand, or reserve nothing and hold a fixed budget; add back what drained; act on refusals by reason | Nothing is forfeit, so there is nothing to time. Adding back only what drained keeps a budget from growing |
 | Minimum flow allowance | A rate, not a per-interval quantity | It is the floor of the shaper and what a peer falls back to when its budget runs out or expires. A rate cannot be accumulated |
 | Transit-loss settings | Removed | Counters are no longer exchanged, so there is no second number to disagree with |

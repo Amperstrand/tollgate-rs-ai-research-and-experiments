@@ -201,7 +201,7 @@ own policy, set in its configuration rather than in the protocol
 - a payer that reserved a rate is carried at least at that rate. With no
   burst set, which is the default, it is carried at exactly that rate
 - a payer that reserved nothing is carried at whatever speed the provider
-  chooses for it
+  chooses for it: up to a cap it sets, or as fast as the link allows
 
 Either way the enforcer is handed one number per payer, the speed it is
 shaped to, and draws are still `max(units moved, reserved rate × 1 s)`. A
