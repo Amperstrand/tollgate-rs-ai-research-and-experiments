@@ -380,9 +380,9 @@ pub struct BurstSection {
     /// Carry a payer that reserved a rate at up to this, units per second, if
     /// that is more. `0`, the default, carries it at exactly its rate.
     pub rate: Option<u64>,
-    /// Carry a payer that reserved nothing at this, units per second. Absent
-    /// is as fast as the link allows; `0` gives it only the minimum flow
-    /// allowance until it reserves.
+    /// Carry a payer that reserved nothing — it pays for what it uses — at up
+    /// to this, units per second. A cap: `0`, the default, is none, and the
+    /// payer is carried as fast as the link allows. `null` reads as `0`.
     pub unreserved_rate: Option<u64>,
 }
 
@@ -1221,6 +1221,21 @@ mod tests {
                 unreserved_rate: 2_500_000
             }
         );
+    }
+
+    #[test]
+    fn an_unreserved_rate_of_zero_is_no_cap() {
+        for yaml in [
+            "{}",
+            "burst:\n  unreserved_rate: 0\n",
+            "burst:\n  unreserved_rate: null\n",
+        ] {
+            let config = resolved(yaml).expect("resolve");
+            assert_eq!(config.policy.burst.unreserved_rate, 0, "{yaml}");
+            assert_eq!(config.policy.burst.unreserved_speed(), u64::MAX, "{yaml}");
+        }
+        let capped = resolved("burst:\n  unreserved_rate: 5000000\n").expect("resolve");
+        assert_eq!(capped.policy.burst.unreserved_speed(), 5_000_000);
     }
 
     #[test]

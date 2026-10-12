@@ -2321,12 +2321,12 @@ fn a_peer_can_be_let_burst_above_what_it_reserved() {
         "up to the burst, clipped to what a tick can take of the budget"
     );
 
-    // And a node that carries unreserved payers at a set speed.
+    // And a node that caps unreserved payers at a set speed.
     let mut link = Link::new();
     link.b.sessions.set_peer_policy(
         a,
         PeerPolicy {
-            unreserved_rate: Some(0),
+            unreserved_rate: Some(500_000),
             ..PeerPolicy::default()
         },
         link.now,
@@ -2356,14 +2356,14 @@ fn a_peer_can_be_let_burst_above_what_it_reserved() {
         .shaping_rate(
             link.now,
             PeerPolicy {
-                unreserved_rate: Some(0),
+                unreserved_rate: Some(500_000),
                 ..PeerPolicy::default()
             }
             .burst(link.b.sessions.node_policy()),
             4_096,
             1_000,
         );
-    assert_eq!(rate, 4_096, "only the allowance until it reserves");
+    assert_eq!(rate, 500_000, "the cap, not the link");
 }
 
 #[test]

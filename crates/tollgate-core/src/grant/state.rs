@@ -471,7 +471,7 @@ impl GrantState {
         let speed = if self.reserved_rate > 0 {
             self.reserved_rate.max(burst.rate)
         } else {
-            burst.unreserved_rate
+            burst.unreserved_speed()
         };
         let speed = speed.min(limits::per_tick_ceiling(self.remaining(), tick_ms));
         speed.max(minimum_flow)

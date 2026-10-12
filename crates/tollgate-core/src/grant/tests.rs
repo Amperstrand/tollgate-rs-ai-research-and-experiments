@@ -453,7 +453,7 @@ fn the_reservation_ends_at_the_deadline() {
 
 const NO_BURST: BurstPolicy = BurstPolicy {
     rate: 0,
-    unreserved_rate: u64::MAX,
+    unreserved_rate: 0,
 };
 
 #[test]
@@ -484,7 +484,7 @@ fn a_burst_carries_a_reserved_payer_above_its_rate_but_never_below() {
     );
     let burst = |rate| BurstPolicy {
         rate,
-        unreserved_rate: u64::MAX,
+        unreserved_rate: 0,
     };
     assert_eq!(
         state.shaping_rate(Millis(1), burst(2_500_000), 0, SECOND),
@@ -498,7 +498,7 @@ fn a_burst_carries_a_reserved_payer_above_its_rate_but_never_below() {
 }
 
 #[test]
-fn a_payer_that_reserved_nothing_is_carried_at_the_unreserved_rate() {
+fn a_payer_that_reserved_nothing_is_carried_up_to_the_unreserved_cap() {
     let mut state = opened(ROOMY);
     buy(&mut state, &[update(1, ROOMY / 2)], 10_000, 0, Millis(0));
     let unreserved = |rate| BurstPolicy {
@@ -511,8 +511,8 @@ fn a_payer_that_reserved_nothing_is_carried_at_the_unreserved_rate() {
     );
     assert_eq!(
         state.shaping_rate(Millis(1), unreserved(0), 4_096, SECOND),
-        4_096,
-        "with none, only the allowance until it reserves"
+        limits::per_tick_ceiling(ROOMY / 2, SECOND),
+        "no cap: as fast as the link allows, clipped only to what is left"
     );
 }
 

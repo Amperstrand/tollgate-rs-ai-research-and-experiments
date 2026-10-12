@@ -81,22 +81,28 @@ impl GrantPolicy {
 /// A payer is promised its reserved rate and nothing more. Anything above it is
 /// spare capacity, which the node may give or keep, and admission control does
 /// not count it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The default carries a reserved payer at exactly its rate, and one that
+/// reserved nothing as fast as the link allows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BurstPolicy {
     /// A payer that reserved a rate is carried at `max(reserved, rate)`. `0`,
     /// the default, carries it at exactly its reserved rate.
     pub rate: u64,
-    /// A payer that reserved nothing is carried at this, in units per second.
-    /// `u64::MAX`, the default, is as fast as the link allows; `0` leaves it
-    /// only the minimum flow allowance until it reserves.
+    /// A payer that reserved nothing — it pays for what it uses — is carried
+    /// at up to this, in units per second. A cap: `0`, the default, is none,
+    /// and the payer is carried as fast as the link allows.
     pub unreserved_rate: u64,
 }
 
-impl Default for BurstPolicy {
-    fn default() -> Self {
-        Self {
-            rate: 0,
-            unreserved_rate: u64::MAX,
+impl BurstPolicy {
+    /// The speed a payer that reserved nothing is carried at: the cap, or
+    /// `u64::MAX`, as fast as the link allows, when there is none.
+    pub fn unreserved_speed(&self) -> u64 {
+        if self.unreserved_rate == 0 {
+            u64::MAX
+        } else {
+            self.unreserved_rate
         }
     }
 }

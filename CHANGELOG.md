@@ -34,7 +34,9 @@ Nothing has been released yet. Everything below is on `master` and will ship as
 - `burst: {rate, unreserved_rate}`, per node and per peer: how fast a payer is
   carried above what it reserved, or when it reserved nothing. By default a
   reserved payer is carried at exactly its rate and an unreserved one as fast
-  as the link allows.
+  as the link allows. `unreserved_rate` is a cap in units per second, and `0`,
+  the default, is no cap; `null` reads as `0`. (It used to give a payer that
+  reserved nothing only the minimum flow allowance.)
 
 - Named instances: one machine runs `tollgated` once per task, each under a
   name, `instance:` in the config or `--instance` on the command line, which
