@@ -71,6 +71,13 @@ impl Sessions {
         }
     }
 
+    /// Change how this node buys. It applies from the next decision: a
+    /// reservation already made stands until the next purchase, which a buyer
+    /// that now pays per use makes at once to end it.
+    pub fn set_buyer_policy(&mut self, policy: BuyerPolicy) {
+        self.buyer_policy = policy;
+    }
+
     /// Set an operator override for a peer, before or after it connects.
     ///
     /// For a peer already connected it takes effect at once: its access and

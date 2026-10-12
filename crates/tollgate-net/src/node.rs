@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tollgate_core::buyer::{BuyerPolicy, FUNDING_TIMEOUT_MS};
 use tollgate_core::config::{NodePolicy, PeerPolicy};
 use tollgate_core::session::Sessions;
@@ -134,6 +134,18 @@ struct Link {
     tx: mpsc::Sender<Message>,
 }
 
+/// The next policy from `buying`; never, once there is none or its sender has
+/// gone.
+async fn buying_changed(buying: &mut Option<watch::Receiver<BuyerPolicy>>) -> Option<BuyerPolicy> {
+    if let Some(rx) = buying.as_mut()
+        && rx.changed().await.is_ok()
+    {
+        return Some(*rx.borrow_and_update());
+    }
+    *buying = None;
+    std::future::pending().await
+}
+
 /// A running node.
 pub struct Node {
     identity: Identity,
@@ -161,6 +173,8 @@ pub struct Node {
     /// What the node is doing, republished each tick for the control socket.
     published: control::Published,
     started: Instant,
+    /// How the node buys, when its owner changes it while it runs.
+    buying: Option<watch::Receiver<BuyerPolicy>>,
 }
 
 impl Node {
@@ -199,7 +213,16 @@ impl Node {
             peer_identity: config.peer_identity,
             published: Default::default(),
             started: Instant::now(),
+            buying: None,
         }
+    }
+
+    /// Follow `buying` for how the node buys, from its next decision on
+    /// ([`Sessions::set_buyer_policy`]). For a program that runs a node on
+    /// someone's behalf and lets them choose, such as [`crate::client`].
+    pub fn with_buyer_policy(mut self, buying: watch::Receiver<BuyerPolicy>) -> Self {
+        self.buying = Some(buying);
+        self
     }
 
     /// Retry failed settlements on this schedule instead of the default.
@@ -296,8 +319,13 @@ impl Node {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         let mut shutdown = std::pin::pin!(shutdown);
+        let mut buying = self.buying.take();
         loop {
             tokio::select! {
+                Some(policy) = buying_changed(&mut buying) => {
+                    info!(reserve = policy.reserve, "buying changed");
+                    self.sessions.set_buyer_policy(policy);
+                }
                 Some(event) = wire_rx.recv() => self.on_wire(event, &done_tx).await,
                 Some(event) = done_rx.recv() => self.dispatch(event, &done_tx).await,
                 _ = ticker.tick() => {

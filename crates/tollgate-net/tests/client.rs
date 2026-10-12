@@ -155,7 +155,8 @@ async fn a_session_buys_the_rate_it_is_given_and_follows_a_change() {
             endpoint,
             gateway_mint: mint_url,
             channel_capacity: 1 << 28,
-            buying: Buying::AtSpeed,
+            buying: tokio::sync::watch::channel(Buying::AtSpeed).1,
+            moved: None,
         },
         session_funding(&dir).await,
         None,
@@ -182,7 +183,7 @@ async fn a_session_buys_the_rate_it_is_given_and_follows_a_change() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_pay_per_use_session_reserves_nothing_and_buys_back_what_was_moved() {
+async fn a_pay_per_use_session_buys_back_what_was_moved_and_moves_to_a_speed_in_place() {
     let dir = temp_dir();
     // The gateway caps a payer that reserves nothing at 2 MB/s.
     let Gateway {
@@ -193,8 +194,13 @@ async fn a_pay_per_use_session_reserves_nothing_and_buys_back_what_was_moved() {
     } = gateway(&dir, "burst: { unreserved_rate: 2000000 }\n").await;
 
     let session_id = Identity::generate();
-    let (_rate_tx, rate_rx) = tokio::sync::watch::channel(2_000_000u64);
+    let (rate_tx, rate_rx) = tokio::sync::watch::channel(2_000_000u64);
     let (moved_tx, moved_rx) = tokio::sync::watch::channel(Moved::default());
+    let pay_per_use = Buying::PayPerUse {
+        budget: 10_000_000,
+        renew_lead_ms: 2_000,
+    };
+    let (buying_tx, buying_rx) = tokio::sync::watch::channel(pay_per_use);
     tokio::spawn(client::run(
         ClientSpec {
             secret_hex: session_id.secret_hex(),
@@ -202,11 +208,8 @@ async fn a_pay_per_use_session_reserves_nothing_and_buys_back_what_was_moved() {
             endpoint,
             gateway_mint: mint_url,
             channel_capacity: 1 << 28,
-            buying: Buying::PayPerUse {
-                budget: 10_000_000,
-                renew_lead_ms: 2_000,
-                moved: moved_rx,
-            },
+            buying: buying_rx,
+            moved: Some(moved_rx),
         },
         session_funding(&dir).await,
         None,
@@ -243,6 +246,23 @@ async fn a_pay_per_use_session_reserves_nothing_and_buys_back_what_was_moved() {
         .expect("report what moved");
     let probe = gateway.clone();
     wait_for("the session to buy back what was moved", move || {
+        probe.shaping_rate(session) == 2_000_000
+    })
+    .await;
+
+    // Moved to time at a speed in place, it reserves the rate at once, and
+    // back to pay per use it ends the reservation at once.
+    rate_tx.send(1_000_000).expect("the speed");
+    buying_tx.send(Buying::AtSpeed).expect("move to a speed");
+    let probe = gateway.clone();
+    wait_for("the session to reserve the speed", move || {
+        probe.shaping_rate(session) == 1_000_000
+    })
+    .await;
+    rate_tx.send(2_000_000).expect("the cap");
+    buying_tx.send(pay_per_use).expect("back to pay per use");
+    let probe = gateway.clone();
+    wait_for("the session to end its reservation", move || {
         probe.shaping_rate(session) == 2_000_000
     })
     .await;

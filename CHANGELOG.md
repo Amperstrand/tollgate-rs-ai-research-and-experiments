@@ -45,7 +45,11 @@ Nothing has been released yet. Everything below is on `master` and will ship as
   adds back what the device used. Idle costs nothing. The session carries
   none of the device's traffic, so the caller tells it what the gateway
   carried (`Moved`, a watch of cumulative counts), and the session draws its
-  own count from that to know when to buy again.
+  own count from that to know when to buy again. `ClientSpec::buying` is a
+  watch, so a running session moves between the two in place: to a speed it
+  reserves at once, and to pay per use it ends its reservation at once
+  (`Trigger::StopReserving`; `Sessions::set_buyer_policy` and
+  `Node::with_buyer_policy` carry the change).
 
 - Named instances: one machine runs `tollgated` once per task, each under a
   name, `instance:` in the config or `--instance` on the command line, which

@@ -14,8 +14,9 @@
 //!   the window, or the fixed budget of a pay-per-use buyer — and never
 //!   further.
 //! - **When.** Before the budget, at the rate it is drawn, or the deadline
-//!   runs out; at once when demand outgrows the rate reserved, or when a
-//!   session resumed with a budget has to reserve again; and never sooner
+//!   runs out; at once when demand outgrows the rate reserved, when a
+//!   session resumed with a budget has to reserve again, or when a buyer
+//!   that now pays per use still holds a reservation; and never sooner
 //!   after the last purchase than the provider's gap. Only while something
 //!   wants the link, or a reservation is being made again.
 
@@ -97,6 +98,8 @@ pub fn poll(buyer: &Buyer, policy: &BuyerPolicy, demand: Demand, now: Millis) ->
         } else {
             Trigger::RateRose
         }
+    } else if !policy.reserve && buyer.reserved() > reserve {
+        Trigger::StopReserving
     } else if running_out {
         if buyer.started {
             Trigger::Renewal

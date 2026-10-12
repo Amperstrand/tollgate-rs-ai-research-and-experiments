@@ -8,9 +8,10 @@
 //! what a buyer needs:
 //!
 //! - one peer, the gateway, dialled and never listened for;
-//! - one of two ways to pay, chosen per session ([`Buying`]): time at a speed,
-//!   which reserves the rate the caller sets, or pay per use, which reserves
-//!   nothing and is drawn only by what the device moves;
+//! - one of two ways to pay ([`Buying`]): time at a speed, which reserves the
+//!   rate the caller sets, or pay per use, which reserves nothing and is drawn
+//!   only by what the device moves. The caller may move a running session
+//!   from one to the other;
 //! - no charging it: the session says `no_charge`, so the gateway funds no
 //!   channel toward it and the phone needs no mint;
 //! - a demand the caller sets, and changes while the session runs;
@@ -30,6 +31,7 @@ use crate::config::File;
 use crate::enforcer::{Enforcer, Loopback};
 use crate::node::Node;
 use crate::wire::Connector;
+use tollgate_core::buyer::BuyerPolicy;
 
 /// The window each purchase of time at a speed asks for, and so the budget it
 /// holds: an hour of the rate it reserves, or as long as the gateway allows.
@@ -55,10 +57,12 @@ const PAY_PER_USE_WINDOW_MS: u64 = u64::MAX;
 /// [`tollgate_core::buyer::BuyerPolicy::MIN_SAFE_LEAD_MS`]: the gateway is on
 /// the same machine. Nothing is forfeit by buying early, so if purchases land
 /// late under load and the phone's flows stall for seconds, raise this first.
-const RENEW_LEAD_MS: u32 = 250;
+const RENEW_LEAD_MS: u64 = 250;
 
-/// How a session pays, chosen per session.
-#[derive(Debug, Clone)]
+/// How a session pays. The caller chooses, and may change it while the session
+/// runs: it applies from the next purchase, which comes at once when it means
+/// reserving a different rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Buying {
     /// Time at a speed: reserve the rate [`run`] is given, and hold an hour
     /// of it ([`WINDOW_MS`]). The budget drains at that rate, idle or not.
@@ -72,17 +76,36 @@ pub enum Buying {
         /// back up to this, within what the channels in use will take.
         budget: u64,
         /// Buy again this long before the budget would run out, at the rate
-        /// [`run`] is given. It has to cover how late `moved` can be.
+        /// [`run`] is given. It has to cover how late [`ClientSpec::moved`]
+        /// can be.
         renew_lead_ms: u64,
-        /// What the gateway has carried for the device, as the caller reads
-        /// it ([`Moved`]).
-        ///
-        /// The session carries none of the device's traffic, so it cannot
-        /// count it; a pay-per-use budget is drawn only by that traffic, so
-        /// the session's own count of it, which decides when to buy, comes
-        /// from here.
-        moved: watch::Receiver<Moved>,
     },
+}
+
+impl Buying {
+    /// `base`, the session's buyer policy, buying this way.
+    fn policy(self, base: BuyerPolicy) -> BuyerPolicy {
+        match self {
+            Buying::AtSpeed => BuyerPolicy {
+                reserve: true,
+                headroom_pct: 100,
+                window_ms: WINDOW_MS,
+                renew_lead_ms: RENEW_LEAD_MS,
+                budget: 0,
+                ..base
+            },
+            Buying::PayPerUse {
+                budget,
+                renew_lead_ms,
+            } => BuyerPolicy {
+                reserve: false,
+                window_ms: PAY_PER_USE_WINDOW_MS,
+                renew_lead_ms,
+                budget,
+                ..base
+            },
+        }
+    }
 }
 
 /// What the gateway has carried for a device: cumulative units, counted from
@@ -112,8 +135,17 @@ pub struct ClientSpec {
     /// Units a channel to the gateway is funded with. Keep it within what the
     /// device has paid for: the funding call is refused past that.
     pub channel_capacity: u64,
-    /// How the session pays.
-    pub buying: Buying,
+    /// How the session pays, and any change to it while it runs.
+    pub buying: watch::Receiver<Buying>,
+    /// What the gateway has carried for the device, as the caller reads it
+    /// ([`Moved`]); needed to pay per use.
+    ///
+    /// The session carries none of the device's traffic, so it cannot count
+    /// it. A pay-per-use budget is drawn only by that traffic, so the
+    /// session's own count of it, which decides when to buy, comes from here
+    /// while it pays per use. Time at a speed is counted at its reserved rate,
+    /// which these readings, coming late and in lumps, would only overstate.
+    pub moved: Option<watch::Receiver<Moved>>,
 }
 
 /// Run a buyer session until `shutdown` resolves.
@@ -131,32 +163,13 @@ pub async fn run(
     shutdown: impl std::future::Future<Output = ()> + Send,
 ) -> Result<()> {
     let capacity = spec.channel_capacity.max(1);
-    let (buying, moved) = match &spec.buying {
-        Buying::AtSpeed => (
-            format!(
-                "{{ headroom_pct: 100, window_ms: {WINDOW_MS}, renew_lead_ms: {RENEW_LEAD_MS} }}"
-            ),
-            None,
-        ),
-        Buying::PayPerUse {
-            budget,
-            renew_lead_ms,
-            moved,
-        } => (
-            format!(
-                "{{ reserve: false, budget: {budget}, window_ms: {PAY_PER_USE_WINDOW_MS}, \
-                 renew_lead_ms: {renew_lead_ms} }}"
-            ),
-            Some(moved.clone()),
-        ),
-    };
     let yaml = format!(
         r#"
 identity: {{ secret_key: "{secret}" }}
 mint: {{ url: "{mint}" }}
 vouchers: {{ accepted_mints: ["{mint}"] }}
 network: {{ listen: "127.0.0.1:0" }}
-buying: {buying}
+buying: {{ window_ms: {WINDOW_MS}, renew_lead_ms: {RENEW_LEAD_MS} }}
 channels:
   initial_capacity: {capacity}
   min_capacity: {capacity}
@@ -179,6 +192,8 @@ peers:
         .resolve_with_chosen_lead()
         .context("resolve the session")?;
     config.connector = connector;
+    let base = config.buyer;
+    config.buyer = spec.buying.borrow().policy(base);
 
     let channels = Arc::new(
         SpilmanChannels::new(SpilmanConfig {
@@ -200,15 +215,22 @@ peers:
     let loopback = Arc::new(Loopback::new());
     let enforcer: Arc<dyn Enforcer> = loopback.clone();
     let demand = tokio::spawn(hold_demand(Arc::clone(&enforcer), rate));
-    let meter = moved.map(|moved| tokio::spawn(hold_moved(loopback, moved)));
+    let meter = spec
+        .moved
+        .clone()
+        .map(|moved| tokio::spawn(hold_moved(loopback, moved, spec.buying.clone())));
+    let (policy_tx, policy_rx) = watch::channel(config.buyer);
+    let follow = tokio::spawn(follow_buying(spec.buying.clone(), base, policy_tx));
 
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .context("bind the session's control plane")?;
     let ran = Node::new(&config, channels, enforcer)
+        .with_buyer_policy(policy_rx)
         .run_on(listener, config, shutdown)
         .await;
     demand.abort();
+    follow.abort();
     if let Some(meter) = meter {
         meter.abort();
     }
@@ -230,16 +252,34 @@ async fn hold_demand(enforcer: Arc<dyn Enforcer>, mut rate: watch::Receiver<u64>
     }
 }
 
+/// Hand the node each change to how the session buys.
+async fn follow_buying(
+    mut buying: watch::Receiver<Buying>,
+    base: BuyerPolicy,
+    policy: watch::Sender<BuyerPolicy>,
+) {
+    while buying.changed().await.is_ok() {
+        let now = *buying.borrow_and_update();
+        policy.send_replace(now.policy(base));
+    }
+}
+
 /// Count what the caller says the gateway carried for the device as this
 /// session's own traffic with the gateway, so the buyer draws its count of a
 /// pay-per-use budget as the gateway does.
 ///
-/// Only once the gateway is a peer: what moved before is not this session's.
-async fn hold_moved(loopback: Arc<Loopback>, mut moved: watch::Receiver<Moved>) {
+/// Only while it pays per use, and once the gateway is a peer: what moved
+/// before is not this session's.
+async fn hold_moved(
+    loopback: Arc<Loopback>,
+    mut moved: watch::Receiver<Moved>,
+    buying: watch::Receiver<Buying>,
+) {
     let mut tally = Tally::default();
     loop {
         let grew = tally.read(*moved.borrow_and_update());
-        if grew != Moved::default() {
+        let per_use = matches!(*buying.borrow(), Buying::PayPerUse { .. });
+        if per_use && grew != Moved::default() {
             for peer in loopback.peers() {
                 // From this side the gateway is the peer: what it sent the
                 // device was received from it, and the device's upload was

@@ -298,6 +298,9 @@ pub enum Trigger {
     /// The provider refused the last purchase and named the reserved rate it
     /// would take.
     Rebuy,
+    /// The buyer pays per use now and still holds a reservation, so it is
+    /// ended at once rather than left draining the budget.
+    StopReserving,
 }
 
 /// The buyer's state before a purchase, kept so a refusal can be undone.

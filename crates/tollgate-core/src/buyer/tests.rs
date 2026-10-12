@@ -225,6 +225,39 @@ fn pay_per_use_holds_its_budget_and_reserves_nothing() {
 }
 
 #[test]
+fn moving_between_a_speed_and_pay_per_use_changes_the_reservation_at_once() {
+    // How a Buyer Buys: a buyer that now pays per use ends its reservation at
+    // once, with the purchase that brings its budget to its new size, rather
+    // than let the old rate drain.
+    let (ppu, demand) = pay_per_use();
+    let speed = BuyerPolicy {
+        reserve: true,
+        window_ms: 10_000,
+        min_rate: 625_000,
+        max_rate: 625_000,
+        ..ppu
+    };
+    let mut buyer = opened(10 * CAPACITY);
+    let p = buy(&mut buyer, &speed, demand, Millis(0));
+    assert_eq!(p.reserved_rate, 625_000);
+
+    let p = buy(&mut buyer, &ppu, demand, Millis(SECOND));
+    assert_eq!(p.trigger, Trigger::StopReserving);
+    assert_eq!(p.reserved_rate, 0);
+    // Up to its budget, less the second just ended at the old rate.
+    assert_eq!(buyer.remaining_at(Millis(SECOND)), 1_000 * MB - 625_000);
+    assert!(poll(&buyer, &ppu, demand, Millis(2 * SECOND)).is_none());
+
+    // And back: the speed is reserved again at once. It already holds
+    // what it holds is more than ten seconds of it, so it buys a unit.
+    let p = buy(&mut buyer, &speed, demand, Millis(3 * SECOND));
+    assert_eq!(
+        (p.trigger, p.reserved_rate, p.grant),
+        (Trigger::RateRose, 625_000, 1)
+    );
+}
+
+#[test]
 fn pay_per_use_adds_back_what_it_used_before_it_runs_out() {
     let (policy, demand) = pay_per_use();
     let mut buyer = opened(10 * CAPACITY);
