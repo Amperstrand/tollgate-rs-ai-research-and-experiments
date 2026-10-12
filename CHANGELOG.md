@@ -38,6 +38,15 @@ Nothing has been released yet. Everything below is on `master` and will ship as
   the default, is no cap; `null` reads as `0`. (It used to give a payer that
   reserved nothing only the minimum flow allowance.)
 
+- `tollgate_net::client` sessions choose per session how to pay
+  (`ClientSpec::buying`): `Buying::AtSpeed`, time at a speed, reserves the rate
+  the session is given and holds an hour of it, as before; `Buying::PayPerUse`
+  reserves nothing, holds a set budget for as long as the gateway allows, and
+  adds back what the device used. Idle costs nothing. The session carries
+  none of the device's traffic, so the caller tells it what the gateway
+  carried (`Moved`, a watch of cumulative counts), and the session draws its
+  own count from that to know when to buy again.
+
 - Named instances: one machine runs `tollgated` once per task, each under a
   name, `instance:` in the config or `--instance` on the command line, which
   wins (letters, digits and `-`; unset is `default`). Each instance keeps its

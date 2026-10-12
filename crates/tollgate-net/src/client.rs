@@ -8,6 +8,9 @@
 //! what a buyer needs:
 //!
 //! - one peer, the gateway, dialled and never listened for;
+//! - one of two ways to pay, chosen per session ([`Buying`]): time at a speed,
+//!   which reserves the rate the caller sets, or pay per use, which reserves
+//!   nothing and is drawn only by what the device moves;
 //! - no charging it: the session says `no_charge`, so the gateway funds no
 //!   channel toward it and the phone needs no mint;
 //! - a demand the caller sets, and changes while the session runs;
@@ -28,7 +31,7 @@ use crate::enforcer::{Enforcer, Loopback};
 use crate::node::Node;
 use crate::wire::Connector;
 
-/// The window each purchase a session makes asks for, and so the budget it
+/// The window each purchase of time at a speed asks for, and so the budget it
 /// holds: an hour of the rate it reserves, or as long as the gateway allows.
 ///
 /// A reserved budget drains at its rate whether it is used or not, so a long
@@ -37,13 +40,63 @@ use crate::wire::Connector;
 /// rate is bought at once whatever the window. What the session can hold is
 /// also bounded by its channels: a purchase bigger than the channel in use
 /// takes what fits, and the rollover opens the rest.
-const WINDOW_MS: u32 = 3_600_000;
+const WINDOW_MS: u64 = 3_600_000;
+
+/// The window each purchase of pay per use asks for: as long as the gateway
+/// allows, which it clamps to its own range (30 days by default).
+///
+/// Nothing drains a budget that reserves nothing but what the device moves,
+/// so a long window only keeps what the device paid for usable for longer. A
+/// short one would let a device that stays idle lose its budget at the
+/// deadline.
+const PAY_PER_USE_WINDOW_MS: u64 = u64::MAX;
 
 /// How long before its budget runs out the session buys again. Below
 /// [`tollgate_core::buyer::BuyerPolicy::MIN_SAFE_LEAD_MS`]: the gateway is on
 /// the same machine. Nothing is forfeit by buying early, so if purchases land
 /// late under load and the phone's flows stall for seconds, raise this first.
 const RENEW_LEAD_MS: u32 = 250;
+
+/// How a session pays, chosen per session.
+#[derive(Debug, Clone)]
+pub enum Buying {
+    /// Time at a speed: reserve the rate [`run`] is given, and hold an hour
+    /// of it ([`WINDOW_MS`]). The budget drains at that rate, idle or not.
+    AtSpeed,
+    /// Pay for what you use: reserve nothing, hold `budget` units with the
+    /// gateway for as long as it allows ([`PAY_PER_USE_WINDOW_MS`]), and add
+    /// back what the device used. Idle costs nothing. How fast the device is
+    /// carried is the gateway's choice (its `burst.unreserved_rate`).
+    PayPerUse {
+        /// Units to hold with the gateway. Each purchase brings the budget
+        /// back up to this, within what the channels in use will take.
+        budget: u64,
+        /// Buy again this long before the budget would run out, at the rate
+        /// [`run`] is given. It has to cover how late `moved` can be.
+        renew_lead_ms: u64,
+        /// What the gateway has carried for the device, as the caller reads
+        /// it ([`Moved`]).
+        ///
+        /// The session carries none of the device's traffic, so it cannot
+        /// count it; a pay-per-use budget is drawn only by that traffic, so
+        /// the session's own count of it, which decides when to buy, comes
+        /// from here.
+        moved: watch::Receiver<Moved>,
+    },
+}
+
+/// What the gateway has carried for a device: cumulative units, counted from
+/// any point. The session counts from its first reading, and takes a reading
+/// below the one before as counting again from zero — the gateway's counters
+/// start again with each of its sessions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Moved {
+    /// Units the gateway sent the device: its download.
+    pub to_device: u64,
+    /// Units the device sent through the gateway: its upload, which the
+    /// session weights by the gateway's from-payer weight as the gateway does.
+    pub from_device: u64,
+}
 
 /// What a buyer session needs to know.
 #[derive(Debug, Clone)]
@@ -59,13 +112,17 @@ pub struct ClientSpec {
     /// Units a channel to the gateway is funded with. Keep it within what the
     /// device has paid for: the funding call is refused past that.
     pub channel_capacity: u64,
+    /// How the session pays.
+    pub buying: Buying,
 }
 
 /// Run a buyer session until `shutdown` resolves.
 ///
 /// `rate` is the demand, in bytes per second, and may change while the session
-/// runs; zero stops buying. Buying is exact — no headroom — because the rate
-/// is what the device chose, not an estimate of what it will draw.
+/// runs; zero stops buying. For time at a speed it is the rate reserved, and
+/// buying is exact — no headroom — because the rate is what the device chose,
+/// not an estimate of what it will draw. For pay per use nothing is reserved:
+/// it is how fast the device may move, which says how early to buy again.
 pub async fn run(
     spec: ClientSpec,
     funding: Arc<dyn Funding>,
@@ -74,13 +131,32 @@ pub async fn run(
     shutdown: impl std::future::Future<Output = ()> + Send,
 ) -> Result<()> {
     let capacity = spec.channel_capacity.max(1);
+    let (buying, moved) = match &spec.buying {
+        Buying::AtSpeed => (
+            format!(
+                "{{ headroom_pct: 100, window_ms: {WINDOW_MS}, renew_lead_ms: {RENEW_LEAD_MS} }}"
+            ),
+            None,
+        ),
+        Buying::PayPerUse {
+            budget,
+            renew_lead_ms,
+            moved,
+        } => (
+            format!(
+                "{{ reserve: false, budget: {budget}, window_ms: {PAY_PER_USE_WINDOW_MS}, \
+                 renew_lead_ms: {renew_lead_ms} }}"
+            ),
+            Some(moved.clone()),
+        ),
+    };
     let yaml = format!(
         r#"
 identity: {{ secret_key: "{secret}" }}
 mint: {{ url: "{mint}" }}
 vouchers: {{ accepted_mints: ["{mint}"] }}
 network: {{ listen: "127.0.0.1:0" }}
-buying: {{ headroom_pct: 100, window_ms: {window_ms}, renew_lead_ms: {renew_lead_ms} }}
+buying: {buying}
 channels:
   initial_capacity: {capacity}
   min_capacity: {capacity}
@@ -95,8 +171,6 @@ peers:
         mint = spec.gateway_mint,
         gateway = spec.gateway,
         endpoint = spec.endpoint,
-        window_ms = WINDOW_MS,
-        renew_lead_ms = RENEW_LEAD_MS,
     );
     let file: File = serde_yaml::from_str(&yaml).context("describe the session")?;
     // The lead is thin on purpose (see `RENEW_LEAD_MS`), so the warning an
@@ -121,16 +195,24 @@ peers:
     );
 
     // The loopback enforcer carries nothing here — the device's traffic goes
-    // through the gateway's own gate — but it is where demand lives.
-    let enforcer: Arc<dyn Enforcer> = Arc::new(Loopback::new());
-    tokio::spawn(hold_demand(Arc::clone(&enforcer), rate));
+    // through the gateway's own gate — but it is where demand lives, and,
+    // for pay per use, what the caller says the gateway carried.
+    let loopback = Arc::new(Loopback::new());
+    let enforcer: Arc<dyn Enforcer> = loopback.clone();
+    let demand = tokio::spawn(hold_demand(Arc::clone(&enforcer), rate));
+    let meter = moved.map(|moved| tokio::spawn(hold_moved(loopback, moved)));
 
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .context("bind the session's control plane")?;
-    Node::new(&config, channels, enforcer)
+    let ran = Node::new(&config, channels, enforcer)
         .run_on(listener, config, shutdown)
-        .await
+        .await;
+    demand.abort();
+    if let Some(meter) = meter {
+        meter.abort();
+    }
+    ran
 }
 
 /// Keep the demand toward every peer at the latest rate. Re-applied on a
@@ -145,5 +227,85 @@ async fn hold_demand(enforcer: Arc<dyn Enforcer>, mut rate: watch::Receiver<u64>
             changed = rate.changed() => if changed.is_err() { return },
             _ = tokio::time::sleep(Duration::from_millis(500)) => {}
         }
+    }
+}
+
+/// Count what the caller says the gateway carried for the device as this
+/// session's own traffic with the gateway, so the buyer draws its count of a
+/// pay-per-use budget as the gateway does.
+///
+/// Only once the gateway is a peer: what moved before is not this session's.
+async fn hold_moved(loopback: Arc<Loopback>, mut moved: watch::Receiver<Moved>) {
+    let mut tally = Tally::default();
+    loop {
+        let grew = tally.read(*moved.borrow_and_update());
+        if grew != Moved::default() {
+            for peer in loopback.peers() {
+                // From this side the gateway is the peer: what it sent the
+                // device was received from it, and the device's upload was
+                // delivered to it.
+                loopback.record_received(peer, grew.to_device);
+                loopback.record_delivered(peer, grew.from_device);
+            }
+        }
+        tokio::select! {
+            changed = moved.changed() => if changed.is_err() { return },
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+        }
+    }
+}
+
+/// Turns cumulative readings into what grew since the last.
+#[derive(Debug, Default)]
+struct Tally {
+    last: Option<Moved>,
+}
+
+impl Tally {
+    /// What grew since the last reading: nothing at the first, and all of a
+    /// reading below the one before, which counts again from zero.
+    fn read(&mut self, now: Moved) -> Moved {
+        let grew = match self.last {
+            None => Moved::default(),
+            Some(last) => Moved {
+                to_device: since(now.to_device, last.to_device),
+                from_device: since(now.from_device, last.from_device),
+            },
+        };
+        self.last = Some(now);
+        grew
+    }
+}
+
+fn since(now: u64, last: u64) -> u64 {
+    if now >= last { now - last } else { now }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn moved(to_device: u64, from_device: u64) -> Moved {
+        Moved {
+            to_device,
+            from_device,
+        }
+    }
+
+    #[test]
+    fn a_tally_counts_from_its_first_reading() {
+        let mut tally = Tally::default();
+        assert_eq!(tally.read(moved(5_000, 100)), Moved::default());
+        assert_eq!(tally.read(moved(8_000, 150)), moved(3_000, 50));
+        assert_eq!(tally.read(moved(8_000, 150)), Moved::default());
+    }
+
+    #[test]
+    fn a_reading_below_the_last_counts_again_from_zero() {
+        // The gateway's counters start again with each of its sessions.
+        let mut tally = Tally::default();
+        tally.read(moved(5_000, 100));
+        assert_eq!(tally.read(moved(700, 10)), moved(700, 10));
+        assert_eq!(tally.read(moved(1_000, 10)), moved(300, 0));
     }
 }
