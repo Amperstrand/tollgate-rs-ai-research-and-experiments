@@ -26,12 +26,31 @@ This repo contains:
 A constrained-device variant (`tollgate-net-esp32`) lives in a separate
 project and consumes the same `tollgate-core`.
 
+**How a TollGate is meant to be used:** the customer runs a TollGate node
+of its own, and that node pays the gateway directly, over the protocol. A
+laptop, a phone app, a router or a software agent that wants connectivity
+runs `tollgated` set to buy, or embeds a buyer session from `tollgate-net`.
+The captive portal and the proxies in tollgate-suite-wrt
+(`nostr://npub1hw6amg8p24ne08c9gdq8hhpqx0t0pwanpae9z25crn7m9uy7yarse465gr/relay.ngit.dev/tollgate-suite-wrt`:
+`proxyd` and `exitd`)
+exist only so that people *without* such a client can still use a TollGate:
+they buy on the device's behalf. See
+[running a buying node](docs/guides/quickstart.md#use-a-tollgate-as-a-customer-run-a-buying-node).
+
 → **Start here:** [tollgate-intro.md](docs/design/core/tollgate-intro.md) — goals, architecture, payment model, security.
+
+→ **To run or embed it:** the [guides](docs/guides/) —
+[getting TollGate](docs/guides/getting-tollgate.md) (clone, build, depend on
+it from Rust), [quickstart](docs/guides/quickstart.md) (run nodes) and
+[embedding](docs/guides/embedding.md) (buy, enforce or run a node from your
+own program). AI agents: see [llms.txt](llms.txt).
 
 Two nodes buy and sell network capacity from each other end to end: each
 runs its own Cashu mint, sells vouchers against it for sats, and delivers
-exactly the rate a peer bought. Nothing has been released yet; see
-[CHANGELOG.md](CHANGELOG.md).
+exactly the rate a peer bought. The first release candidate is tagged
+`v0.1.0-rc.1`; see [RELEASE-NOTES.md](RELEASE-NOTES.md) and
+[CHANGELOG.md](CHANGELOG.md). Before 1.0, the APIs, the configuration and the
+wire format may change: pin a tag.
 
 ## Overview
 
@@ -101,6 +120,7 @@ tollgate-rs/
 │   ├── tollgate-core/         Pure logic: grants, buying, metering, access (no_std, sans-IO)
 │   └── tollgate-net/          The node (tollgated) and its dashboard (tolltop)
 ├── docs/
+│   ├── guides/                Getting, running and embedding TollGate
 │   └── design/
 │       ├── core/              Core protocol design documents (resource-agnostic)
 │       ├── market/            How vouchers are bought, sold and priced
