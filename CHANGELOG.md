@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing has been released yet. Everything below is on `master` and will ship as
-0.1.0.
+## [0.0.1] - 2026-10-13
+
+The first tagged state: everything built so far, tested between real nodes,
+in docker topologies and on an OpenWrt router.
 
 ### Added
 
