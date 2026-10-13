@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc.2] - 2026-10-13
+
+Documentation: guides for running a buying node, a gateway, and embedding
+TollGate. The code is unchanged from 0.1.0-rc.1 apart from two examples.
+
 ### Added
 
 - Guides for people who run or embed TollGate, in `docs/guides/`: getting it
