@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.1] - 2026-10-13
+## [0.1.0-rc.1] - 2026-10-13
 
 The first tagged state: everything built so far, tested between real nodes,
 in docker topologies and on an OpenWrt router.
