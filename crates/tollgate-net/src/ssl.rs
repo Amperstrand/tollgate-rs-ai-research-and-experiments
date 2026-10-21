@@ -18,12 +18,7 @@ pub const LETSENCRYPT_DIR: &str = "/etc/tollgate/certs/letsencrypt";
 pub const WORK_DIR: &str = "/var/lib/tollgate/certbot";
 pub const LOGS_DIR: &str = "/var/log/tollgate/certbot";
 
-pub fn apply(
-    domain: &str,
-    email: &str,
-    dns_plugin: Option<&str>,
-    staging: bool,
-) -> Result<()> {
+pub fn apply(domain: &str, email: &str, dns_plugin: Option<&str>, staging: bool) -> Result<()> {
     ensure_certbot_installed()?;
     std::fs::create_dir_all(CERTS_ROOT)
         .with_context(|| format!("failed to create {CERTS_ROOT}"))?;
@@ -161,9 +156,7 @@ fn print_status_report(live_root: &Path) -> Result<()> {
     let entries = collect_cert_summaries(live_root)?;
     if entries.is_empty() {
         println!("SSL: no certificates managed");
-        println!(
-            "  Run 'tollgate ssl apply --domain <domain> --email <email>' to issue one."
-        );
+        println!("  Run 'tollgate ssl apply --domain <domain> --email <email>' to issue one.");
         return Ok(());
     }
 
@@ -196,8 +189,8 @@ fn exit_code_str(c: Option<i32>) -> String {
 }
 
 fn read_cert_summary(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     let (_, pem) = parse_x509_pem(&bytes).context("invalid PEM")?;
     let cert = pem.parse_x509().context("invalid X.509 certificate")?;
     Ok(format_cert_summary(&cert))
@@ -231,10 +224,8 @@ mod tests {
 
     impl TempTree {
         fn new(label: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "tollgate-ssl-test-{label}-{}",
-                std::process::id()
-            ));
+            let root = std::env::temp_dir()
+                .join(format!("tollgate-ssl-test-{label}-{}", std::process::id()));
             fs::remove_dir_all(&root).ok();
             fs::create_dir_all(&root).expect("create temp root");
             TempTree { root }
@@ -331,10 +322,16 @@ mod tests {
         let tree = TempTree::new("no-cert");
         let live = tree.live_root();
         fs::create_dir_all(live.join("incomplete.example.com")).expect("mkdir");
-        fs::write(live.join("incomplete.example.com").join("README"), b"no cert here")
-            .expect("write readme");
+        fs::write(
+            live.join("incomplete.example.com").join("README"),
+            b"no cert here",
+        )
+        .expect("write readme");
 
         let entries = collect_cert_summaries(&live).expect("ok");
-        assert!(entries.is_empty(), "incomplete dir should be skipped, got {entries:?}");
+        assert!(
+            entries.is_empty(),
+            "incomplete dir should be skipped, got {entries:?}"
+        );
     }
 }

@@ -17,11 +17,13 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
-use tollgate_charger_host::{ChargerDriver, PriceVector, PRICELESS};
+use tollgate_charger_host::{ChargerDriver, PRICELESS, PriceVector};
 use tollgate_core::{Millis, Progress};
 
 const DEPOSIT: u64 = 12_000;
-const PRICE: PriceVector = PriceVector { per_second_millis: 100 };
+const PRICE: PriceVector = PriceVector {
+    per_second_millis: 100,
+};
 
 fn now_ms() -> Millis {
     Millis(
@@ -56,15 +58,20 @@ struct Real {
 }
 
 async fn connect(id: &str) -> (AsyncClient, rumqttc::EventLoop) {
-    let broker =
-        std::env::var("BROKER").unwrap_or_else(|_| "localhost".into());
+    let broker = std::env::var("BROKER").unwrap_or_else(|_| "localhost".into());
     let mut opts = MqttOptions::new(format!("parity-{id}"), broker, 1883);
     opts.set_keep_alive(Duration::from_secs(10));
     AsyncClient::new(opts, 20)
 }
 
 impl Real {
-    async fn open(device: &str, max_seconds: u64, max_cost: u64, lease_s: u64, price: PriceVector) -> Self {
+    async fn open(
+        device: &str,
+        max_seconds: u64,
+        max_cost: u64,
+        lease_s: u64,
+        price: PriceVector,
+    ) -> Self {
         let (client, mut events) = connect(device).await;
         client
             .subscribe(format!("charger/{device}/#"), QoS::AtLeastOnce)
@@ -115,16 +122,29 @@ impl Real {
         for cmd in out {
             use tollgate_charger_host::Outbound::*;
             match cmd.clone() {
-                PublishStart { device, end_epoch_sec } => {
+                PublishStart {
+                    device,
+                    end_epoch_sec,
+                } => {
                     let payload = format!("{{\"end\":{end_epoch_sec}}}");
                     self.client
-                        .publish(format!("charger/{device}/start"), QoS::AtLeastOnce, false, payload)
+                        .publish(
+                            format!("charger/{device}/start"),
+                            QoS::AtLeastOnce,
+                            false,
+                            payload,
+                        )
                         .await
                         .unwrap();
                 }
                 PublishStop { device } => {
                     self.client
-                        .publish(format!("charger/{device}/stop"), QoS::AtLeastOnce, false, "OFF")
+                        .publish(
+                            format!("charger/{device}/stop"),
+                            QoS::AtLeastOnce,
+                            false,
+                            "OFF",
+                        )
                         .await
                         .unwrap();
                 }
@@ -143,22 +163,27 @@ impl Real {
                 Ok(result) => result.expect("event loop error"),
                 Err(_) => return,
             };
-            let Event::Incoming(Incoming::Publish(p)) = ev else { continue };
+            let Event::Incoming(Incoming::Publish(p)) = ev else {
+                continue;
+            };
             let at = now_ms();
             let topic = p.topic.clone();
             let payload = String::from_utf8_lossy(&p.payload).to_string();
             let out = if topic.ends_with("/ack") {
-                self.driver.handle_message(tollgate_charger_host::Inbound::GrantAck { at })
+                self.driver
+                    .handle_message(tollgate_charger_host::Inbound::GrantAck { at })
             } else if topic.ends_with("/done") {
-                self.driver.handle_message(tollgate_charger_host::Inbound::Done {
-                    at,
-                    raw: payload.into_bytes(),
-                })
+                self.driver
+                    .handle_message(tollgate_charger_host::Inbound::Done {
+                        at,
+                        raw: payload.into_bytes(),
+                    })
             } else if topic.ends_with("/aborted") {
-                self.driver.handle_message(tollgate_charger_host::Inbound::Aborted {
-                    at,
-                    raw: payload.into_bytes(),
-                })
+                self.driver
+                    .handle_message(tollgate_charger_host::Inbound::Aborted {
+                        at,
+                        raw: payload.into_bytes(),
+                    })
             } else {
                 Vec::new()
             };
@@ -238,7 +263,7 @@ async fn p4_button_abort_settles_stop_early() {
     r.execute(out).await;
     r.press_abort_button().await;
     let (settle, refund) = r.run_to_settle(Duration::from_secs(5)).await;
-    assert_window_settle(settle, 200, 300, );
+    assert_window_settle(settle, 200, 300);
     assert_eq!(refund, DEPOSIT - settle);
 }
 
@@ -281,7 +306,7 @@ async fn p6_crash_resume_against_live_countdown() {
         events,
     };
     let (settle, refund) = b.run_to_settle(Duration::from_secs(10)).await;
-    assert_window_settle(settle, 300, 400, );
+    assert_window_settle(settle, 300, 400);
     assert_eq!(refund, DEPOSIT - settle);
 }
 

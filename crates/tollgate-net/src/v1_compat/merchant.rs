@@ -160,18 +160,12 @@ pub fn build_degraded_advertisement(
     config: &V1ServerConfig,
 ) -> Result<String, nostr::event::builder::Error> {
     let tags: Vec<Tag> = vec![
-        Tag::custom(
-            TagKind::Custom("metric".into()),
-            [config.metric.clone()],
-        ),
+        Tag::custom(TagKind::Custom("metric".into()), [config.metric.clone()]),
         Tag::custom(
             TagKind::Custom("step_size".into()),
             [config.step_size.to_string()],
         ),
-        Tag::custom(
-            TagKind::Custom("level".into()),
-            ["warning".to_owned()],
-        ),
+        Tag::custom(TagKind::Custom("level".into()), ["warning".to_owned()]),
         Tag::custom(
             TagKind::Custom("code".into()),
             ["no-reachable-mints".to_owned()],
@@ -265,8 +259,7 @@ pub fn build_session_event(
         ),
     ];
 
-    if amount_sat > 0 {
-        let effective_rate = session.allotment / 1000 / amount_sat;
+    if let Some(effective_rate) = (session.allotment / 1000).checked_div(amount_sat) {
         tags.push(Tag::custom(
             TagKind::Custom("effective_rate".into()),
             [effective_rate.to_string()],

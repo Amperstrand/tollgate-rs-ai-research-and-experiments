@@ -422,7 +422,10 @@ async fn handle_log_beacon(body: String) -> Response {
         Ok(v) => {
             let level = v.get("level").and_then(|l| l.as_str()).unwrap_or("info");
             let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("");
-            let client = v.get("client").and_then(|c| c.as_str()).unwrap_or("unknown");
+            let client = v
+                .get("client")
+                .and_then(|c| c.as_str())
+                .unwrap_or("unknown");
             match level {
                 "error" => tracing::error!(client = %client, "log-beacon: {msg}"),
                 "warn" => tracing::warn!(client = %client, "log-beacon: {msg}"),
@@ -559,7 +562,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(resp.status().is_client_error(), "expected 4xx, got {}", resp.status());
+        assert!(
+            resp.status().is_client_error(),
+            "expected 4xx, got {}",
+            resp.status()
+        );
     }
 
     #[tokio::test]
@@ -576,7 +583,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(resp.status().is_client_error(), "expected 4xx, got {}", resp.status());
+        assert!(
+            resp.status().is_client_error(),
+            "expected 4xx, got {}",
+            resp.status()
+        );
     }
 
     #[tokio::test]
@@ -878,8 +889,7 @@ mod tests {
         use crate::v1_compat::mint_health::MintHealthTracker;
 
         let mint_url = "http://down.example".to_string();
-        let tracker =
-            std::sync::Arc::new(MintHealthTracker::new(&[mint_url.clone()]));
+        let tracker = std::sync::Arc::new(MintHealthTracker::new(std::slice::from_ref(&mint_url)));
         tracker.mark_unreachable(&mint_url);
         assert!(tracker.all_unreachable());
 
@@ -914,7 +924,10 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
         let json: serde_json::Value =
             serde_json::from_slice(&body).expect("degraded advertisement must be valid JSON");
-        assert_eq!(json["kind"], 10021, "degraded advertisement keeps kind 10021");
+        assert_eq!(
+            json["kind"], 10021,
+            "degraded advertisement keeps kind 10021"
+        );
         assert_eq!(
             json["content"],
             "TollGate is in degraded mode. No reachable mints detected."
@@ -934,10 +947,12 @@ mod tests {
                 && arr.get(1).and_then(|s| s.as_str()) == Some("no-reachable-mints")
         });
         let has_price = tags.iter().any(|t| {
-            t.as_array().unwrap().first().and_then(|s| s.as_str())
-                == Some("price_per_step")
+            t.as_array().unwrap().first().and_then(|s| s.as_str()) == Some("price_per_step")
         });
-        assert!(has_warning, "degraded advertisement must carry level=warning");
+        assert!(
+            has_warning,
+            "degraded advertisement must carry level=warning"
+        );
         assert!(
             has_code,
             "degraded advertisement must carry code=no-reachable-mints"

@@ -7,7 +7,9 @@ use tollgate_core::{
 };
 
 /// Price vector with zero cost on every axis (free delivery).
-pub const PRICELESS: PriceVector = PriceVector { per_second_millis: 0 };
+pub const PRICELESS: PriceVector = PriceVector {
+    per_second_millis: 0,
+};
 
 /// The price vector used to synthesize cost accrual from elapsed time.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -90,7 +92,13 @@ impl ChargerDriver {
             },
             pending_stop: None,
         };
-        (driver, vec![Outbound::PublishStart { device, end_epoch_sec }])
+        (
+            driver,
+            vec![Outbound::PublishStart {
+                device,
+                end_epoch_sec,
+            }],
+        )
     }
 
     /// Crash recovery: rebuild from the journal.
@@ -181,7 +189,9 @@ impl ChargerDriver {
             return self.dispatch(DeliveryEvent::TerminalObserved { report });
         }
         self.last = self.synthesize(now);
-        let mut out = self.dispatch(DeliveryEvent::ProgressObserved { progress: self.last });
+        let mut out = self.dispatch(DeliveryEvent::ProgressObserved {
+            progress: self.last,
+        });
         out.extend(self.dispatch(DeliveryEvent::Tick { now }));
         out
     }
@@ -210,22 +220,36 @@ impl ChargerDriver {
             .filter_map(|action| match action {
                 DeliveryAction::StopDelivery { .. } => {
                     if self.pending_stop.is_none() {
-                        let reason =
-                            if self.grant.caps.max_cost_millis.is_some_and(|m| self.last.cost_millis_total >= m) {
-                                PendingStop::CapCost
-                            } else {
-                                PendingStop::CapSeconds
-                            };
+                        let reason = if self
+                            .grant
+                            .caps
+                            .max_cost_millis
+                            .is_some_and(|m| self.last.cost_millis_total >= m)
+                        {
+                            PendingStop::CapCost
+                        } else {
+                            PendingStop::CapSeconds
+                        };
                         self.pending_stop = Some(reason);
                     }
-                    Some(Outbound::PublishStop { device: self.device.clone() })
+                    Some(Outbound::PublishStop {
+                        device: self.device.clone(),
+                    })
                 }
-                DeliveryAction::SettleDelivery { nonce, amount_millis } => {
-                    Some(Outbound::Settle { nonce, amount_millis })
-                }
-                DeliveryAction::RefundChange { nonce, amount_millis } => {
-                    Some(Outbound::Refund { nonce, amount_millis })
-                }
+                DeliveryAction::SettleDelivery {
+                    nonce,
+                    amount_millis,
+                } => Some(Outbound::Settle {
+                    nonce,
+                    amount_millis,
+                }),
+                DeliveryAction::RefundChange {
+                    nonce,
+                    amount_millis,
+                } => Some(Outbound::Refund {
+                    nonce,
+                    amount_millis,
+                }),
                 DeliveryAction::Alarm { .. } => None,
             })
             .collect()
@@ -252,6 +276,8 @@ pub const fn time_money_grant(
             max_seconds: Some(max_seconds),
             max_cost_millis: Some(max_cost_millis),
         },
-        lease: Lease { expires_at: Millis(expires_at_ms) },
+        lease: Lease {
+            expires_at: Millis(expires_at_ms),
+        },
     }
 }

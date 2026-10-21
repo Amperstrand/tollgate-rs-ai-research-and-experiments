@@ -189,15 +189,15 @@ impl BudgetGuard {
         self.last
     }
 
-    /// Apply a new cumulative observation. Returns `Err(())` when the
+    /// Apply a new cumulative observation. Returns `Err(NonMonotonicProgress)` when the
     /// sample is non-monotonic (ignored; journal stands), otherwise the
     /// cap that is now exhausted, if any.
-    pub fn apply(&mut self, progress: Progress) -> Result<Option<TerminalKind>, ()> {
+    pub fn apply(&mut self, progress: Progress) -> Result<Option<TerminalKind>, AlarmReason> {
         if progress.units_total < self.last.units_total
             || progress.seconds_total < self.last.seconds_total
             || progress.cost_millis_total < self.last.cost_millis_total
         {
-            return Err(());
+            return Err(AlarmReason::NonMonotonicProgress);
         }
         self.last = progress;
         Ok(self.exhausted())
@@ -234,7 +234,10 @@ pub struct DeliveryEngine {
 
 impl DeliveryEngine {
     pub const fn new() -> Self {
-        Self { phase: DeliveryPhase::Idle, guard: None }
+        Self {
+            phase: DeliveryPhase::Idle,
+            guard: None,
+        }
     }
 
     /// Crash recovery: rebuild from the journal (the grant and the last
@@ -262,10 +265,7 @@ impl DeliveryEngine {
         match event {
             DeliveryEvent::GrantIssued { grant } => match self.phase {
                 DeliveryPhase::Idle => {
-                    debug_assert!(
-                        grant.caps.bounded(),
-                        "a grant must carry at least one cap"
-                    );
+                    debug_assert!(grant.caps.bounded(), "a grant must carry at least one cap");
                     self.guard = Some(BudgetGuard::new(grant));
                     self.phase = DeliveryPhase::Granted;
                     Vec::new()
@@ -274,13 +274,15 @@ impl DeliveryEngine {
             },
             DeliveryEvent::ProgressObserved { progress } => match &mut self.guard {
                 Some(guard) => match guard.apply(progress) {
-                    Err(()) => vec![DeliveryAction::Alarm {
+                    Err(_) => vec![DeliveryAction::Alarm {
                         nonce: self.nonce(),
                         reason: AlarmReason::NonMonotonicProgress,
                     }],
                     Ok(Some(_kind)) => {
                         self.phase = DeliveryPhase::Delivering;
-                        vec![DeliveryAction::StopDelivery { nonce: self.nonce() }]
+                        vec![DeliveryAction::StopDelivery {
+                            nonce: self.nonce(),
+                        }]
                     }
                     Ok(None) => {
                         self.phase = DeliveryPhase::Delivering;
@@ -295,16 +297,15 @@ impl DeliveryEngine {
                     reason: AlarmReason::UnmatchedTerminal,
                 }],
                 DeliveryPhase::Granted | DeliveryPhase::Delivering => {
-                    self.settle_from_totals(
-                        report.cost_millis_total,
-                        report.kind,
-                    )
+                    self.settle_from_totals(report.cost_millis_total, report.kind)
                 }
                 DeliveryPhase::Done => Vec::new(),
             },
             DeliveryEvent::RevokeRequested { .. } => match self.phase {
                 DeliveryPhase::Granted | DeliveryPhase::Delivering => {
-                    vec![DeliveryAction::StopDelivery { nonce: self.nonce() }]
+                    vec![DeliveryAction::StopDelivery {
+                        nonce: self.nonce(),
+                    }]
                 }
                 _ => Vec::new(),
             },
@@ -312,7 +313,10 @@ impl DeliveryEngine {
                 (Some(guard), DeliveryPhase::Granted | DeliveryPhase::Delivering) => {
                     if now >= guard.grant.lease.expires_at {
                         let journalled = guard.journalled();
-                        self.settle_from_totals(journalled.cost_millis_total, TerminalKind::LeaseExpired)
+                        self.settle_from_totals(
+                            journalled.cost_millis_total,
+                            TerminalKind::LeaseExpired,
+                        )
                     } else {
                         Vec::new()
                     }
@@ -340,8 +344,14 @@ impl DeliveryEngine {
         let refund = grant.deposit_millis - settle;
         self.phase = DeliveryPhase::Done;
         vec![
-            DeliveryAction::SettleDelivery { nonce: grant.nonce, amount_millis: settle },
-            DeliveryAction::RefundChange { nonce: grant.nonce, amount_millis: refund },
+            DeliveryAction::SettleDelivery {
+                nonce: grant.nonce,
+                amount_millis: settle,
+            },
+            DeliveryAction::RefundChange {
+                nonce: grant.nonce,
+                amount_millis: refund,
+            },
         ]
     }
 
@@ -370,12 +380,19 @@ mod tests {
             nonce: 7,
             deposit_millis: DEPOSIT,
             caps,
-            lease: Lease { expires_at: Millis(lease_ms) },
+            lease: Lease {
+                expires_at: Millis(lease_ms),
+            },
         }
     }
 
     fn progress(units: u64, seconds: u64, cost: u64, at: u64) -> Progress {
-        Progress { units_total: units, seconds_total: seconds, cost_millis_total: cost, at: Millis(at) }
+        Progress {
+            units_total: units,
+            seconds_total: seconds,
+            cost_millis_total: cost,
+            at: Millis(at),
+        }
     }
 
     fn settle_refund(actions: &[DeliveryAction]) -> (u64, u64) {
@@ -394,10 +411,21 @@ mod tests {
     fn happy_path_settles_receipt_and_refunds_remainder() {
         let mut e = DeliveryEngine::new();
         e.handle(DeliveryEvent::GrantIssued {
-            grant: grant(Caps { max_units: Some(100), max_seconds: Some(600), max_cost_millis: Some(DEPOSIT) }, 100_000),
+            grant: grant(
+                Caps {
+                    max_units: Some(100),
+                    max_seconds: Some(600),
+                    max_cost_millis: Some(DEPOSIT),
+                },
+                100_000,
+            ),
         });
-        e.handle(DeliveryEvent::ProgressObserved { progress: progress(10, 60, 1000, 1_000) });
-        e.handle(DeliveryEvent::ProgressObserved { progress: progress(20, 120, 2000, 2_000) });
+        e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(10, 60, 1000, 1_000),
+        });
+        e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(20, 120, 2000, 2_000),
+        });
         let actions = e.handle(DeliveryEvent::TerminalObserved {
             report: TerminalReport {
                 kind: TerminalKind::Completed,
@@ -416,9 +444,18 @@ mod tests {
     fn units_cap_forces_stop_then_settles_at_cap() {
         let mut e = DeliveryEngine::new();
         e.handle(DeliveryEvent::GrantIssued {
-            grant: grant(Caps { max_units: Some(10), max_seconds: None, max_cost_millis: None }, 100_000),
+            grant: grant(
+                Caps {
+                    max_units: Some(10),
+                    max_seconds: None,
+                    max_cost_millis: None,
+                },
+                100_000,
+            ),
         });
-        let actions = e.handle(DeliveryEvent::ProgressObserved { progress: progress(10, 5, 500, 100) });
+        let actions = e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(10, 5, 500, 100),
+        });
         assert!(actions.contains(&DeliveryAction::StopDelivery { nonce: 7 }));
         let actions = e.handle(DeliveryEvent::TerminalObserved {
             report: TerminalReport {
@@ -437,9 +474,18 @@ mod tests {
     fn seconds_cap_forces_stop() {
         let mut e = DeliveryEngine::new();
         e.handle(DeliveryEvent::GrantIssued {
-            grant: grant(Caps { max_units: None, max_seconds: Some(60), max_cost_millis: None }, 100_000),
+            grant: grant(
+                Caps {
+                    max_units: None,
+                    max_seconds: Some(60),
+                    max_cost_millis: None,
+                },
+                100_000,
+            ),
         });
-        let actions = e.handle(DeliveryEvent::ProgressObserved { progress: progress(5, 60, 700, 1_000) });
+        let actions = e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(5, 60, 700, 1_000),
+        });
         assert!(actions.contains(&DeliveryAction::StopDelivery { nonce: 7 }));
     }
 
@@ -447,12 +493,28 @@ mod tests {
     fn money_cap_clamps_settlement() {
         let mut e = DeliveryEngine::new();
         e.handle(DeliveryEvent::GrantIssued {
-            grant: grant(Caps { max_units: None, max_seconds: None, max_cost_millis: Some(5_000) }, 100_000),
+            grant: grant(
+                Caps {
+                    max_units: None,
+                    max_seconds: None,
+                    max_cost_millis: Some(5_000),
+                },
+                100_000,
+            ),
         });
-        e.handle(DeliveryEvent::ProgressObserved { progress: progress(1, 1, 4_000, 100) });
+        e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(1, 1, 4_000, 100),
+        });
         // Terminal claims MORE than the cap; settlement clamps.
         let actions = e.handle(DeliveryEvent::TerminalObserved {
-            report: TerminalReport { kind: TerminalKind::CapCost, units_total: 2, seconds_total: 2, cost_millis_total: 9_000, at: Millis(200), receipt: None },
+            report: TerminalReport {
+                kind: TerminalKind::CapCost,
+                units_total: 2,
+                seconds_total: 2,
+                cost_millis_total: 9_000,
+                at: Millis(200),
+                receipt: None,
+            },
         });
         assert_eq!(settle_refund(&actions), (5_000, DEPOSIT - 5_000));
     }
@@ -460,9 +522,25 @@ mod tests {
     #[test]
     fn failure_before_delivery_refunds_everything() {
         let mut e = DeliveryEngine::new();
-        e.handle(DeliveryEvent::GrantIssued { grant: grant(Caps { max_units: Some(10), max_seconds: None, max_cost_millis: None }, 100_000) });
+        e.handle(DeliveryEvent::GrantIssued {
+            grant: grant(
+                Caps {
+                    max_units: Some(10),
+                    max_seconds: None,
+                    max_cost_millis: None,
+                },
+                100_000,
+            ),
+        });
         let actions = e.handle(DeliveryEvent::TerminalObserved {
-            report: TerminalReport { kind: TerminalKind::Failed, units_total: 0, seconds_total: 0, cost_millis_total: 0, at: Millis(50), receipt: None },
+            report: TerminalReport {
+                kind: TerminalKind::Failed,
+                units_total: 0,
+                seconds_total: 0,
+                cost_millis_total: 0,
+                at: Millis(50),
+                receipt: None,
+            },
         });
         assert_eq!(settle_refund(&actions), (0, DEPOSIT));
     }
@@ -470,12 +548,30 @@ mod tests {
     #[test]
     fn revoke_stops_and_refunds_remainder() {
         let mut e = DeliveryEngine::new();
-        e.handle(DeliveryEvent::GrantIssued { grant: grant(Caps { max_units: Some(100), max_seconds: None, max_cost_millis: None }, 100_000) });
-        e.handle(DeliveryEvent::ProgressObserved { progress: progress(10, 10, 3_000, 1_000) });
+        e.handle(DeliveryEvent::GrantIssued {
+            grant: grant(
+                Caps {
+                    max_units: Some(100),
+                    max_seconds: None,
+                    max_cost_millis: None,
+                },
+                100_000,
+            ),
+        });
+        e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(10, 10, 3_000, 1_000),
+        });
         let actions = e.handle(DeliveryEvent::RevokeRequested { at: Millis(1_100) });
         assert_eq!(actions, vec![DeliveryAction::StopDelivery { nonce: 7 }]);
         let actions = e.handle(DeliveryEvent::TerminalObserved {
-            report: TerminalReport { kind: TerminalKind::Revoked, units_total: 10, seconds_total: 12, cost_millis_total: 3_200, at: Millis(1_150), receipt: None },
+            report: TerminalReport {
+                kind: TerminalKind::Revoked,
+                units_total: 10,
+                seconds_total: 12,
+                cost_millis_total: 3_200,
+                at: Millis(1_150),
+                receipt: None,
+            },
         });
         assert_eq!(settle_refund(&actions), (3_200, DEPOSIT - 3_200));
     }
@@ -483,30 +579,70 @@ mod tests {
     #[test]
     fn lease_expiry_settles_at_journalled_reading() {
         let mut e = DeliveryEngine::new();
-        e.handle(DeliveryEvent::GrantIssued { grant: grant(Caps { max_units: Some(100), max_seconds: None, max_cost_millis: None }, 10_000) });
-        e.handle(DeliveryEvent::ProgressObserved { progress: progress(10, 100, 4_000, 5_000) });
+        e.handle(DeliveryEvent::GrantIssued {
+            grant: grant(
+                Caps {
+                    max_units: Some(100),
+                    max_seconds: None,
+                    max_cost_millis: None,
+                },
+                10_000,
+            ),
+        });
+        e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(10, 100, 4_000, 5_000),
+        });
         // Silence... then the lease deadline passes.
-        let actions = e.handle(DeliveryEvent::Tick { now: Millis(10_000) });
+        let actions = e.handle(DeliveryEvent::Tick {
+            now: Millis(10_000),
+        });
         assert_eq!(settle_refund(&actions), (4_000, DEPOSIT - 4_000));
         assert_eq!(e.phase(), DeliveryPhase::Done);
     }
 
     #[test]
     fn crash_resume_settles_identically_to_uninterrupted_run() {
-        let g = grant(Caps { max_units: Some(100), max_seconds: None, max_cost_millis: None }, 100_000);
+        let g = grant(
+            Caps {
+                max_units: Some(100),
+                max_seconds: None,
+                max_cost_millis: None,
+            },
+            100_000,
+        );
         // Uninterrupted run.
         let mut a = DeliveryEngine::new();
         a.handle(DeliveryEvent::GrantIssued { grant: g });
-        a.handle(DeliveryEvent::ProgressObserved { progress: progress(10, 100, 1_000, 1_000) });
-        a.handle(DeliveryEvent::ProgressObserved { progress: progress(20, 200, 2_000, 2_000) });
+        a.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(10, 100, 1_000, 1_000),
+        });
+        a.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(20, 200, 2_000, 2_000),
+        });
         let want = a.handle(DeliveryEvent::TerminalObserved {
-            report: TerminalReport { kind: TerminalKind::Completed, units_total: 20, seconds_total: 200, cost_millis_total: 2_000, at: Millis(2_100), receipt: None },
+            report: TerminalReport {
+                kind: TerminalKind::Completed,
+                units_total: 20,
+                seconds_total: 200,
+                cost_millis_total: 2_000,
+                at: Millis(2_100),
+                receipt: None,
+            },
         });
         // Crashed run: journal = (grant, last persisted progress at t=1000).
         let mut b = DeliveryEngine::resume(g, progress(10, 100, 1_000, 1_000));
-        b.handle(DeliveryEvent::ProgressObserved { progress: progress(20, 200, 2_000, 2_000) });
+        b.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(20, 200, 2_000, 2_000),
+        });
         let got = b.handle(DeliveryEvent::TerminalObserved {
-            report: TerminalReport { kind: TerminalKind::Completed, units_total: 20, seconds_total: 200, cost_millis_total: 2_000, at: Millis(2_100), receipt: None },
+            report: TerminalReport {
+                kind: TerminalKind::Completed,
+                units_total: 20,
+                seconds_total: 200,
+                cost_millis_total: 2_000,
+                at: Millis(2_100),
+                receipt: None,
+            },
         });
         assert_eq!(settle_refund(&want), settle_refund(&got));
     }
@@ -514,12 +650,30 @@ mod tests {
     #[test]
     fn non_monotonic_sample_alarms_and_journal_stands() {
         let mut e = DeliveryEngine::new();
-        e.handle(DeliveryEvent::GrantIssued { grant: grant(Caps { max_units: Some(100), max_seconds: None, max_cost_millis: None }, 100_000) });
-        e.handle(DeliveryEvent::ProgressObserved { progress: progress(10, 100, 1_000, 1_000) });
-        let actions = e.handle(DeliveryEvent::ProgressObserved { progress: progress(5, 50, 500, 1_500) });
-        assert!(actions.contains(&DeliveryAction::Alarm { nonce: 7, reason: AlarmReason::NonMonotonicProgress }));
+        e.handle(DeliveryEvent::GrantIssued {
+            grant: grant(
+                Caps {
+                    max_units: Some(100),
+                    max_seconds: None,
+                    max_cost_millis: None,
+                },
+                100_000,
+            ),
+        });
+        e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(10, 100, 1_000, 1_000),
+        });
+        let actions = e.handle(DeliveryEvent::ProgressObserved {
+            progress: progress(5, 50, 500, 1_500),
+        });
+        assert!(actions.contains(&DeliveryAction::Alarm {
+            nonce: 7,
+            reason: AlarmReason::NonMonotonicProgress
+        }));
         // Lease lapse settles on the journal (10 units / 1000 cost), not the bogus rewind.
-        let actions = e.handle(DeliveryEvent::Tick { now: Millis(100_000) });
+        let actions = e.handle(DeliveryEvent::Tick {
+            now: Millis(100_000),
+        });
         assert_eq!(settle_refund(&actions), (1_000, DEPOSIT - 1_000));
     }
 
@@ -527,7 +681,14 @@ mod tests {
     fn unmatched_terminal_alarms() {
         let mut e = DeliveryEngine::new();
         let actions = e.handle(DeliveryEvent::TerminalObserved {
-            report: TerminalReport { kind: TerminalKind::Completed, units_total: 0, seconds_total: 0, cost_millis_total: 0, at: Millis(1), receipt: None },
+            report: TerminalReport {
+                kind: TerminalKind::Completed,
+                units_total: 0,
+                seconds_total: 0,
+                cost_millis_total: 0,
+                at: Millis(1),
+                receipt: None,
+            },
         });
         assert!(matches!(actions[0], DeliveryAction::Alarm { .. }));
     }

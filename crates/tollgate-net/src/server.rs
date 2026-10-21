@@ -94,7 +94,10 @@ pub fn build_v1_config(
     };
     let mint_health = if !accepted_mints.is_empty() {
         let tracker = Arc::new(crate::v1_compat::mint_health::MintHealthTracker::new(
-            &accepted_mints.iter().map(|m| m.url.clone()).collect::<Vec<_>>(),
+            &accepted_mints
+                .iter()
+                .map(|m| m.url.clone())
+                .collect::<Vec<_>>(),
         ));
         let tracker_clone = tracker.clone();
         tokio::spawn(async move {

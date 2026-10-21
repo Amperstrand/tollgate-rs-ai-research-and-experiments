@@ -683,8 +683,8 @@ mod tests {
     #[tokio::test]
     async fn connect_advertises_our_price_sheet_after_announce() {
         use tollgate_protocol::{
-            IntervalRange, MessageType, MintOption, MintPrice, PriceSheet, ProductEntry, peek_type,
-            option_id, product_id,
+            IntervalRange, MessageType, MintOption, MintPrice, PriceSheet, ProductEntry, option_id,
+            peek_type, product_id,
         };
 
         let prices = vec![MintPrice {

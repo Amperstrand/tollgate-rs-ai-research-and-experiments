@@ -461,18 +461,17 @@ fn build_test_token(mint_url: &str, amount_sat: u64) -> anyhow::Result<String> {
     // A valid v1 keyset id is "00" + 14 hex chars.
     let keyset_id =
         Id::from_str("009a1f293253e41e").map_err(|e| anyhow::anyhow!("keyset id: {e}"))?;
-    // Filler unblinded signature point. Derive a guaranteed-valid compressed
-    // secp256k1 point at runtime (the public key of secret scalar = 1, i.e. the
-    // generator G) rather than trusting a literal through curve validation. The
-    // fake mint ignores C's value; only that the token parses matters.
+    // Filler unblinded signature point — but UNIQUE per token: the
+    // gateway's double-spend tracker keys proofs by C (wallet.rs
+    // token_proof_ys), so a constant point (the old scalar-1 generator)
+    // made every fixture payment collide with the first one's spent entry
+    // (broke the metering suite's pay-then-top-up flow). A random valid
+    // point keeps the fixture unique per payment; the fake mint ignores
+    // C's value either way.
     let secp = secp256k1::Secp256k1::new();
-    let one = secp256k1::SecretKey::from_slice(&{
-        let mut b = [0u8; 32];
-        b[31] = 1;
-        b
-    })
-    .expect("scalar 1 is a valid secret key");
-    let g = secp256k1::PublicKey::from_secret_key(&secp, &one);
+    let mut rng = secp256k1::rand::rngs::OsRng;
+    let sk = secp256k1::SecretKey::new(&mut rng);
+    let g = secp256k1::PublicKey::from_secret_key(&secp, &sk);
     let c = CashuPublicKey::from_slice(&g.serialize())
         .map_err(|e| anyhow::anyhow!("filler C point: {e}"))?;
 

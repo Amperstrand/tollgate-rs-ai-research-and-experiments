@@ -18,6 +18,6 @@ mod driver;
 pub mod external;
 mod sim;
 
-pub use driver::{time_money_grant, ChargerDriver, Inbound, Outbound, PriceVector, PRICELESS};
+pub use driver::{ChargerDriver, Inbound, Outbound, PRICELESS, PriceVector, time_money_grant};
 pub use external::{ExternalAction, ExternalDriver, ExternalProviderPort, ProviderError, Receipt};
 pub use sim::MockCharger;

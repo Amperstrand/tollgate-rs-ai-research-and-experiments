@@ -17,12 +17,8 @@ pub struct MintHealthTracker {
 impl MintHealthTracker {
     pub fn new(mint_urls: &[String]) -> Self {
         Self {
-            reachable: RwLock::new(
-                mint_urls.iter().map(|u| (u.clone(), true)).collect(),
-            ),
-            consecutive_successes: RwLock::new(
-                mint_urls.iter().map(|u| (u.clone(), 0)).collect(),
-            ),
+            reachable: RwLock::new(mint_urls.iter().map(|u| (u.clone(), true)).collect()),
+            consecutive_successes: RwLock::new(mint_urls.iter().map(|u| (u.clone(), 0)).collect()),
             recovery_threshold: DEFAULT_RECOVERY_THRESHOLD,
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
@@ -178,8 +174,18 @@ mod tests {
         let t = MintHealthTracker::new(&mints());
         t.mark_unreachable("http://a.test");
         let all = vec![
-            AcceptedMint { url: "http://a.test".into(), price_per_step: 1, unit: "sat".into(), min_steps: 1 },
-            AcceptedMint { url: "http://b.test".into(), price_per_step: 2, unit: "sat".into(), min_steps: 1 },
+            AcceptedMint {
+                url: "http://a.test".into(),
+                price_per_step: 1,
+                unit: "sat".into(),
+                min_steps: 1,
+            },
+            AcceptedMint {
+                url: "http://b.test".into(),
+                price_per_step: 2,
+                unit: "sat".into(),
+                min_steps: 1,
+            },
         ];
         let filtered = t.get_reachable_mints(&all);
         assert_eq!(filtered.len(), 1);

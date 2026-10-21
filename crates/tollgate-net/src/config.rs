@@ -271,7 +271,10 @@ impl Config {
                 ProductEntry::new(pid.0, extensions, scale, mint_options)
             })
             .collect();
-        PriceSheet::new(offers, IntervalRange::new(DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS))
+        PriceSheet::new(
+            offers,
+            IntervalRange::new(DEFAULT_MIN_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS),
+        )
     }
 }
 
