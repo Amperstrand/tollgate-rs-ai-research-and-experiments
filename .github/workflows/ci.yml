@@ -47,6 +47,13 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
+    # audit-check@v2 creates a check-run annotation on push events even
+    # when the audit is clean; the default GITHUB_TOKEN cannot (the
+    # "Resource not accessible by integration" failure that kept this
+    # job red despite vulnerabilities.count == 0).
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v5
       - uses: rustsec/audit-check@v2.0.0
