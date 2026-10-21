@@ -186,10 +186,7 @@ impl CdkWallet {
             );
         }
 
-        let amount_sat: u64 = token
-            .value()
-            .context("could not sum token value")?
-            .into();
+        let amount_sat: u64 = token.value().context("could not sum token value")?.into();
 
         let ys = token_proof_ys(&token);
         if ys.is_empty() {
@@ -206,11 +203,7 @@ impl CdkWallet {
     }
 
     /// NUT-07: POST `/v1/checkstate` and require every returned state to be UNSPENT.
-    async fn check_proofs_unspent(
-        &self,
-        mint_base_url: &str,
-        ys: &[String],
-    ) -> anyhow::Result<()> {
+    async fn check_proofs_unspent(&self, mint_base_url: &str, ys: &[String]) -> anyhow::Result<()> {
         let url = format!("{mint_base_url}/v1/checkstate");
         let body = serde_json::json!({ "Ys": ys });
 

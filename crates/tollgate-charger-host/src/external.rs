@@ -17,8 +17,8 @@
 //! synthesizes PROGRESS from polls, and settles from the receipt.
 
 use tollgate_core::{
-    DeliveryAction, DeliveryEngine, DeliveryEvent, DeliveryPhase, Grant, Millis,
-    Progress, TerminalKind, TerminalReport,
+    DeliveryAction, DeliveryEngine, DeliveryEvent, DeliveryPhase, Grant, Millis, Progress,
+    TerminalKind, TerminalReport,
 };
 
 /// What a third-party meter adapter must provide. `start` is expected to be
@@ -85,7 +85,9 @@ impl ExternalDriver {
                 max_seconds: Some(max_seconds),
                 max_cost_millis: None,
             },
-            lease: tollgate_core::Lease { expires_at: Millis(now.0 + lease_ms) },
+            lease: tollgate_core::Lease {
+                expires_at: Millis(now.0 + lease_ms),
+            },
         };
         let mut engine = DeliveryEngine::new();
         engine.handle(DeliveryEvent::GrantIssued { grant });
@@ -125,7 +127,11 @@ impl ExternalDriver {
     }
 
     /// Poll the provider, feed the engine, translate actions.
-    pub fn tick(&mut self, port: &mut dyn ExternalProviderPort, now: Millis) -> Vec<ExternalAction> {
+    pub fn tick(
+        &mut self,
+        port: &mut dyn ExternalProviderPort,
+        now: Millis,
+    ) -> Vec<ExternalAction> {
         if self.engine.phase() == DeliveryPhase::Done {
             return Vec::new();
         }
@@ -133,7 +139,9 @@ impl ExternalDriver {
             self.last = port.poll(session, now);
         }
         let progress = self.last;
-        let actions: Vec<DeliveryAction> = self.engine.handle(DeliveryEvent::ProgressObserved { progress });
+        let actions: Vec<DeliveryAction> = self
+            .engine
+            .handle(DeliveryEvent::ProgressObserved { progress });
         let mut out = self.translate(actions);
         let actions: Vec<DeliveryAction> = self.engine.handle(DeliveryEvent::Tick { now });
         out.extend(self.translate(actions));
@@ -141,7 +149,11 @@ impl ExternalDriver {
     }
 
     /// Stop delivery at the provider and settle from the receipt.
-    pub fn stop(&mut self, port: &mut dyn ExternalProviderPort, now: Millis) -> Vec<ExternalAction> {
+    pub fn stop(
+        &mut self,
+        port: &mut dyn ExternalProviderPort,
+        now: Millis,
+    ) -> Vec<ExternalAction> {
         if self.engine.phase() == DeliveryPhase::Done {
             return Vec::new();
         }
@@ -158,7 +170,9 @@ impl ExternalDriver {
             at: now,
             receipt: None,
         };
-        let actions = self.engine.handle(DeliveryEvent::TerminalObserved { report });
+        let actions = self
+            .engine
+            .handle(DeliveryEvent::TerminalObserved { report });
         self.translate(actions)
     }
 
@@ -166,12 +180,20 @@ impl ExternalDriver {
         actions
             .into_iter()
             .filter_map(|a| match a {
-                DeliveryAction::SettleDelivery { nonce, amount_millis } => {
-                    Some(ExternalAction::Settle { nonce, amount_millis })
-                }
-                DeliveryAction::RefundChange { nonce, amount_millis } => {
-                    Some(ExternalAction::Refund { nonce, amount_millis })
-                }
+                DeliveryAction::SettleDelivery {
+                    nonce,
+                    amount_millis,
+                } => Some(ExternalAction::Settle {
+                    nonce,
+                    amount_millis,
+                }),
+                DeliveryAction::RefundChange {
+                    nonce,
+                    amount_millis,
+                } => Some(ExternalAction::Refund {
+                    nonce,
+                    amount_millis,
+                }),
                 _ => None,
             })
             .collect()

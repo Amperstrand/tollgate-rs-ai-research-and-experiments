@@ -13,6 +13,7 @@ mod server;
 mod ssl;
 mod wallet;
 
+#[cfg(feature = "v1-compat")]
 use std::str::FromStr;
 mod web_ui;
 
@@ -270,11 +271,15 @@ async fn serve(
     }
     tracing::info!(pubkey = %identity.pubkey_hex(), listen = %cfg.listen, "starting tollgate node");
 
+    #[allow(unused_mut)]
     let mut bootstrap = wallet::BootstrapWallet::with_spent_file(
         cfg.mints.clone(),
-        Some(std::path::PathBuf::from("/var/lib/tollgate/spent_proofs.txt")),
+        Some(std::path::PathBuf::from(
+            "/var/lib/tollgate/spent_proofs.txt",
+        )),
     );
 
+    #[cfg(feature = "v1-compat")]
     if !cfg.mints.is_empty() {
         let seed_bytes = cfg
             .v1_compat
@@ -289,10 +294,8 @@ async fn serve(
             })
             .unwrap_or([0u8; 64]);
 
-        match cdk_sqlite::wallet::WalletSqliteDatabase::new(
-            "/var/lib/tollgate/cdk-wallet.sqlite",
-        )
-        .await
+        match cdk_sqlite::wallet::WalletSqliteDatabase::new("/var/lib/tollgate/cdk-wallet.sqlite")
+            .await
         {
             Ok(localstore) => {
                 match cdk::wallet::WalletRepositoryBuilder::new()
@@ -308,38 +311,56 @@ async fn serve(
                             if let Ok(mint) = cdk::mint_url::MintUrl::from_str(mint_url) {
                                 match repo.add_wallet(mint).await {
                                     Ok(wallets) => {
-                                        tracing::info!("CDK wallet added for mint: {mint_url} ({} units)", wallets.len());
+                                        tracing::info!(
+                                            "CDK wallet added for mint: {mint_url} ({} units)",
+                                            wallets.len()
+                                        );
                                         added += 1;
                                     }
                                     Err(e) => {
-                                        tracing::warn!("Failed to add CDK wallet for {mint_url}: {e}");
+                                        tracing::warn!(
+                                            "Failed to add CDK wallet for {mint_url}: {e}"
+                                        );
                                     }
                                 }
                             }
                         }
                         for mint_cfg in &cfg.v1_compat.accepted_mints {
                             let url = &mint_cfg.url;
-                            if !cfg.mints.iter().any(|m| normalize_str(m) == normalize_str(url)) {
+                            if !cfg
+                                .mints
+                                .iter()
+                                .any(|m| normalize_str(m) == normalize_str(url))
+                            {
                                 if let Ok(mint) = cdk::mint_url::MintUrl::from_str(url) {
                                     match repo.add_wallet(mint).await {
                                         Ok(wallets) => {
-                                            tracing::info!("CDK wallet added for v1_compat mint: {url} ({} units)", wallets.len());
+                                            tracing::info!(
+                                                "CDK wallet added for v1_compat mint: {url} ({} units)",
+                                                wallets.len()
+                                            );
                                             added += 1;
                                         }
                                         Err(e) => {
-                                            tracing::warn!("Failed to add CDK wallet for v1_compat mint {url}: {e}");
+                                            tracing::warn!(
+                                                "Failed to add CDK wallet for v1_compat mint {url}: {e}"
+                                            );
                                         }
                                     }
                                 }
                             }
                         }
-    if added > 0 {
-                            tracing::info!("CDK WalletRepository enabled ({added} mints) — multi-mint double-spend prevention via NUT-03 swap");
+                        if added > 0 {
+                            tracing::info!(
+                                "CDK WalletRepository enabled ({added} mints) — multi-mint double-spend prevention via NUT-03 swap"
+                            );
                             bootstrap = bootstrap.with_wallet_repo(repo);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("CDK WalletRepository build failed, using checkstate-only: {e}");
+                        tracing::warn!(
+                            "CDK WalletRepository build failed, using checkstate-only: {e}"
+                        );
                     }
                 }
             }
@@ -349,6 +370,7 @@ async fn serve(
         }
     }
 
+    #[cfg(feature = "v1-compat")]
     fn normalize_str(s: &str) -> String {
         s.trim_end_matches('/').to_lowercase()
     }

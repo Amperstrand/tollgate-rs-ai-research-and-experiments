@@ -2,7 +2,9 @@
 //! contract, driven by virtual time. Scenarios mirror
 //! docs/design/experiments/meter-delivery-modularity.md.
 
-use tollgate_charger_host::{ChargerDriver, Inbound, MockCharger, Outbound, PriceVector, PRICELESS};
+use tollgate_charger_host::{
+    ChargerDriver, Inbound, MockCharger, Outbound, PRICELESS, PriceVector,
+};
 use tollgate_core::{DeliveryPhase, Grant, Millis};
 
 const DEPOSIT: u64 = 12_000;
@@ -34,7 +36,9 @@ impl Harness {
                 Outbound::PublishStart { end_epoch_sec, .. } => {
                     let ack = self.sim.start(self.now, *end_epoch_sec);
                     assert_eq!(ack, Some("start-acked"), "sim must ack the grant");
-                    let ack_out = self.driver.handle_message(Inbound::GrantAck { at: self.now });
+                    let ack_out = self
+                        .driver
+                        .handle_message(Inbound::GrantAck { at: self.now });
                     assert!(ack_out.is_empty());
                 }
                 Outbound::PublishStop { .. } => self.sim.stop(), // silent on the wire
@@ -87,7 +91,6 @@ impl Harness {
     }
 }
 
-
 fn tmg(max_seconds: u64, max_cost: u64, lease_ms: u64) -> Grant {
     tollgate_charger_host::time_money_grant(7, DEPOSIT, max_seconds, max_cost, 1_000_000 + lease_ms)
 }
@@ -95,7 +98,12 @@ fn tmg(max_seconds: u64, max_cost: u64, lease_ms: u64) -> Grant {
 #[test]
 fn s1_window_runs_to_done_settles_time_cost() {
     // 60s window, price 100 milli/s, caps above the window cost.
-    let mut h = harness(tmg(600, DEPOSIT, 60_000), PriceVector { per_second_millis: 100 });
+    let mut h = harness(
+        tmg(600, DEPOSIT, 60_000),
+        PriceVector {
+            per_second_millis: 100,
+        },
+    );
     let (settle, refund) = h.run_to_settle(1_000, 200);
     assert_eq!(settle, 6_000, "60s × 100 milli/s");
     assert_eq!(refund, DEPOSIT - 6_000);
@@ -105,16 +113,29 @@ fn s1_window_runs_to_done_settles_time_cost() {
 fn s2_seconds_cap_stops_midwindow_and_settles_at_stop_time() {
     // Cap 30s inside a 60s lease: engine stops at 30; the wire stop is
     // silent; settle must use the journal frozen at stop time.
-    let mut h = harness(tmg(30, DEPOSIT, 60_000), PriceVector { per_second_millis: 100 });
+    let mut h = harness(
+        tmg(30, DEPOSIT, 60_000),
+        PriceVector {
+            per_second_millis: 100,
+        },
+    );
     let (settle, refund) = h.run_to_settle(1_000, 200);
-    assert_eq!(settle, 3_000, "30s × 100 milli/s, not the grace-tick reading");
+    assert_eq!(
+        settle, 3_000,
+        "30s × 100 milli/s, not the grace-tick reading"
+    );
     assert_eq!(refund, DEPOSIT - 3_000);
 }
 
 #[test]
 fn s3_money_cap_clamps_settlement() {
     // Price high enough that the money cap hits before the time cap.
-    let mut h = harness(tmg(600, 2_000, 60_000), PriceVector { per_second_millis: 100 });
+    let mut h = harness(
+        tmg(600, 2_000, 60_000),
+        PriceVector {
+            per_second_millis: 100,
+        },
+    );
     let (settle, refund) = h.run_to_settle(1_000, 200);
     assert_eq!(settle, 2_000, "clamped to max_cost");
     assert_eq!(refund, DEPOSIT - 2_000);
@@ -122,7 +143,12 @@ fn s3_money_cap_clamps_settlement() {
 
 #[test]
 fn s4_device_abort_settles_stop_early() {
-    let mut h = harness(tmg(600, DEPOSIT, 60_000), PriceVector { per_second_millis: 100 });
+    let mut h = harness(
+        tmg(600, DEPOSIT, 60_000),
+        PriceVector {
+            per_second_millis: 100,
+        },
+    );
     // Let 25 seconds elapse, then the button is pressed.
     for _ in 0..25 {
         h.now = Millis(h.now.0 + 1_000);
@@ -137,7 +163,12 @@ fn s4_device_abort_settles_stop_early() {
 
 #[test]
 fn s5_revoke_settles_at_journal() {
-    let mut h = harness(tmg(600, DEPOSIT, 60_000), PriceVector { per_second_millis: 100 });
+    let mut h = harness(
+        tmg(600, DEPOSIT, 60_000),
+        PriceVector {
+            per_second_millis: 100,
+        },
+    );
     for _ in 0..10 {
         h.now = Millis(h.now.0 + 1_000);
         let out = h.driver.tick(h.now);
@@ -152,7 +183,9 @@ fn s5_revoke_settles_at_journal() {
 #[test]
 fn s6_crash_resume_settles_identically() {
     let grant = tmg(600, DEPOSIT, 60_000);
-    let price = PriceVector { per_second_millis: 100 };
+    let price = PriceVector {
+        per_second_millis: 100,
+    };
     // Uninterrupted: 40s then abort.
     let mut a = harness(grant, price);
     for _ in 0..40 {
@@ -168,7 +201,7 @@ fn s6_crash_resume_settles_identically() {
         for _ in 0..15 {
             b.now = Millis(b.now.0 + 1_000);
             let out = b.driver.tick(b.now);
-        b.execute(out);
+            b.execute(out);
         }
         b.driver.journal()
     };

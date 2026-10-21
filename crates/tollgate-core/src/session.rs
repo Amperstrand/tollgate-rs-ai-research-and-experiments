@@ -221,8 +221,7 @@ impl Session {
                         if let Ok(_reject) = Reject::decode(&bytes) {
                             if let Some(peer_session) = self.peers.get_mut(&peer) {
                                 if peer_session.phase != PeerPhase::Closed {
-                                    let was_active =
-                                        peer_session.phase == PeerPhase::Active;
+                                    let was_active = peer_session.phase == PeerPhase::Active;
                                     peer_session.phase = PeerPhase::New;
                                     if was_active {
                                         actions.push(Action::SetAccess {
@@ -349,14 +348,12 @@ impl Session {
                                 // the two (transit-loss resolution); charge only the
                                 // increment since we last billed so a report arriving
                                 // between samples doesn't double-charge.
-                                let peer_received =
-                                    peer_session.peer_report.map(|r| r.received);
+                                let peer_received = peer_session.peer_report.map(|r| r.received);
                                 let billable = match peer_received {
                                     Some(r) => reconcile(our_delivered, r),
                                     None => our_delivered,
                                 };
-                                let new_units =
-                                    billable.saturating_sub(peer_session.billed_units);
+                                let new_units = billable.saturating_sub(peer_session.billed_units);
                                 let cost = price.cost_scaled(elapsed, new_units);
                                 peer_session.billed_units = billable;
                                 peer_session.last_counters = Some(counters);
@@ -366,8 +363,7 @@ impl Session {
                                 // zero charge — never driving the balance negative.
                                 let charging = cost > 0;
                                 let charge = cost.max(0) as u64;
-                                peer_session.balance =
-                                    peer_session.balance.saturating_sub(charge);
+                                peer_session.balance = peer_session.balance.saturating_sub(charge);
 
                                 // Drift = |our_delivered − peer_received| / our_delivered.
                                 // Compared as integers (diff·10000 vs delivered·bps) to

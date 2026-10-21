@@ -33,6 +33,7 @@ fn normalize_mint_url(url: &str) -> String {
 pub struct BootstrapWallet {
     accepted_mints: HashSet<String>,
     client: reqwest::Client,
+    #[cfg(feature = "v1-compat")]
     wallet_repo: Option<Arc<cdk::wallet::WalletRepository>>,
     spent_yvalues: Arc<RwLock<HashSet<String>>>,
     spent_file: Option<PathBuf>,
@@ -53,6 +54,7 @@ impl BootstrapWallet {
         Self {
             accepted_mints: mint_urls.into_iter().collect(),
             client: reqwest::Client::new(),
+            #[cfg(feature = "v1-compat")]
             wallet_repo: None,
             spent_yvalues: Arc::new(RwLock::new(yvalues)),
             spent_file,
@@ -61,7 +63,11 @@ impl BootstrapWallet {
 
     fn load_spent_file(path: &PathBuf) -> HashSet<String> {
         match std::fs::read_to_string(path) {
-            Ok(contents) => contents.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+            Ok(contents) => contents
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect(),
             Err(_) => HashSet::new(),
         }
     }
@@ -69,7 +75,11 @@ impl BootstrapWallet {
     async fn persist_yvalues(&self, yvalues: &[String]) {
         if let Some(ref path) = self.spent_file {
             use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
                 for y in yvalues {
                     let _ = writeln!(f, "{y}");
                 }
@@ -77,6 +87,7 @@ impl BootstrapWallet {
         }
     }
 
+    #[cfg(feature = "v1-compat")]
     pub fn with_wallet_repo(mut self, repo: Arc<cdk::wallet::WalletRepository>) -> Self {
         self.wallet_repo = Some(repo);
         self
@@ -100,6 +111,7 @@ impl BootstrapWallet {
             }
         }
 
+        #[cfg(feature = "v1-compat")]
         if let Some(repo) = &self.wallet_repo {
             let token_mint = token.mint_url().context("token has no mint URL")?;
             let wallet = repo
@@ -136,7 +148,10 @@ impl BootstrapWallet {
         let mint_normalized = normalize_mint_url(&mint_url_str);
 
         if !self.accepted_mints.is_empty()
-            && !self.accepted_mints.iter().any(|m| normalize_mint_url(m) == mint_normalized)
+            && !self
+                .accepted_mints
+                .iter()
+                .any(|m| normalize_mint_url(m) == mint_normalized)
         {
             bail!("mint {} not accepted", mint_url_str);
         }
@@ -270,9 +285,18 @@ mod tests {
 
     #[test]
     fn normalize_trailing_slash() {
-        assert_eq!(normalize_mint_url("https://mint.example.com/"), "https://mint.example.com");
-        assert_eq!(normalize_mint_url("https://mint.example.com"), "https://mint.example.com");
-        assert_eq!(normalize_mint_url("https://mint.example.com/path/"), "https://mint.example.com/path");
+        assert_eq!(
+            normalize_mint_url("https://mint.example.com/"),
+            "https://mint.example.com"
+        );
+        assert_eq!(
+            normalize_mint_url("https://mint.example.com"),
+            "https://mint.example.com"
+        );
+        assert_eq!(
+            normalize_mint_url("https://mint.example.com/path/"),
+            "https://mint.example.com/path"
+        );
     }
 
     #[test]
@@ -305,23 +329,25 @@ mod tests {
 
     #[test]
     fn fuzzy_match_accepts_trailing_slash_diff() {
-        let wallet = BootstrapWallet::with_spent_file(
-            vec!["https://mint.example.com".to_string()],
-            None,
-        );
+        let wallet =
+            BootstrapWallet::with_spent_file(vec!["https://mint.example.com".to_string()], None);
         let token_mint = normalize_mint_url("https://mint.example.com/");
-        let accepted = wallet.accepted_mints.iter().any(|m| normalize_mint_url(m) == token_mint);
+        let accepted = wallet
+            .accepted_mints
+            .iter()
+            .any(|m| normalize_mint_url(m) == token_mint);
         assert!(accepted, "trailing slash should match");
     }
 
     #[test]
     fn fuzzy_match_accepts_case_diff() {
-        let wallet = BootstrapWallet::with_spent_file(
-            vec!["https://mint.example.com".to_string()],
-            None,
-        );
+        let wallet =
+            BootstrapWallet::with_spent_file(vec!["https://mint.example.com".to_string()], None);
         let token_mint = normalize_mint_url("https://MINT.EXAMPLE.COM");
-        let accepted = wallet.accepted_mints.iter().any(|m| normalize_mint_url(m) == token_mint);
+        let accepted = wallet
+            .accepted_mints
+            .iter()
+            .any(|m| normalize_mint_url(m) == token_mint);
         assert!(accepted, "case difference should match");
     }
 

@@ -3,6 +3,7 @@
 //! Tests three things:
 //! 1. Can CDK parse a V1 keyset ID string?
 //! 2. Can a CDK wallet load V1 keysets from the mint?
+#![cfg(feature = "v1-compat")]
 //! 3. Can CDK Wallet::receive() process a V1 token?
 
 #![cfg(test)]
@@ -39,8 +40,8 @@ async fn cdk_wallet_receives_v1_token() {
 
     let seed = [0x99; 64];
     let localstore = Arc::new(memory::empty().await.expect("localstore"));
-    let wallet = Wallet::new(MINT_URL, CurrencyUnit::Sat, localstore, seed, None)
-        .expect("wallet init");
+    let wallet =
+        Wallet::new(MINT_URL, CurrencyUnit::Sat, localstore, seed, None).expect("wallet init");
 
     println!("Token: {}... ({} chars)", &token_str[..40], token_str.len());
     println!("Calling receive()...");

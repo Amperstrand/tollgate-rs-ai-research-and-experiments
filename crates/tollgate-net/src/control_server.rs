@@ -180,7 +180,8 @@ mod tests {
     use crate::wallet::BootstrapWallet;
 
     fn test_driver() -> Driver {
-        let identity = Arc::new(crate::config::Identity::load_or_generate(&Config::default()).unwrap());
+        let identity =
+            Arc::new(crate::config::Identity::load_or_generate(&Config::default()).unwrap());
         Driver::new(
             BootstrapWallet::new(vec![]),
             IpAdapter::new(),
@@ -209,10 +210,16 @@ mod tests {
         let cfg = Config::default();
         let out = process_line("status", &driver, &cfg).await.unwrap();
         let v = parse(&out);
-        assert!(v.get("pubkey").is_some(), "legacy status has NodeStatus shape");
+        assert!(
+            v.get("pubkey").is_some(),
+            "legacy status has NodeStatus shape"
+        );
         assert!(v.get("unit").is_some());
         assert!(v["peers"].is_array());
-        assert!(v.get("success").is_none(), "legacy status is NOT a CLIResponse");
+        assert!(
+            v.get("success").is_none(),
+            "legacy status is NOT a CLIResponse"
+        );
     }
 
     #[tokio::test]
@@ -222,7 +229,10 @@ mod tests {
         let out = process_line("frobnicate", &driver, &cfg).await.unwrap();
         let v = parse(&out);
         assert_eq!(v["error"], "unknown command: frobnicate");
-        assert!(v.get("success").is_none(), "legacy error is NOT a CLIResponse");
+        assert!(
+            v.get("success").is_none(),
+            "legacy error is NOT a CLIResponse"
+        );
     }
 
     #[tokio::test]
@@ -238,7 +248,9 @@ mod tests {
     async fn json_status_returns_cliresponse_wrapping_node_status() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(r#"{"command":"status"}"#, &driver, &cfg).await.unwrap();
+        let out = process_line(r#"{"command":"status"}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], true);
         assert!(v["data"]["pubkey"].is_string());
@@ -250,7 +262,9 @@ mod tests {
     async fn json_version_returns_pkg_version_and_feature_list() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(r#"{"command":"version"}"#, &driver, &cfg).await.unwrap();
+        let out = process_line(r#"{"command":"version"}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], true);
         assert_eq!(v["data"]["version"], env!("CARGO_PKG_VERSION"));
@@ -264,7 +278,9 @@ mod tests {
     async fn json_health_returns_ok_true() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(r#"{"command":"health"}"#, &driver, &cfg).await.unwrap();
+        let out = process_line(r#"{"command":"health"}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], true);
         assert_eq!(v["data"]["ok"], true);
@@ -274,13 +290,9 @@ mod tests {
     async fn json_wallet_balance_returns_stub() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(
-            r#"{"command":"wallet","args":["balance"]}"#,
-            &driver,
-            &cfg,
-        )
-        .await
-        .unwrap();
+        let out = process_line(r#"{"command":"wallet","args":["balance"]}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], true);
         assert_eq!(v["data"]["balance"], 0);
@@ -291,7 +303,9 @@ mod tests {
     async fn json_wallet_without_subcommand_also_returns_balance_stub() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(r#"{"command":"wallet"}"#, &driver, &cfg).await.unwrap();
+        let out = process_line(r#"{"command":"wallet"}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], true);
         assert_eq!(v["data"]["balance"], 0);
@@ -301,13 +315,9 @@ mod tests {
     async fn json_wallet_unknown_subcommand_returns_error() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(
-            r#"{"command":"wallet","args":["mine"]}"#,
-            &driver,
-            &cfg,
-        )
-        .await
-        .unwrap();
+        let out = process_line(r#"{"command":"wallet","args":["mine"]}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], false);
         assert_eq!(v["error"], "unknown wallet subcommand: mine");
@@ -321,13 +331,9 @@ mod tests {
             listen: "0.0.0.0:9999".to_string(),
             ..Config::default()
         };
-        let out = process_line(
-            r#"{"command":"config","args":["get"]}"#,
-            &driver,
-            &cfg,
-        )
-        .await
-        .unwrap();
+        let out = process_line(r#"{"command":"config","args":["get"]}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], true);
         assert_eq!(v["data"]["unit"], "wh");
@@ -338,7 +344,9 @@ mod tests {
     async fn json_config_without_subcommand_also_returns_config() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(r#"{"command":"config"}"#, &driver, &cfg).await.unwrap();
+        let out = process_line(r#"{"command":"config"}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], true);
         assert!(v["data"].get("listen").is_some());
@@ -348,13 +356,9 @@ mod tests {
     async fn json_config_unknown_subcommand_returns_error() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(
-            r#"{"command":"config","args":["set"]}"#,
-            &driver,
-            &cfg,
-        )
-        .await
-        .unwrap();
+        let out = process_line(r#"{"command":"config","args":["set"]}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], false);
         assert_eq!(v["error"], "unknown config subcommand: set");
@@ -364,7 +368,9 @@ mod tests {
     async fn json_unknown_command_returns_cliresponse_error() {
         let driver = test_driver();
         let cfg = Config::default();
-        let out = process_line(r#"{"command":"frobnicate"}"#, &driver, &cfg).await.unwrap();
+        let out = process_line(r#"{"command":"frobnicate"}"#, &driver, &cfg)
+            .await
+            .unwrap();
         let v = parse(&out);
         assert_eq!(v["success"], false);
         assert_eq!(v["error"], "unknown command: frobnicate");
@@ -450,7 +456,10 @@ mod tests {
         let mut reader = BufReader::new(stream);
         reader.read_line(&mut buf).await.expect("read");
         let v = parse(buf.trim());
-        assert!(v.get("pubkey").is_some(), "legacy path returns raw NodeStatus");
+        assert!(
+            v.get("pubkey").is_some(),
+            "legacy path returns raw NodeStatus"
+        );
         assert!(v.get("success").is_none());
 
         server.abort();

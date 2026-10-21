@@ -39,7 +39,7 @@ ratatui = "0.29"
 nostr = { workspace = true, optional = true }
 cdk = { workspace = true, optional = true }
 cdk-sqlite = { workspace = true, optional = true }
-url = { version = "2", optional = true }
+url = "2"
 base64 = { version = "0.22", optional = true }
 # openwrt platform dependencies
 async-trait = { version = "0.1", optional = true }
@@ -63,7 +63,7 @@ workspace = true
 
 [features]
 default = []
-v1-compat = ["dep:nostr", "dep:cdk", "dep:cdk-sqlite", "dep:url", "dep:base64"]
+v1-compat = ["dep:nostr", "dep:cdk", "dep:cdk-sqlite", "dep:base64"]
 openwrt = [
     "tokio/process",
     "dep:async-trait",

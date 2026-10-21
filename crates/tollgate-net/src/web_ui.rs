@@ -517,9 +517,8 @@ mod tests {
     use crate::wallet::BootstrapWallet;
 
     fn test_driver() -> Driver {
-        let identity = Arc::new(
-            crate::config::Identity::load_or_generate(&Config::default()).unwrap(),
-        );
+        let identity =
+            Arc::new(crate::config::Identity::load_or_generate(&Config::default()).unwrap());
         Driver::new(
             BootstrapWallet::new(vec![]),
             IpAdapter::new(),
@@ -535,7 +534,12 @@ mod tests {
         let app: Router<()> = router(test_driver(), Arc::new(Config::default()));
 
         let resp = app
-            .oneshot(Request::builder().uri("/admin").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/admin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -551,13 +555,22 @@ mod tests {
             .await
             .unwrap();
         let html = std::str::from_utf8(&bytes).unwrap();
-        assert!(html.contains("<title>TollGate Node</title>"), "missing title");
+        assert!(
+            html.contains("<title>TollGate Node</title>"),
+            "missing title"
+        );
         assert!(
             html.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))),
             "version not interpolated"
         );
-        assert!(html.contains("/admin/api/status"), "missing status endpoint");
-        assert!(html.contains("/admin/api/config"), "missing config endpoint");
+        assert!(
+            html.contains("/admin/api/status"),
+            "missing status endpoint"
+        );
+        assert!(
+            html.contains("/admin/api/config"),
+            "missing config endpoint"
+        );
     }
 
     #[tokio::test]
@@ -576,7 +589,9 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get("content-type").map(|v| v.to_str().unwrap()),
+            resp.headers()
+                .get("content-type")
+                .map(|v| v.to_str().unwrap()),
             Some("application/json")
         );
 

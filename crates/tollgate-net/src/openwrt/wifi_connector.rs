@@ -610,7 +610,7 @@ mod tests {
             assert_eq!(value_map.get("encryption"), Some(&"psk2"));
             assert_eq!(value_map.get("key"), Some(&"secret123"));
         } else {
-            panic!("expected Add op, got {:?}", &ops[1]);
+            panic!("expected Add op, got {:?}", ops[1]);
         }
     }
 

@@ -3,7 +3,9 @@
 //! receipt), proving the core DeliveryEngine works unchanged for
 //! third-party meters.
 
-use tollgate_charger_host::external::{ExternalAction, ExternalDriver, ExternalProviderPort, ProviderError, Receipt};
+use tollgate_charger_host::external::{
+    ExternalAction, ExternalDriver, ExternalProviderPort, ProviderError, Receipt,
+};
 use tollgate_core::Millis;
 
 struct MockMunicipalProvider {
@@ -53,9 +55,9 @@ impl ExternalProviderPort for MockMunicipalProvider {
     }
 
     fn stop(&mut self, _session: u64) -> Receipt {
-        let seconds = self.stop_early_seconds.unwrap_or_else(|| {
-            self.started_at.map(|s| s.0).map(|_| 60).unwrap_or(60)
-        });
+        let seconds = self
+            .stop_early_seconds
+            .unwrap_or_else(|| self.started_at.map(|s| s.0).map(|_| 60).unwrap_or(60));
         Receipt {
             cost_millis_total: seconds * self.milli_per_second,
             seconds_total: seconds,
@@ -106,7 +108,11 @@ fn e2_early_stop_receipt_is_truth_and_change_refunds() {
     let actions = d.stop(&mut stop_port, Millis(25_000));
     let (settle, refund) = settle_refund(&actions);
     assert_eq!(settle, 2_500, "receipt says 25s delivered");
-    assert_eq!(refund, 6_000 - 2_500, "deposit minus receipt refunds as change");
+    assert_eq!(
+        refund,
+        6_000 - 2_500,
+        "deposit minus receipt refunds as change"
+    );
 }
 
 #[test]
@@ -121,14 +127,18 @@ fn e3_provider_refusal_blocks_the_grant_entirely() {
 fn e4_free_window_costs_nothing_and_refunds_everything() {
     let mut port = MockMunicipalProvider::priced(0);
     let (mut d, _) = ExternalDriver::open(&mut port, 4, 30, Millis(0), 60_000).unwrap();
-    for t in (1..=3) {
+    for t in 1..=3 {
         d.tick(&mut port, Millis(t * 1000));
     }
     let mut stop_port = MockMunicipalProvider::priced(0);
     stop_port.stop_early_seconds = Some(30);
     stop_port.started_at = port.started_at;
     let actions = d.stop(&mut stop_port, Millis(30_000));
-    assert_eq!(settle_refund(&actions), (0, 0), "free window: quote 0, nothing locked");
+    assert_eq!(
+        settle_refund(&actions),
+        (0, 0),
+        "free window: quote 0, nothing locked"
+    );
 }
 
 #[test]
@@ -154,8 +164,13 @@ fn e6_crash_resume_settles_identically() {
         a.tick(&mut port, Millis(t * 1000));
     }
     let (grant, last) = a.journal();
-    assert_eq!(last.seconds_total, 19, "journal at crash (first poll anchors t=1s)");
-    drop(a); // crash
+    assert_eq!(
+        last.seconds_total, 19,
+        "journal at crash (first poll anchors t=1s)"
+    );
+    // crash: `a` is dropped by scope exit semantics here; the value itself
+    // carries no Drop impl of interest (clippy: drop_non_drop)
+    let _crashed = a;
     // Host rebuilds from the journal; the same provider session keeps
     // accruing server-side (poll returns the provider's own numbers).
     let mut port2 = MockMunicipalProvider::priced(100);
@@ -168,7 +183,11 @@ fn e6_crash_resume_settles_identically() {
     stop_port.stop_early_seconds = Some(40);
     stop_port.started_at = port2.started_at;
     let actions = b.stop(&mut stop_port, Millis(40_000));
-    assert_eq!(settle_refund(&actions).0, 4_000, "40s x 100 — crash-invariant settle");
+    assert_eq!(
+        settle_refund(&actions).0,
+        4_000,
+        "40s x 100 — crash-invariant settle"
+    );
 }
 
 #[test]
