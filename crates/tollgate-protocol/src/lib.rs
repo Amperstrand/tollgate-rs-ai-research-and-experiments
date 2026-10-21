@@ -28,6 +28,9 @@ mod codec;
 pub mod enforcer;
 mod frame;
 mod message;
+mod product;
+
+pub use product::{DEFAULT_PRICING_SCALE, MintPrice, ProductId, option_id, product_id};
 mod types;
 
 pub use codec::{Error, decode, encode};

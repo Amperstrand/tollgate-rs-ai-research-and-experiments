@@ -47,6 +47,7 @@ pub mod buyer;
 pub mod config;
 pub mod grant;
 pub mod meter;
+pub mod pricing;
 pub mod session;
 
 mod action;
@@ -57,6 +58,7 @@ pub use access::AccessLevel;
 pub use action::Action;
 pub use config::{BurstPolicy, GrantPolicy, NodePolicy, PeerPolicy};
 pub use event::Event;
+pub use pricing::{Price, PriceBounds, Product};
 pub use time::Millis;
 
 // Re-exported so a host can name the wire types without also depending on

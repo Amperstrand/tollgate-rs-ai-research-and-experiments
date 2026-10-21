@@ -10,6 +10,11 @@ authors.workspace = true
 
 [dependencies]
 minicbor.workspace = true
+# product_id / option_id are SHA-256 over the price sheet (pricing.rs in
+# tollgate-core consumes them). Default features off keeps the crate no_std.
+# Direct (not workspace) dep: this no_std crate needs default-features
+# off, and 1.94 rejects downgrading an inherited workspace dep.
+sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
 # The codec tests hand-build a few CBOR maps our own encoder would never emit
