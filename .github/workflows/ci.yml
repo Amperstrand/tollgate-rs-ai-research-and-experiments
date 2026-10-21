@@ -117,11 +117,14 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install MIPS cross-compiler
         run: sudo apt-get update && sudo apt-get install -y gcc-mips-linux-gnu
+      # rust-src only — do NOT `rustup target add`: nightly ships no
+      # prebuilt std for mips-unknown-linux-gnu (tier-3 demotion; the
+      # target-add step is what failed), and the target is builtin to
+      # rustc. -Z build-std compiles std from source (verified locally
+      # 2026-10-21: cargo +nightly check -Z build-std … 2m14s clean).
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
-      - name: Add MIPS target
-        run: rustup target add mips-unknown-linux-gnu --toolchain nightly
       - uses: Swatinem/rust-cache@v2
         with:
           key: mips-cross
