@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.94.1"
+          toolchain: "1.99.0"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Format
@@ -59,9 +59,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # NOTE: the repo rust-toolchain.toml (1.99.0) shadows whatever the
+      # action installs — pin the SAME toolchain here or cargo resolves to
+      # 1.99.0 without the thumb target (the 2026-10-21 no_std failure).
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.94.1"
+          toolchain: "1.99.0"
           targets: thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@v2
       - name: Build core + protocol for a bare-metal target
