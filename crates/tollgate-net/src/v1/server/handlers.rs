@@ -74,64 +74,85 @@ struct VerifyResponse {
 /// returned. This lets e.g. Go SSH/OCPI glue verify Cashu without a `cdk-cli`
 /// subprocess, so Cashu handling can move out of Go.
 async fn handle_verify_token(
+    headers: HeaderMap,
     State(state): State<Arc<ServerState>>,
     body: String,
 ) -> Response {
+    // Go v1 parity: like every other v1 handler, /verify responses carry CORS
+    // headers for local/private origins (audit #95 — the preflight passed but
+    // the actual response was blocked by browsers for missing ACAO).
+    let (origin, is_local) = resolve_origin(&headers).await;
     let req: VerifyRequest = match serde_json::from_str(body.trim()) {
         Ok(r) => r,
         Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(VerifyResponse {
-                    ok: false,
-                    amount: None,
-                    code: Some("verify-error-bad-request"),
-                    error: Some(format!("invalid request body: {e}")),
-                }),
-            )
-                .into_response();
+            return cors_response(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(VerifyResponse {
+                        ok: false,
+                        amount: None,
+                        code: Some("verify-error-bad-request"),
+                        error: Some(format!("invalid request body: {e}")),
+                    }),
+                )
+                    .into_response(),
+                origin.as_deref(),
+                is_local,
+            );
         }
     };
 
     let wallet = state.merchant.get();
     let receive = wallet.receive_token(req.token.as_bytes());
     match tokio::time::timeout(std::time::Duration::from_secs(30), receive).await {
-        Ok(Ok(amount)) => (
-            StatusCode::OK,
-            Json(VerifyResponse {
-                ok: true,
-                amount: Some(amount.0),
-                code: None,
-                error: None,
-            }),
-        )
-            .into_response(),
+        Ok(Ok(amount)) => cors_response(
+            (
+                StatusCode::OK,
+                Json(VerifyResponse {
+                    ok: true,
+                    amount: Some(amount.0),
+                    code: None,
+                    error: None,
+                }),
+            )
+                .into_response(),
+            origin.as_deref(),
+            is_local,
+        ),
         Ok(Err(e)) => {
             let code = classify_payment_error(&e.to_string());
             tracing::warn!("/verify: token rejected: {e}");
-            (
-                StatusCode::BAD_REQUEST,
-                Json(VerifyResponse {
-                    ok: false,
-                    amount: None,
-                    code: Some(code),
-                    error: Some(e.to_string()),
-                }),
+            cors_response(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(VerifyResponse {
+                        ok: false,
+                        amount: None,
+                        code: Some(code),
+                        error: Some(e.to_string()),
+                    }),
+                )
+                    .into_response(),
+                origin.as_deref(),
+                is_local,
             )
-                .into_response()
         }
         Err(_) => {
             tracing::warn!("/verify: timed out after 30s");
-            (
-                StatusCode::REQUEST_TIMEOUT,
-                Json(VerifyResponse {
-                    ok: false,
-                    amount: None,
-                    code: Some("verify-error-timeout"),
-                    error: Some("verification timed out".to_string()),
-                }),
+            cors_response(
+                (
+                    StatusCode::REQUEST_TIMEOUT,
+                    Json(VerifyResponse {
+                        ok: false,
+                        amount: None,
+                        code: Some("verify-error-timeout"),
+                        error: Some("verification timed out".to_string()),
+                    }),
+                )
+                    .into_response(),
+                origin.as_deref(),
+                is_local,
             )
-                .into_response()
         }
     }
 }

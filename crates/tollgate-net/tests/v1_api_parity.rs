@@ -2356,3 +2356,36 @@ async fn parity_ln_invoice_full_lifecycle() {
 
     stop_server(server).await;
 }
+
+// ===========================================================================
+// POST /verify — CORS parity (review-debt: responses dropped CORS headers)
+// ===========================================================================
+
+// Go v1 reference: every v1 HTTP response carries CORS headers for local/private
+// origins. /verify built responses directly from Json(...) without cors_response,
+// so browsers blocked even successful verifications after a passing preflight
+// (audit 2026-11-07, tollgate-rs-ai-research-and-experiments#95).
+#[tokio::test]
+async fn parity_verify_response_has_cors_headers_for_local_origin() {
+    let (base_url, server, _state) = start_server(test_config()).await;
+    let client = Client::new();
+
+    // Malformed body deterministically hits the bad-request arm before any
+    // wallet call — the CORS assertion applies to the response envelope.
+    let resp = client
+        .post(format!("{base_url}/verify"))
+        .header("Origin", "http://192.168.1.1:8080")
+        .body("not json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    assert_eq!(
+        resp.headers()
+            .get("access-control-allow-origin")
+            .map(|v| v.to_str().unwrap()),
+        Some("http://192.168.1.1:8080")
+    );
+
+    stop_server(server).await;
+}
