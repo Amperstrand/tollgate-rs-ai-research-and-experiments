@@ -33,6 +33,10 @@ pub struct CdkWallet {
     /// can only be attributed to that receive — a concurrent mint or
     /// receive cannot land funds into the window (P1, audit 2026-11-08).
     balance_gate: tokio::sync::Mutex<()>,
+    /// The single mint this wallet is bound to. Quotes requested for any
+    /// other configured mint are rejected instead of silently created
+    /// against this one (price/attribution mismatch, P2 audit 2026-11-10).
+    mint_url: String,
 }
 
 impl CdkWallet {
@@ -56,6 +60,7 @@ impl CdkWallet {
         Ok(Self {
             wallet,
             balance_gate: tokio::sync::Mutex::new(()),
+            mint_url: mint_url.to_owned(),
         })
     }
 
@@ -442,8 +447,18 @@ impl MintQuoteWallet for CdkWallet {
     async fn request_mint_quote(
         &self,
         amount: u64,
-        _mint_url: &str,
+        mint_url: &str,
     ) -> Result<MintQuoteInfo, MintQuoteError> {
+        // The wallet is bound to ONE mint; a quote for any other configured
+        // mint must fail loudly here rather than mint against the wrong
+        // wallet while the handler prices the allotment from the requested
+        // mint's rates.
+        if mint_url != self.mint_url {
+            return Err(MintQuoteError::Mint(format!(
+                "mint mismatch: quote requested for {mint_url} but the wallet is bound to {}",
+                self.mint_url
+            )));
+        }
         let cdk_amount = cdk::Amount::from(amount);
         let quote = self
             .wallet
@@ -558,6 +573,64 @@ mod balance_gate_tests {
                 .try_lock()
                 .expect("gate must be re-lockable");
             drop(guard);
+        }
+    }
+}
+
+#[cfg(test)]
+mod mint_binding_tests {
+    use super::*;
+    use crate::v1::server::MintQuoteWallet;
+
+    #[tokio::test]
+    async fn request_mint_quote_rejects_foreign_mint_offline() {
+        // Wallet construction is offline; the guard must reject a foreign
+        // mint BEFORE any network attempt (bounded by the timeout so a
+        // regression to a network call fails fast instead of hanging).
+        let wallet = CdkWallet::new("https://mint-a.example", [7u8; 64])
+            .await
+            .expect("offline wallet construction");
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            wallet.request_mint_quote(21, "https://mint-b.example"),
+        )
+        .await
+        .expect("guard must answer without network I/O");
+
+        let err = result.expect_err("foreign-mint quote must be rejected");
+        assert!(
+            err.to_string().contains("mint mismatch"),
+            "error must name the mismatch: {err}"
+        );
+        assert!(err.to_string().contains("mint-b.example"));
+        assert!(err.to_string().contains("mint-a.example"));
+    }
+
+    #[tokio::test]
+    async fn request_mint_quote_accepts_bound_mint_guard_only() {
+        // The guard passes for the bound mint; the subsequent cdk call may
+        // fail against the unreachable mint — either way the mismatch error
+        // must NOT appear.
+        let wallet = CdkWallet::new("https://mint-a.example", [7u8; 64])
+            .await
+            .expect("offline wallet construction");
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            wallet.request_mint_quote(21, "https://mint-a.example"),
+        )
+        .await;
+
+        match result {
+            Ok(Err(e)) => {
+                assert!(
+                    !e.to_string().contains("mint mismatch"),
+                    "bound-mint quote must not hit the mismatch guard: {e}"
+                );
+            }
+            Ok(Ok(_)) => {}
+            Err(_) => panic!("bound-mint quote must not hang on the guard"),
         }
     }
 }
