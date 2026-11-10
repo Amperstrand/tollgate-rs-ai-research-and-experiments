@@ -317,6 +317,11 @@ mod nds {
         async fn open_gate_inner(&self, mac: &str) -> Result<(), ValveError> {
             let mut gates = self.gates.lock().await;
 
+            // An existing gate entry means an ongoing session (top-up /
+            // renewal): keep the data baseline so consumed quota stays
+            // consumed — only a fresh session starts a new meter.
+            let is_new_session = !gates.contains_key(mac);
+
             // Stop existing timer if any (mirrors Go: if existingTimer != nil { existingTimer.Stop() })
             if let Some(GateEntry::Timed(handle)) = gates.remove(mac) {
                 handle.abort();
@@ -324,8 +329,10 @@ mod nds {
 
             self.authorize(mac).await?;
 
-            if let Err(e) = self.set_data_baseline_inner(mac).await {
-                tracing::warn!(mac, "Failed to set data baseline, continuing anyway: {e}");
+            if is_new_session {
+                if let Err(e) = self.set_data_baseline_inner(mac).await {
+                    tracing::warn!(mac, "Failed to set data baseline, continuing anyway: {e}");
+                }
             }
 
             gates.insert(mac.to_owned(), GateEntry::Indefinite);
@@ -513,6 +520,40 @@ mod nds {
                  exit 0\n\
                  fi\n\
                  exit 1\n"
+            )
+            .expect("write script");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+                    .expect("chmod");
+            }
+            (dir, script_path)
+        }
+
+        /// Create a mock whose `json` counters GROW by 1024 KiB downloaded on
+        /// every call, so consumption-since-baseline is observable.
+        fn create_mock_ndsctl_growing() -> (tempfile::TempDir, PathBuf) {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let script_path = dir.path().join("mock-ndsctl");
+            let counter = dir.path().join("counter");
+            let mut f = std::fs::File::create(&script_path).expect("create script");
+            write!(
+                f,
+                "#!/bin/sh\n\
+                 if [ \"$1\" = \"auth\" ] || [ \"$1\" = \"deauth\" ]; then\n\
+                 echo \"Client $2 done.\"\n\
+                 exit 0\n\
+                 elif [ \"$1\" = \"json\" ]; then\n\
+                 C=$(cat '{0}' 2>/dev/null || echo 0)\n\
+                 C=$((C+1))\n\
+                 echo $C > '{0}'\n\
+                 DL=$((1024*C))\n\
+                 echo '{{\"id\":1,\"ip\":\"192.168.1.100\",\"mac\":\"'$2'\",\"added\":1000,\"active\":2000,\"duration\":1000,\"token\":\"abc\",\"state\":\"AUTHORIZED\",\"downloaded\":'\"$DL\"',\"avg_down_speed\":0,\"uploaded\":512,\"avg_up_speed\":0}}'\n\
+                 exit 0\n\
+                 fi\n\
+                 exit 1\n",
+                counter.display()
             )
             .expect("write script");
             #[cfg(unix)]
@@ -721,6 +762,49 @@ mod nds {
                 .expect("baseline should exist");
             assert_eq!(baseline.downloaded_bytes, 1024 * 1024);
             assert_eq!(baseline.uploaded_bytes, 512 * 1024);
+        }
+
+        #[tokio::test]
+        async fn test_nds_open_gate_topup_preserves_baseline() {
+            let (_dir, path) = create_mock_ndsctl_growing();
+            let valve = NdsValve::with_ndsctl_path(path);
+            let mac = "aa:bb:cc:dd:ee:ff";
+
+            valve.open_gate_inner(mac).await.unwrap();
+            let usage = valve.get_client_usage_since_baseline_inner(mac).await.unwrap();
+            assert_eq!(usage, 1024 * 1024, "one consumption step since baseline");
+
+            // Top-up of an ongoing session: the gate re-opens but the meter
+            // must NOT restart — previously-consumed quota stays consumed.
+            valve.open_gate_inner(mac).await.unwrap();
+            let usage_after_topup = valve
+                .get_client_usage_since_baseline_inner(mac)
+                .await
+                .unwrap();
+            assert_eq!(
+                usage_after_topup,
+                2 * 1024 * 1024,
+                "top-up must preserve the data baseline"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_nds_open_gate_fresh_session_resets_baseline() {
+            let (_dir, path) = create_mock_ndsctl_growing();
+            let valve = NdsValve::with_ndsctl_path(path);
+            let mac = "aa:bb:cc:dd:ee:ff";
+
+            valve.open_gate_inner(mac).await.unwrap();
+            let _ = valve
+                .get_client_usage_since_baseline_inner(mac)
+                .await
+                .unwrap();
+            valve.close_gate_inner(mac).await.unwrap();
+
+            // New session after close: meter starts fresh.
+            valve.open_gate_inner(mac).await.unwrap();
+            let usage = valve.get_client_usage_since_baseline_inner(mac).await.unwrap();
+            assert_eq!(usage, 1024 * 1024, "fresh session restarts the meter");
         }
 
         #[tokio::test]

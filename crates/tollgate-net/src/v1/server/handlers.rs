@@ -261,9 +261,25 @@ async fn handle_usage<W: Wallet>(
             format!("{elapsed_ms}/{}", session.allotment),
         ))
     } else {
+        let usage = state
+            .valve
+            .get_client_usage_since_baseline(&mac)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to read byte usage for {mac}: {e}");
+                0
+            });
+
+        if usage >= session.allotment {
+            let _ = state.sessions.remove(&mac).await;
+            if let Err(e) = state.valve.close_gate(&mac) {
+                tracing::warn!("Failed to close valve for {mac}: {e}");
+            }
+            return cors_response(text_response(StatusCode::OK, "-1/-1".to_owned()));
+        }
+
         cors_response(text_response(
             StatusCode::OK,
-            format!("0/{}", session.allotment),
+            format!("{usage}/{}", session.allotment),
         ))
     }
 }
@@ -327,7 +343,26 @@ async fn handle_balance<W: Wallet>(
         let rem = session.allotment as i64 - elapsed_ms;
         (elapsed_ms as u64, rem.max(0) as u64)
     } else {
-        (0, session.allotment)
+        let usage = state
+            .valve
+            .get_client_usage_since_baseline(&mac)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to read byte usage for {mac}: {e}");
+                0
+            });
+
+        if usage >= session.allotment {
+            let _ = state.sessions.remove(&mac).await;
+            if let Err(e) = state.valve.close_gate(&mac) {
+                tracing::warn!("Failed to close valve for {mac}: {e}");
+            }
+            return cors_response(json_response(
+                StatusCode::OK,
+                r#"{"status":1,"session_active":false}"#.to_owned(),
+            ));
+        }
+
+        (usage, session.allotment - usage)
     };
 
     let json = serde_json::json!({

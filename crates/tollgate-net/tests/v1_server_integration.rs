@@ -256,3 +256,183 @@ async fn v1_server_usage_no_session() {
     server.abort();
     let _ = server.await;
 }
+
+// ── Byte-metered session enforcement ────────────────────────────────
+
+use tollgate_net::v1::server::{CustomerSession, Valve, ValveError};
+
+struct ByteMeterValve {
+    usage: std::sync::Mutex<u64>,
+    closed: std::sync::Mutex<Vec<String>>,
+}
+
+impl ByteMeterValve {
+    fn with_usage(bytes: u64) -> Self {
+        Self {
+            usage: std::sync::Mutex::new(bytes),
+            closed: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn set_usage(&self, bytes: u64) {
+        *self.usage.lock().unwrap() = bytes;
+    }
+}
+
+impl Valve for ByteMeterValve {
+    fn open_gate(&self, _mac: &str) -> Result<(), ValveError> {
+        Ok(())
+    }
+
+    fn close_gate(&self, mac: &str) -> Result<(), ValveError> {
+        self.closed.lock().unwrap().push(mac.to_owned());
+        Ok(())
+    }
+
+    fn get_client_usage_since_baseline(&self, _mac: &str) -> Result<u64, ValveError> {
+        Ok(*self.usage.lock().unwrap())
+    }
+}
+
+async fn start_server_with_valve(
+    config: V1ServerConfig,
+    valve: Arc<ByteMeterValve>,
+) -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Arc<ServerState<MockWallet>>,
+    Arc<ByteMeterValve>,
+) {
+    let wallet = Arc::new(MockWallet::new(0));
+    let advertisement = build_advertisement(&config).unwrap();
+
+    let state = Arc::new(ServerState {
+        wallet: wallet.clone(),
+        config,
+        sessions: Arc::new(InMemorySessionStore::new()),
+        mac_resolver: Arc::new(StubMacResolver::default()),
+        valve: valve.clone(),
+        mint_quote_wallet: None,
+        lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
+        advertisement,
+    });
+
+    let app = build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind to random port");
+    let addr = listener.local_addr().expect("local addr");
+    let base_url = format!("http://{addr}");
+
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("mock server error");
+    });
+
+    (base_url, handle, state, valve)
+}
+
+fn byte_config() -> V1ServerConfig {
+    V1ServerConfig {
+        metric: "bytes".to_owned(),
+        ..test_config()
+    }
+}
+
+#[tokio::test]
+async fn v1_server_usage_reports_byte_consumption() {
+    let valve = Arc::new(ByteMeterValve::with_usage(1_000));
+    let (base_url, server, state, _valve) = start_server_with_valve(byte_config(), valve).await;
+
+    state
+        .sessions
+        .insert(CustomerSession {
+            mac_address: "00:11:22:33:44:55".to_owned(),
+            start_time: 1_000,
+            metric: "bytes".to_owned(),
+            allotment: 5_000,
+        })
+        .await
+        .unwrap();
+
+    let client = Client::new();
+    let resp = client.get(format!("{base_url}/usage")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "1000/5000", "byte usage must come from the valve");
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn v1_server_usage_expires_exhausted_byte_session() {
+    let valve = Arc::new(ByteMeterValve::with_usage(6_000));
+    let (base_url, server, state, valve) = start_server_with_valve(byte_config(), valve).await;
+
+    state
+        .sessions
+        .insert(CustomerSession {
+            mac_address: "00:11:22:33:44:55".to_owned(),
+            start_time: 1_000,
+            metric: "bytes".to_owned(),
+            allotment: 5_000,
+        })
+        .await
+        .unwrap();
+
+    let client = Client::new();
+    let resp = client.get(format!("{base_url}/usage")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "-1/-1", "exhausted byte quota must close the session");
+
+    assert!(
+        state
+            .sessions
+            .get("00:11:22:33:44:55")
+            .await
+            .unwrap()
+            .is_none(),
+        "exhausted session must be removed from the store"
+    );
+    assert_eq!(
+        *valve.closed.lock().unwrap(),
+        vec!["00:11:22:33:44:55".to_owned()],
+        "the valve gate must be closed for the exhausted session"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn v1_server_balance_reports_byte_remaining() {
+    let valve = Arc::new(ByteMeterValve::with_usage(1_000));
+    let (base_url, server, state, _valve) = start_server_with_valve(byte_config(), valve).await;
+
+    state
+        .sessions
+        .insert(CustomerSession {
+            mac_address: "00:11:22:33:44:55".to_owned(),
+            start_time: 1_000,
+            metric: "bytes".to_owned(),
+            allotment: 5_000,
+        })
+        .await
+        .unwrap();
+
+    let client = Client::new();
+    let resp = client.get(format!("{base_url}/balance")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["usage"], 1_000, "byte usage must come from the valve");
+    assert_eq!(body["remaining"], 4_000, "remaining = allotment - usage");
+
+    server.abort();
+    let _ = server.await;
+}
