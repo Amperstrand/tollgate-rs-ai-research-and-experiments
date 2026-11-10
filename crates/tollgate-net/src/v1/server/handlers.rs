@@ -39,13 +39,30 @@ pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
         .with_state(state)
 }
 
+/// Extend a session's allotment by `allotment` at time `now` without
+/// restoring time the customer already consumed.
+///
+/// Remaining budget after renewal must equal
+/// `max(allotment_old - elapsed, 0) + allotment_new`: a top-up adds to the
+/// remaining balance (bootstrap design), and an already-expired session
+/// restarts its fresh allotment from `now` rather than inheriting its
+/// expired deficit.
+pub(crate) fn apply_renewal(session: &mut CustomerSession, allotment: u64, now: i64) {
+    let elapsed = (now - session.start_time).max(0);
+    let consumed = elapsed.min(session.allotment as i64);
+    session.allotment += allotment;
+    session.start_time = now - consumed;
+}
+
 fn json_response(status: StatusCode, body: String) -> Response {
     (
         status,
-        [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        )],
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            ),
+        ],
         body,
     )
         .into_response()
@@ -171,8 +188,7 @@ async fn handle_post_payment<W: Wallet>(
 
     let existing = state.sessions.get(&mac).await.ok().flatten();
     let session = if let Some(mut s) = existing {
-        s.allotment += allotment;
-        s.start_time = now;
+        apply_renewal(&mut s, allotment, now);
         let updated = s.clone();
         let _ = state.sessions.update(&mac, s).await;
         updated
@@ -667,8 +683,7 @@ async fn handle_get_ln_invoice<W: Wallet>(
 
         let existing = state.sessions.get(&mac).await.ok().flatten();
         if let Some(mut s) = existing {
-            s.allotment += allotment;
-            s.start_time = now;
+            apply_renewal(&mut s, allotment, now);
             let _ = state.sessions.update(&mac, s).await;
         } else {
             let s = CustomerSession {
@@ -733,4 +748,64 @@ async fn handle_get_ln_invoice<W: Wallet>(
         StatusCode::OK,
         serde_json::to_string(&resp).unwrap_or_default(),
     ))
+}
+
+#[cfg(test)]
+mod renewal_tests {
+    use super::apply_renewal;
+    use crate::v1::server::CustomerSession;
+
+    fn session(start_time: i64, allotment: u64) -> CustomerSession {
+        CustomerSession {
+            mac_address: "aa:bb:cc:dd:ee:ff".to_owned(),
+            start_time,
+            metric: "milliseconds".to_owned(),
+            allotment,
+        }
+    }
+
+    fn remaining(s: &CustomerSession, now: i64) -> i64 {
+        s.allotment as i64 - (now - s.start_time)
+    }
+
+    #[test]
+    fn renewal_adds_to_remaining_balance_not_original_purchase() {
+        // 60s bought, 50s consumed, 60s more purchased -> 70s remain.
+        let mut s = session(0, 60_000);
+        apply_renewal(&mut s, 60_000, 50_000);
+        assert_eq!(remaining(&s, 50_000), 70_000);
+    }
+
+    #[test]
+    fn renewal_of_untouched_session_doubles_allotment() {
+        let mut s = session(100, 60_000);
+        apply_renewal(&mut s, 60_000, 100);
+        assert_eq!(remaining(&s, 100), 120_000);
+    }
+
+    #[test]
+    fn renewal_of_expired_session_grants_fresh_allotment_only() {
+        // 60s bought, 300s elapsed, 60s purchased -> 60s remain (not -180s
+        // nor a stacked grant).
+        let mut s = session(0, 60_000);
+        apply_renewal(&mut s, 60_000, 300_000);
+        assert_eq!(remaining(&s, 300_000), 60_000);
+    }
+
+    #[test]
+    fn renewal_at_exact_expiry_carries_no_deficit() {
+        let mut s = session(0, 60_000);
+        apply_renewal(&mut s, 30_000, 60_000);
+        assert_eq!(remaining(&s, 60_000), 30_000);
+    }
+
+    #[test]
+    fn repeated_renewals_do_not_stack_time() {
+        // 3x60s paid, 120s consumed by t=120s -> exactly the third grant
+        // remains; no consumed time is ever restored.
+        let mut s = session(0, 60_000);
+        apply_renewal(&mut s, 60_000, 60_000);
+        apply_renewal(&mut s, 60_000, 120_000);
+        assert_eq!(remaining(&s, 120_000), 60_000);
+    }
 }
