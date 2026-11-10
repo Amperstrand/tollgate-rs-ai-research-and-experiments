@@ -830,7 +830,10 @@ mod atomicity_tests {
         );
 
         // A genuinely still-expired session IS evicted.
-        let gone = store.remove_expired("aa:bb:cc:dd:ee:ff", 10_000_000).await.unwrap();
+        let gone = store
+            .remove_expired("aa:bb:cc:dd:ee:ff", 10_000_000)
+            .await
+            .unwrap();
         assert!(gone.is_some(), "a truly expired session must be evicted");
         assert!(store.get("aa:bb:cc:dd:ee:ff").await.unwrap().is_none());
     }
@@ -863,7 +866,10 @@ mod atomicity_tests {
             .remove_exhausted_bytes("aa:bb:cc:dd:ee:ff", 9_999)
             .await
             .unwrap();
-        assert!(gone.is_some(), "a truly exhausted byte session must be evicted");
+        assert!(
+            gone.is_some(),
+            "a truly exhausted byte session must be evicted"
+        );
     }
 
     #[tokio::test]

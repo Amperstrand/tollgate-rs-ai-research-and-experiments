@@ -2579,6 +2579,7 @@ async fn parity_ln_invoice_gate_deadline_uses_renewed_session_clock() {
     });
 
     // A LIVE session with 50s of its original 60s already consumed.
+    #[allow(clippy::cast_possible_wrap)]
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -2625,7 +2626,9 @@ async fn parity_ln_invoice_gate_deadline_uses_renewed_session_clock() {
         .await
         .unwrap();
     let quote_id = post_resp["quote"].as_str().unwrap().to_owned();
-    mint_wallet.set_quote_state(&quote_id, QuoteState::Paid).await;
+    mint_wallet
+        .set_quote_state(&quote_id, QuoteState::Paid)
+        .await;
 
     let mut record = state
         .lightning_quotes

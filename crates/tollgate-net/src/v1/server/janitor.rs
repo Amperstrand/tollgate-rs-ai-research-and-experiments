@@ -47,7 +47,10 @@ pub fn spawn_janitor(
                 // Conditional eviction: a renewal that landed between
                 // list_expired and this removal must survive — the expiry is
                 // re-checked under the store lock before deleting.
-                match sessions.remove_expired(&session.mac_address, now_secs).await {
+                match sessions
+                    .remove_expired(&session.mac_address, now_secs)
+                    .await
+                {
                     Ok(Some(_)) => {
                         tracing::info!(
                             "janitor: evicted session mac={} allotment={}",
