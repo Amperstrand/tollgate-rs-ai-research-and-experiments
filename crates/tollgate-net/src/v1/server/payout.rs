@@ -117,6 +117,17 @@ pub fn spawn_payout_task(
 
             for (idx, amount_sats) in &shares {
                 let target = &config.targets[*idx];
+
+                if target.lightning_address.is_empty() {
+                    tracing::warn!(
+                        "[payout] target '{}' has no lightning_address configured — \
+                         skipping its share (funds stay in the wallet; set \
+                         profit_share[].lightning_address)",
+                        target.identity,
+                    );
+                    continue;
+                }
+
                 let amount_msat = amount_sats * 1000;
                 let max_cost = max_melt_cost(*amount_sats, config.tolerance_percent);
 

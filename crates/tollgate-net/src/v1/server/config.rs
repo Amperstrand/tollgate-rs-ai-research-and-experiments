@@ -53,10 +53,12 @@ fn default_profit_share() -> Vec<ProfitShareConfig> {
         ProfitShareConfig {
             factor: 0.79,
             identity: "owner".to_owned(),
+            lightning_address: None,
         },
         ProfitShareConfig {
             factor: 0.21,
             identity: "developer".to_owned(),
+            lightning_address: None,
         },
     ]
 }
@@ -108,6 +110,11 @@ pub struct ProfitShareConfig {
     pub factor: f64,
     #[serde(alias = "pubkey")]
     pub identity: String,
+    /// Lightning address the target's share is melted to. A target with
+    /// no address is skipped by the payout task (its share stays in the
+    /// wallet) — payouts are never sent to an empty destination.
+    #[serde(default)]
+    pub lightning_address: Option<String>,
 }
 
 fn default_u64<const V: u64>() -> u64 {
@@ -420,5 +427,44 @@ mod tests {
         assert_eq!(original.public_key(), loaded.public_key());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod payout_address_tests {
+    use super::ProfitShareConfig;
+
+    #[test]
+    fn profit_share_lightning_address_defaults_to_none() {
+        let ps: ProfitShareConfig = serde_json::from_str(
+            r#"{ "factor": 0.5, "identity": "owner" }"#,
+        )
+        .expect("legacy config (no lightning_address) must parse");
+        assert_eq!(ps.lightning_address, None);
+        assert_eq!(ps.identity, "owner");
+    }
+
+    #[test]
+    fn profit_share_lightning_address_parsed_when_present() {
+        let ps: ProfitShareConfig = serde_json::from_str(
+            r#"{ "factor": 0.5, "identity": "owner",
+                "lightning_address": "owner@wallet.example" }"#,
+        )
+        .expect("explicit lightning_address must parse");
+        assert_eq!(
+            ps.lightning_address.as_deref(),
+            Some("owner@wallet.example")
+        );
+    }
+
+    #[test]
+    fn profit_share_pubkey_alias_still_accepted_with_address() {
+        let ps: ProfitShareConfig = serde_json::from_str(
+            r#"{ "factor": 0.25, "pubkey": "abc123",
+                "lightning_address": "ops@wallet.example" }"#,
+        )
+        .expect("pubkey alias must keep working");
+        assert_eq!(ps.identity, "abc123");
+        assert_eq!(ps.lightning_address.as_deref(), Some("ops@wallet.example"));
     }
 }

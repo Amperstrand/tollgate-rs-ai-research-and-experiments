@@ -282,7 +282,7 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
                 return;
             }
 
-            let mut record = match state.lightning_quotes.get(&quote_id).await {
+            let record = match state.lightning_quotes.get(&quote_id).await {
                 Ok(Some(r)) => r,
                 Ok(None) => {
                     tracing::info!("quote monitor: quote removed, exiting for {quote_id}");

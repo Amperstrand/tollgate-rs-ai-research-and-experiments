@@ -373,7 +373,9 @@ async fn main() {
                             .map(|ps| PayoutTarget {
                                 identity: ps.identity,
                                 factor: ps.factor,
-                                lightning_address: String::new(),
+                                lightning_address: ps
+                                    .lightning_address
+                                    .unwrap_or_default(),
                             })
                             .collect(),
                     };
