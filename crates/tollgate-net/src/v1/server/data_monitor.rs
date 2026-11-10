@@ -58,12 +58,21 @@ pub fn spawn_data_monitor(
                         session.allotment,
                     );
 
-                    if let Err(e) = sessions.remove(&session.mac_address).await {
-                        tracing::warn!(
-                            "data_monitor: failed to remove session mac={}: {e}",
-                            session.mac_address,
-                        );
-                        continue;
+                    // Conditional eviction: a top-up that landed after this
+                    // usage snapshot must survive (current allotment wins).
+                    match sessions
+                        .remove_exhausted_bytes(&session.mac_address, usage)
+                        .await
+                    {
+                        Ok(Some(_)) => {}
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "data_monitor: failed to remove session mac={}: {e}",
+                                session.mac_address,
+                            );
+                            continue;
+                        }
                     }
 
                     if let Err(e) = valve.close_gate(&session.mac_address).await {

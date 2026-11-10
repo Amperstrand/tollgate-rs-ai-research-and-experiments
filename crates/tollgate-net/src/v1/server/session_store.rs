@@ -54,6 +54,22 @@ pub trait SessionStore: Send + Sync {
         mac: &str,
         snapshot: ExternalUsageSnapshot,
     ) -> Result<Option<CustomerSession>, SessionStoreError>;
+    /// Evict the session ONLY if the CURRENT record (under the store lock)
+    /// is still wall-clock expired for `now_secs` — a renewal that landed
+    /// after the caller's snapshot must survive the eviction.
+    async fn remove_expired(
+        &self,
+        mac: &str,
+        now_secs: i64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError>;
+    /// Evict the session ONLY if the CURRENT record's allotment is still
+    /// exhausted by `usage` bytes — a top-up that landed after the caller's
+    /// usage snapshot must survive the eviction.
+    async fn remove_exhausted_bytes(
+        &self,
+        mac: &str,
+        usage: u64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError>;
 }
 
 #[derive(Default)]
@@ -150,6 +166,37 @@ impl SessionStore for InMemorySessionStore {
             }
             None => None,
         })
+    }
+
+    async fn remove_expired(
+        &self,
+        mac: &str,
+        now_secs: i64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        let mut map = self.map.lock().await;
+        let still_expired = map.get(mac).is_some_and(|s| {
+            let elapsed_ms = (now_secs - s.start_time) * 1000;
+            elapsed_ms >= s.allotment as i64
+        });
+        if still_expired {
+            Ok(map.remove(mac))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn remove_exhausted_bytes(
+        &self,
+        mac: &str,
+        usage: u64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        let mut map = self.map.lock().await;
+        let still_exhausted = map.get(mac).is_some_and(|s| usage >= s.allotment);
+        if still_exhausted {
+            Ok(map.remove(mac))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -392,6 +439,61 @@ impl SessionStore for SqliteSessionStore {
             s
         };
         Ok(session)
+    }
+
+    async fn remove_expired(
+        &self,
+        mac: &str,
+        now_secs: i64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        let conn = self.conn.lock().await;
+        let current = conn
+            .query_row(
+                "SELECT mac_address, start_time, metric, allotment, last_input_octets, \
+                 last_output_octets, last_session_time, last_reported_at FROM sessions \
+                 WHERE mac_address = ?1",
+                rusqlite::params![mac],
+                Self::row_to_session,
+            )
+            .ok();
+        let still_expired = current.as_ref().is_some_and(|s| {
+            let elapsed_ms = (now_secs - s.start_time) * 1000;
+            elapsed_ms >= s.allotment as i64
+        });
+        if !still_expired {
+            return Ok(None);
+        }
+        conn.execute(
+            "DELETE FROM sessions WHERE mac_address = ?1",
+            rusqlite::params![mac],
+        )?;
+        Ok(current)
+    }
+
+    async fn remove_exhausted_bytes(
+        &self,
+        mac: &str,
+        usage: u64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        let conn = self.conn.lock().await;
+        let current = conn
+            .query_row(
+                "SELECT mac_address, start_time, metric, allotment, last_input_octets, \
+                 last_output_octets, last_session_time, last_reported_at FROM sessions \
+                 WHERE mac_address = ?1",
+                rusqlite::params![mac],
+                Self::row_to_session,
+            )
+            .ok();
+        let still_exhausted = current.as_ref().is_some_and(|s| usage >= s.allotment);
+        if !still_exhausted {
+            return Ok(None);
+        }
+        conn.execute(
+            "DELETE FROM sessions WHERE mac_address = ?1",
+            rusqlite::params![mac],
+        )?;
+        Ok(current)
     }
 
     async fn record_external_usage(
@@ -696,6 +798,72 @@ mod atomicity_tests {
             8 * 1_000,
             "every overlapping payment through add_allotment must land"
         );
+    }
+
+    #[tokio::test]
+    async fn remove_expired_spares_a_session_renewed_after_the_snapshot() {
+        let store = InMemorySessionStore::new();
+        // Snapshot-era state: long expired (start 0, allotment 1s).
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 1_000, 0)
+            .await
+            .unwrap();
+
+        // The renewal lands AFTER list_expired snapshotted it but BEFORE
+        // the eviction: fresh start_time + big allotment.
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 3_600_000, 10_000)
+            .await
+            .unwrap();
+
+        let removed = store
+            .remove_expired("aa:bb:cc:dd:ee:ff", 5_000)
+            .await
+            .unwrap();
+        assert!(
+            removed.is_none(),
+            "a renewed session must survive a stale eviction attempt"
+        );
+        assert!(
+            store.get("aa:bb:cc:dd:ee:ff").await.unwrap().is_some(),
+            "the session must still be there"
+        );
+
+        // A genuinely still-expired session IS evicted.
+        let gone = store.remove_expired("aa:bb:cc:dd:ee:ff", 10_000_000).await.unwrap();
+        assert!(gone.is_some(), "a truly expired session must be evicted");
+        assert!(store.get("aa:bb:cc:dd:ee:ff").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn remove_exhausted_bytes_spares_a_topped_up_session() {
+        let store = InMemorySessionStore::new();
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "bytes", 1_000, 0)
+            .await
+            .unwrap();
+        // Usage snapshot says exhausted (900 >= 1000? no — 1500 >= 1000 yes)...
+        // top-up lands, current allotment 5_000 > usage 1_500.
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "bytes", 4_000, 100)
+            .await
+            .unwrap();
+
+        let removed = store
+            .remove_exhausted_bytes("aa:bb:cc:dd:ee:ff", 1_500)
+            .await
+            .unwrap();
+        assert!(
+            removed.is_none(),
+            "a topped-up session must survive a stale byte eviction"
+        );
+        assert!(store.get("aa:bb:cc:dd:ee:ff").await.unwrap().is_some());
+
+        let gone = store
+            .remove_exhausted_bytes("aa:bb:cc:dd:ee:ff", 9_999)
+            .await
+            .unwrap();
+        assert!(gone.is_some(), "a truly exhausted byte session must be evicted");
     }
 
     #[tokio::test]
