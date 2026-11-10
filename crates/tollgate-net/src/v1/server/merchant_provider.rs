@@ -40,9 +40,23 @@ impl MerchantProvider {
 /// Add allotment to an existing session or create a new one.
 /// Mirrors Go v1's `Merchant.AddAllotment(macAddress, metric, amount)`.
 ///
-/// If a session for `mac` already exists, its allotment is increased by
-/// `allotment` and `start_time` is reset to now. Otherwise a new session
-/// is created with the given `metric` and `allotment`.
+/// If a session for `mac` already exists, the top-up adds to its remaining
+/// balance: consumed time is not restored (see [`apply_renewal`]). A new
+/// session is created with the given `metric` and `allotment`.
+/// Extend a session's allotment without restoring consumed time.
+///
+/// Remaining budget after renewal must equal
+/// `max(allotment_old - elapsed, 0) + allotment_new`: a top-up adds to the
+/// remaining balance (bootstrap design), and an already-expired session
+/// restarts its fresh allotment from `now` rather than inheriting its
+/// expired deficit.
+pub(crate) fn apply_renewal(session: &mut CustomerSession, allotment: u64, now: i64) {
+    let elapsed = (now - session.start_time).max(0);
+    let consumed = elapsed.min(i64::try_from(session.allotment).unwrap_or(i64::MAX));
+    session.allotment += allotment;
+    session.start_time = now - consumed;
+}
+
 pub async fn add_allotment(
     sessions: &dyn SessionStore,
     mac: &str,
@@ -58,8 +72,7 @@ pub async fn add_allotment(
     let existing = sessions.get(mac).await.map_err(|e| e.to_string())?;
 
     let session = if let Some(mut s) = existing {
-        s.allotment += allotment;
-        s.start_time = now;
+        apply_renewal(&mut s, allotment, now);
         let updated = s.clone();
         sessions.update(mac, s).await.map_err(|e| e.to_string())?;
         updated
@@ -101,6 +114,52 @@ mod tests {
         let stored = store.get("aa:bb:cc:dd:ee:ff").await.unwrap().unwrap();
         assert_eq!(stored.allotment, 60_000);
         assert_eq!(stored.metric, "milliseconds");
+    }
+
+    fn renewed_session(start_time: i64, allotment: u64) -> CustomerSession {
+        CustomerSession {
+            mac_address: "aa:bb:cc:dd:ee:ff".to_owned(),
+            start_time,
+            metric: "milliseconds".to_owned(),
+            allotment,
+            last_external_usage: None,
+        }
+    }
+
+    fn remaining(s: &CustomerSession, now: i64) -> i64 {
+        s.allotment as i64 - (now - s.start_time)
+    }
+
+    #[test]
+    fn renewal_adds_to_remaining_balance_not_original_purchase() {
+        // 60s bought, 50s consumed, 60s more purchased -> 70s remain.
+        let mut s = renewed_session(0, 60_000);
+        apply_renewal(&mut s, 60_000, 50_000);
+        assert_eq!(remaining(&s, 50_000), 70_000);
+    }
+
+    #[test]
+    fn renewal_of_expired_session_grants_fresh_allotment_only() {
+        let mut s = renewed_session(0, 60_000);
+        apply_renewal(&mut s, 60_000, 300_000);
+        assert_eq!(remaining(&s, 300_000), 60_000);
+    }
+
+    #[test]
+    fn renewal_at_exact_expiry_carries_no_deficit() {
+        let mut s = renewed_session(0, 60_000);
+        apply_renewal(&mut s, 30_000, 60_000);
+        assert_eq!(remaining(&s, 60_000), 30_000);
+    }
+
+    #[test]
+    fn repeated_renewals_do_not_stack_time() {
+        // 3x60s paid, 120s consumed by t=120s -> exactly the third grant
+        // remains; no consumed time is ever restored.
+        let mut s = renewed_session(0, 60_000);
+        apply_renewal(&mut s, 60_000, 60_000);
+        apply_renewal(&mut s, 60_000, 120_000);
+        assert_eq!(remaining(&s, 120_000), 60_000);
     }
 
     #[tokio::test]
