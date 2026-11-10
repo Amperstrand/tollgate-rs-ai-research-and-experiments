@@ -25,6 +25,7 @@ pub mod server;
 pub mod session_manager;
 pub mod usage_tracker;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use self::http::TollGateHttpClient;
@@ -63,6 +64,11 @@ pub struct V1ClientConfig {
     pub poll_interval_secs: u64,
     /// Renewal threshold fraction (0.0–1.0). Renew when usage reaches this fraction of allotment.
     pub renewal_threshold: f64,
+    /// Where unrecoverable outgoing tokens are appended for manual
+    /// recovery when a gateway payment fails after token creation
+    /// (see [`recovery::recover_failed_token`]). Production wiring
+    /// points at `/etc/tollgate/tokens-to-recover.txt`.
+    pub recovery_file: PathBuf,
 }
 
 /// State for an active v1 client session with an upstream TollGate.
@@ -213,7 +219,9 @@ impl<W: Wallet> V1Client<W> {
             .await?;
         let token_str = String::from_utf8_lossy(&token_bytes).to_string();
 
-        let session_event = self.http.send_payment(&token_str).await?;
+        let session_event = self
+            .submit_payment_with_recovery(wallet, &token_bytes, &token_str, &pricing.mint_url)
+            .await?;
         let allotment = session_event.allotment().unwrap_or(0);
 
         tracing::info!(
@@ -234,6 +242,38 @@ impl<W: Wallet> V1Client<W> {
         });
 
         Ok(())
+    }
+
+    /// Submit a payment token upstream. If submission fails after the token
+    /// was already created (funds left the wallet), reclaim it via
+    /// [`recovery::recover_failed_token`] before propagating the error, so a
+    /// failed connection attempt never strands the client's funds.
+    async fn submit_payment_with_recovery(
+        &self,
+        wallet: &W,
+        token_bytes: &[u8],
+        token_str: &str,
+        mint_url: &str,
+    ) -> Result<SessionEvent, V1ClientError> {
+        match self.http.send_payment(token_str).await {
+            Ok(event) => Ok(event),
+            Err(e) => {
+                let outcome = recovery::recover_failed_token(
+                    wallet,
+                    token_bytes,
+                    mint_url,
+                    &e.to_string(),
+                    &self.config.recovery_file,
+                )
+                .await;
+                tracing::warn!(
+                    ?outcome,
+                    gateway = %self.config.gateway_ip,
+                    "payment submission failed after token creation; recovery attempted"
+                );
+                Err(e.into())
+            }
+        }
     }
 
     /// Poll usage and return (usage, allotment, needs_renewal).
@@ -298,7 +338,9 @@ impl<W: Wallet> V1Client<W> {
             .await?;
         let token_str = String::from_utf8_lossy(&token_bytes).to_string();
 
-        let session_event = self.http.send_payment(&token_str).await?;
+        let session_event = self
+            .submit_payment_with_recovery(wallet, &token_bytes, &token_str, &pricing.mint_url)
+            .await?;
         let allotment = session_event.allotment().unwrap_or(0);
 
         if let Some(s) = &mut self.session {

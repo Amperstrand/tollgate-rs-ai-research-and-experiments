@@ -359,6 +359,7 @@ mod tests {
             preferred_allotment: 60_000,
             poll_interval_secs: 1,
             renewal_threshold: 0.8,
+            recovery_file: std::path::PathBuf::from("/tmp/tollgate-test-recovery.txt"),
         }
     }
 
