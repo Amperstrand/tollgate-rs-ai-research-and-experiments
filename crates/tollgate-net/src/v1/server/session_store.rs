@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use super::CustomerSession;
+use super::{CustomerSession, ExternalUsageSnapshot};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionStoreError {
@@ -104,12 +104,40 @@ impl SqliteSessionStore {
             mac_address TEXT PRIMARY KEY, \
             start_time  INTEGER NOT NULL, \
             metric      TEXT    NOT NULL, \
-            allotment   INTEGER NOT NULL\
+            allotment   INTEGER NOT NULL, \
+            last_input_octets  INTEGER, \
+            last_output_octets INTEGER, \
+            last_session_time  INTEGER, \
+            last_reported_at   INTEGER\
         )";
+
+    /// Add columns introduced after the first release (external-usage
+    /// snapshots). `CREATE TABLE IF NOT EXISTS` cannot evolve an existing
+    /// database, so missing columns are ALTERed in.
+    fn migrate(conn: &rusqlite::Connection) -> Result<(), SessionStoreError> {
+        let existing: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('sessions')")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (column, decl) in [
+            ("last_input_octets", "INTEGER"),
+            ("last_output_octets", "INTEGER"),
+            ("last_session_time", "INTEGER"),
+            ("last_reported_at", "INTEGER"),
+        ] {
+            if !existing.iter().any(|c| c == column) {
+                conn.execute(
+                    &format!("ALTER TABLE sessions ADD COLUMN {column} {decl}"),
+                    [],
+                )?;
+            }
+        }
+        Ok(())
+    }
 
     fn init_tables(conn: &rusqlite::Connection) -> Result<(), SessionStoreError> {
         conn.execute(Self::CREATE_TABLE_SQL, [])?;
-        Ok(())
+        Self::migrate(conn)
     }
 
     /// Open (or create) a SQLite database at `path`.
@@ -131,12 +159,25 @@ impl SqliteSessionStore {
     }
 
     fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<CustomerSession> {
+        let input_octets: Option<i64> = row.get(4)?;
+        let output_octets: Option<i64> = row.get(5)?;
+        let session_time: Option<i64> = row.get(6)?;
+        let reported_at: Option<i64> = row.get(7)?;
+        let last_external_usage = match (input_octets, output_octets, session_time, reported_at) {
+            (Some(i), Some(o), Some(t), Some(r)) => Some(ExternalUsageSnapshot {
+                input_octets: i.unsigned_abs(),
+                output_octets: o.unsigned_abs(),
+                session_time: t.unsigned_abs(),
+                reported_at: r,
+            }),
+            _ => None,
+        };
         Ok(CustomerSession {
             mac_address: row.get(0)?,
             start_time: row.get(1)?,
             metric: row.get(2)?,
             allotment: row.get(3)?,
-            last_external_usage: None,
+            last_external_usage,
         })
     }
 }
@@ -145,7 +186,7 @@ impl SqliteSessionStore {
 impl SessionStore for SqliteSessionStore {
     async fn get(&self, mac: &str) -> Result<Option<CustomerSession>, SessionStoreError> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare("SELECT mac_address, start_time, metric, allotment FROM sessions WHERE mac_address = ?1")?;
+        let mut stmt = conn.prepare("SELECT mac_address, start_time, metric, allotment, last_input_octets, last_output_octets, last_session_time, last_reported_at FROM sessions WHERE mac_address = ?1")?;
         let session = stmt
             .query_row(rusqlite::params![mac], Self::row_to_session)
             .ok();
@@ -155,12 +196,18 @@ impl SessionStore for SqliteSessionStore {
     async fn insert(&self, session: CustomerSession) -> Result<(), SessionStoreError> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT INTO sessions (mac_address, start_time, metric, allotment) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO sessions (mac_address, start_time, metric, allotment, \
+             last_input_octets, last_output_octets, last_session_time, last_reported_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 session.mac_address,
                 session.start_time,
                 session.metric,
                 session.allotment,
+                session.last_external_usage.as_ref().map(|u| u.input_octets as i64),
+                session.last_external_usage.as_ref().map(|u| u.output_octets as i64),
+                session.last_external_usage.as_ref().map(|u| u.session_time as i64),
+                session.last_external_usage.as_ref().map(|u| u.reported_at),
             ],
         )?;
         Ok(())
@@ -181,12 +228,18 @@ impl SessionStore for SqliteSessionStore {
     async fn update(&self, mac: &str, session: CustomerSession) -> Result<(), SessionStoreError> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "UPDATE sessions SET start_time = ?1, metric = ?2, allotment = ?3 WHERE mac_address = ?4",
+            "UPDATE sessions SET start_time = ?1, metric = ?2, allotment = ?3, \
+             last_input_octets = ?5, last_output_octets = ?6, last_session_time = ?7, \
+             last_reported_at = ?8 WHERE mac_address = ?4",
             rusqlite::params![
                 session.start_time,
                 session.metric,
                 session.allotment,
                 mac,
+                session.last_external_usage.as_ref().map(|u| u.input_octets as i64),
+                session.last_external_usage.as_ref().map(|u| u.output_octets as i64),
+                session.last_external_usage.as_ref().map(|u| u.session_time as i64),
+                session.last_external_usage.as_ref().map(|u| u.reported_at),
             ],
         )?;
         Ok(())
@@ -195,7 +248,7 @@ impl SessionStore for SqliteSessionStore {
     async fn list_all(&self) -> Result<Vec<CustomerSession>, SessionStoreError> {
         let conn = self.conn.lock().await;
         let mut stmt =
-            conn.prepare("SELECT mac_address, start_time, metric, allotment FROM sessions")?;
+            conn.prepare("SELECT mac_address, start_time, metric, allotment, last_input_octets, last_output_octets, last_session_time, last_reported_at FROM sessions")?;
         let sessions = stmt
             .query_map([], Self::row_to_session)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -210,7 +263,7 @@ impl SessionStore for SqliteSessionStore {
         // We keep the multiplication to avoid integer-division edge-cases.
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "SELECT mac_address, start_time, metric, allotment FROM sessions \
+            "SELECT mac_address, start_time, metric, allotment, last_input_octets, last_output_octets, last_session_time, last_reported_at FROM sessions \
              WHERE metric = 'milliseconds' AND (?1 - start_time) * 1000 >= allotment",
         )?;
         let sessions = stmt
@@ -224,7 +277,7 @@ impl SessionStore for SqliteSessionStore {
 mod tests {
     use super::*;
 
-    fn make_session(mac: &str, start: i64, metric: &str, allotment: u64) -> CustomerSession {
+    pub(super) fn make_session(mac: &str, start: i64, metric: &str, allotment: u64) -> CustomerSession {
         CustomerSession {
             mac_address: mac.to_owned(),
             start_time: start,
@@ -319,5 +372,91 @@ mod tests {
         let mut all = store.list_all().await.unwrap();
         all.sort_by(|a, b| a.mac_address.cmp(&b.mac_address));
         assert_eq!(all, vec![s2, s1]);
+    }
+}
+
+#[cfg(test)]
+mod external_usage_tests {
+    use super::tests::make_session;
+    use super::*;
+
+    fn snapshot(input: u64, output: u64, at: i64) -> super::ExternalUsageSnapshot {
+        super::ExternalUsageSnapshot {
+            input_octets: input,
+            output_octets: output,
+            session_time: 120,
+            reported_at: at,
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlite_persists_external_usage_snapshot() {
+        let store = SqliteSessionStore::open_in_memory().unwrap();
+        let mut session = make_session("aa:bb:cc:dd:ee:ff", 100, "bytes", 5000);
+        session.last_external_usage = Some(snapshot(1000, 2000, 4242));
+        store.insert(session).await.unwrap();
+
+        let loaded = store.get("aa:bb:cc:dd:ee:ff").await.unwrap().unwrap();
+        assert_eq!(
+            loaded.last_external_usage,
+            Some(snapshot(1000, 2000, 4242)),
+            "insert must persist the external-usage snapshot"
+        );
+
+        let mut updated = loaded;
+        updated.last_external_usage = Some(snapshot(3000, 4000, 8484));
+        updated.allotment = 9000;
+        store.update("aa:bb:cc:dd:ee:ff", updated).await.unwrap();
+
+        let reloaded = store.get("aa:bb:cc:dd:ee:ff").await.unwrap().unwrap();
+        assert_eq!(reloaded.allotment, 9000);
+        assert_eq!(
+            reloaded.last_external_usage,
+            Some(snapshot(3000, 4000, 8484)),
+            "update must overwrite the snapshot, not drop it"
+        );
+    }
+
+    #[tokio::test]
+    async fn sqlite_migrates_legacy_database_in_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("legacy.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE sessions (\
+                 mac_address TEXT PRIMARY KEY, \
+                 start_time  INTEGER NOT NULL, \
+                 metric      TEXT    NOT NULL, \
+                 allotment   INTEGER NOT NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO sessions VALUES ('aa:bb:cc:dd:ee:ff', 100, 'milliseconds', 60000)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let store = SqliteSessionStore::open(path.to_str().unwrap()).unwrap();
+
+        let loaded = store.get("aa:bb:cc:dd:ee:ff").await.unwrap().unwrap();
+        assert_eq!(loaded.allotment, 60_000, "legacy row must survive migration");
+        assert_eq!(
+            loaded.last_external_usage, None,
+            "legacy row has no snapshot until one is reported"
+        );
+
+        let mut updated = loaded;
+        updated.last_external_usage = Some(snapshot(10, 20, 99));
+        store.update("aa:bb:cc:dd:ee:ff", updated).await.unwrap();
+
+        let reloaded = store.get("aa:bb:cc:dd:ee:ff").await.unwrap().unwrap();
+        assert_eq!(
+            reloaded.last_external_usage,
+            Some(snapshot(10, 20, 99)),
+            "post-migration writes must persist snapshots"
+        );
     }
 }
