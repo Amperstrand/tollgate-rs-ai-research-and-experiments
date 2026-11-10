@@ -45,16 +45,20 @@ pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
 /// Extend a session's allotment by `allotment` at time `now` without
 /// restoring time the customer already consumed.
 ///
-/// Remaining budget after renewal must equal
-/// `max(allotment_old - elapsed, 0) + allotment_new`: a top-up adds to the
-/// remaining balance (bootstrap design), and an already-expired session
-/// restarts its fresh allotment from `now` rather than inheriting its
-/// expired deficit.
+/// `now`/`start_time` are unix seconds while `allotment` is in the
+/// session's metric units (milliseconds for time metrics): the clamp
+/// converts elapsed seconds to the allotment's unit so an expired
+/// session's renewal grants the full fresh purchase. Non-time metrics
+/// (bytes) are not consumed by wall-clock, so their start_time resets.
 pub(crate) fn apply_renewal(session: &mut CustomerSession, allotment: u64, now: i64) {
-    let elapsed = (now - session.start_time).max(0);
-    let consumed = elapsed.min(session.allotment as i64);
+    let elapsed_secs = (now - session.start_time).max(0);
+    let consumed_secs = if session.metric == "milliseconds" {
+        (elapsed_secs * 1000).min(i64::try_from(session.allotment).unwrap_or(i64::MAX)) / 1000
+    } else {
+        0
+    };
     session.allotment += allotment;
-    session.start_time = now - consumed;
+    session.start_time = now - consumed_secs;
 }
 
 fn json_response(status: StatusCode, body: String) -> Response {
@@ -765,16 +769,16 @@ mod renewal_tests {
         }
     }
 
-    fn remaining(s: &CustomerSession, now: i64) -> i64 {
-        s.allotment as i64 - (now - s.start_time)
+    fn remaining(s: &CustomerSession, now_secs: i64) -> i64 {
+        s.allotment as i64 - (now_secs - s.start_time) * 1000
     }
 
     #[test]
     fn renewal_adds_to_remaining_balance_not_original_purchase() {
         // 60s bought, 50s consumed, 60s more purchased -> 70s remain.
         let mut s = session(0, 60_000);
-        apply_renewal(&mut s, 60_000, 50_000);
-        assert_eq!(remaining(&s, 50_000), 70_000);
+        apply_renewal(&mut s, 60_000, 50);
+        assert_eq!(remaining(&s, 50), 70_000);
     }
 
     #[test]
@@ -789,15 +793,24 @@ mod renewal_tests {
         // 60s bought, 300s elapsed, 60s purchased -> 60s remain (not -180s
         // nor a stacked grant).
         let mut s = session(0, 60_000);
-        apply_renewal(&mut s, 60_000, 300_000);
-        assert_eq!(remaining(&s, 300_000), 60_000);
+        apply_renewal(&mut s, 60_000, 300);
+        assert_eq!(remaining(&s, 300), 60_000);
     }
 
     #[test]
     fn renewal_at_exact_expiry_carries_no_deficit() {
         let mut s = session(0, 60_000);
-        apply_renewal(&mut s, 30_000, 60_000);
-        assert_eq!(remaining(&s, 60_000), 30_000);
+        apply_renewal(&mut s, 30_000, 60);
+        assert_eq!(remaining(&s, 60), 30_000);
+    }
+
+    #[test]
+    fn expired_ms_session_renewal_grants_full_fresh_purchase() {
+        // 60s session expired 2s ago (janitor not yet run); a new 60s
+        // purchase must grant a full fresh 60s, not 58s.
+        let mut s = session(0, 60_000);
+        apply_renewal(&mut s, 60_000, 62);
+        assert_eq!(remaining(&s, 62), 60_000);
     }
 
     #[test]
@@ -805,8 +818,8 @@ mod renewal_tests {
         // 3x60s paid, 120s consumed by t=120s -> exactly the third grant
         // remains; no consumed time is ever restored.
         let mut s = session(0, 60_000);
-        apply_renewal(&mut s, 60_000, 60_000);
-        apply_renewal(&mut s, 60_000, 120_000);
-        assert_eq!(remaining(&s, 120_000), 60_000);
+        apply_renewal(&mut s, 60_000, 60);
+        apply_renewal(&mut s, 60_000, 120);
+        assert_eq!(remaining(&s, 120), 60_000);
     }
 }
