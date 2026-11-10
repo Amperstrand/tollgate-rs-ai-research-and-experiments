@@ -2527,3 +2527,139 @@ async fn parity_ln_invoice_concurrent_polls_grant_exactly_once() {
     server.abort();
     let _ = server.await;
 }
+
+// ── Lightning gate deadline follows the renewed session clock ───────
+
+struct RecordingValve {
+    gate_until: std::sync::Mutex<Vec<(String, i64)>>,
+}
+
+#[async_trait::async_trait]
+impl tollgate_net::v1::server::Valve for RecordingValve {
+    async fn open_gate(&self, _mac: &str) -> Result<(), tollgate_net::v1::server::ValveError> {
+        Ok(())
+    }
+
+    async fn close_gate(&self, _mac: &str) -> Result<(), tollgate_net::v1::server::ValveError> {
+        Ok(())
+    }
+
+    async fn open_gate_until(
+        &self,
+        mac: &str,
+        until_timestamp: i64,
+    ) -> Result<(), tollgate_net::v1::server::ValveError> {
+        self.gate_until
+            .lock()
+            .unwrap()
+            .push((mac.to_owned(), until_timestamp));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_gate_deadline_uses_renewed_session_clock() {
+    let config = test_config();
+    let wallet: Arc<dyn Wallet> = Arc::new(MockWallet::new(0));
+    let merchant = Arc::new(MerchantProvider::new(wallet));
+    let advertisement = build_advertisement(&config).unwrap();
+    let valve = Arc::new(RecordingValve {
+        gate_until: std::sync::Mutex::new(Vec::new()),
+    });
+    let mint_wallet = Arc::new(MockMintQuoteWallet::new());
+    let state = Arc::new(ServerState {
+        merchant,
+        config,
+        sessions: Arc::new(InMemorySessionStore::new()),
+        mac_resolver: Arc::new(StubMacResolver::default()),
+        valve: valve.clone(),
+        mint_quote_wallet: Some(mint_wallet.clone()),
+        lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
+        advertisement,
+    });
+
+    // A LIVE session with 50s of its original 60s already consumed.
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let start_time = now_secs - 50;
+    state
+        .sessions
+        .insert(tollgate_net::v1::server::CustomerSession {
+            mac_address: "00:11:22:33:44:55".to_owned(),
+            start_time,
+            metric: "milliseconds".to_owned(),
+            allotment: 60_000,
+            last_external_usage: None,
+        })
+        .await
+        .unwrap();
+
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let base_url = format!("http://{addr}");
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("server");
+    });
+    let client = Client::new();
+
+    let post_resp: serde_json::Value = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let quote_id = post_resp["quote"].as_str().unwrap().to_owned();
+    mint_wallet.set_quote_state(&quote_id, QuoteState::Paid).await;
+
+    let mut record = state
+        .lightning_quotes
+        .get(&quote_id)
+        .await
+        .unwrap()
+        .unwrap();
+    record.cached_state_at = Some(0);
+    state
+        .lightning_quotes
+        .update(&quote_id, record)
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!("{base_url}/ln-invoice?quote={quote_id}"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["access_granted"], true, "grant must succeed");
+
+    let gates = valve.gate_until.lock().unwrap().clone();
+    assert!(!gates.is_empty(), "a gate must have been scheduled");
+    // apply_renewal keeps consumed time: allotment becomes 660_000 ms
+    // (60s remaining + the 600s purchase) and start_time stays ~50s ago —
+    // the deadline is start + 660s, NOT now + 660s.
+    let expected_until = start_time + 660;
+    assert_eq!(
+        gates[0].1, expected_until,
+        "gate deadline must follow the renewed session clock (got {}, want {})",
+        gates[0].1, expected_until
+    );
+
+    server.abort();
+    let _ = server.await;
+}

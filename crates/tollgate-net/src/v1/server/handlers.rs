@@ -1105,7 +1105,7 @@ async fn handle_get_ln_invoice(
             &*state.valve,
             &mac,
             &state.config.metric,
-            now,
+            session.start_time,
             effective_allotment,
         )
         .await
