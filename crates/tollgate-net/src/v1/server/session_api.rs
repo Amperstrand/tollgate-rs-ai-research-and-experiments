@@ -301,7 +301,7 @@ async fn handle_post_usage(
 
     let mut updated_session = session.clone();
     updated_session.last_external_usage = Some(snapshot);
-    if let Err(e) = state.sessions.update(&mac, updated_session).await {
+    if let Err(e) = state.sessions.update(&mac, updated_session.clone()).await {
         tracing::error!("Failed to update external usage for {mac}: {e}");
     }
 
@@ -312,8 +312,11 @@ async fn handle_post_usage(
             Some(now_secs.to_string())
         });
 
+    // The response must reflect the snapshot just persisted — building it
+    // from the pre-report `session` would answer an exhausting report with
+    // the old quota/access decision.
     let resp = build_session_response(
-        &session,
+        &updated_session,
         &state,
         last_usage_update.as_deref(),
     )
@@ -859,6 +862,57 @@ mod tests {
             let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
             assert_eq!(parsed["session_id"], "11:22:33:44:55:66");
             assert!(parsed["last_usage_update"].is_string());
+        }).await;
+    }
+
+    #[tokio::test]
+    async fn test_post_usage_response_reflects_the_submitted_report() {
+        with_api_key("session-api-test-key-usage2", || async {
+            let state = test_server_state();
+            // Byte-metered session with a 1000-octet quota.
+            state
+                .sessions
+                .insert(CustomerSession {
+                    mac_address: "aa:bb:cc:dd:ee:ff".to_owned(),
+                    start_time: 1_000,
+                    metric: "bytes".to_owned(),
+                    allotment: 1_000,
+                    last_external_usage: None,
+                })
+                .await
+                .unwrap();
+
+            // A report that exhausts the quota (600 + 600 = 1200 octets).
+            let usage_body = serde_json::json!({
+                "input_octets": 600,
+                "output_octets": 600,
+                "session_time": 30,
+                "source": "radius",
+            });
+            let app = test_app(state);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/sessions/aa:bb:cc:dd:ee:ff/usage")
+                .header("content-type", "application/json")
+                .header("x-api-key", "session-api-test-key-usage2")
+                .body(Body::from(serde_json::to_vec(&usage_body).unwrap()))
+                .unwrap();
+            let response = app.oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = read_body(response).await;
+            let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+            // The response must be computed from the updated snapshot: an
+            // exhausting report yields suspended / final / non-positive quota.
+            assert_eq!(
+                parsed["access_level"], "suspended",
+                "exhausting report must suspend; got {parsed}"
+            );
+            assert_eq!(parsed["is_final"], true, "got {parsed}");
+            assert!(
+                parsed["remaining_quota"].as_i64().unwrap_or(1) <= 0,
+                "got {parsed}"
+            );
         }).await;
     }
 }
