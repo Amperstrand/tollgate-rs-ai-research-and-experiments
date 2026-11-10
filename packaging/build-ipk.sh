@@ -31,6 +31,10 @@ else
     TAR=tar
 fi
 
+# OpenWrt .ipk containers are `ar` archives (opkg rejects tar containers).
+# `D` = deterministic mode (zero mtime/uid/gid), matching the tar flags below.
+AR=${AR:-ar}
+
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -67,8 +71,7 @@ printf '2.0\n' > "$WORK/debian-binary"
 
 rm -f "$OUTPUT"
 ( cd "$WORK" && \
-  "$TAR" --owner=0 --group=0 --numeric-owner \
-    -czf "$OUTPUT" ./debian-binary ./data.tar.gz ./control.tar.gz )
+  "$AR" rcD "$OUTPUT" ./debian-binary ./control.tar.gz ./data.tar.gz )
 
 size=$(wc -c < "$OUTPUT" | tr -d ' ')
 printf 'Built %s (%s bytes)\n' "$OUTPUT" "$size"
