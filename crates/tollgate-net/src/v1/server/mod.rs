@@ -119,7 +119,7 @@ impl V1Server {
             mint_quote_wallet: Some(wallet),
             config,
             sessions: Arc::new(InMemorySessionStore::new()),
-            mac_resolver: Arc::new(StubMacResolver::default()),
+            mac_resolver: Arc::new(DhcpLeasesResolver::default()),
             valve,
             lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
             advertisement,
@@ -213,5 +213,37 @@ mod run_wiring_tests {
             .expect("wired quote wallet must be functional");
         assert_eq!(quote.amount, 21);
         assert_ne!(quote.invoice, "");
+    }
+
+    #[tokio::test]
+    async fn run_wires_dhcp_lease_resolver_not_the_stub() {
+        // The default resolver reads the OpenWrt dnsmasq leasefile — stage a
+        // fixture there (preserving any pre-existing content) and prove the
+        // production wiring resolves a REAL MAC, not the stub constant.
+        const FIXTURE_IP: &str = "192.168.250.77";
+        const FIXTURE_MAC: &str = "de:ad:be:ef:00:77";
+        let leases_path = std::path::Path::new(mac_resolver::DEFAULT_LEASES_FILE);
+        let original = std::fs::read_to_string(leases_path).ok();
+        let staged = format!(
+            "{orig}1718000000 {FIXTURE_MAC} {FIXTURE_IP} audit-fixture\n",
+            orig = original.as_deref().unwrap_or("")
+        );
+        std::fs::write(leases_path, staged).expect("stage lease fixture");
+
+        let state = V1Server::build_state(
+            test_config(),
+            Arc::new(MockWallet::new(0)),
+            Arc::new(StubValve),
+        );
+
+        let resolved = state.mac_resolver.resolve(FIXTURE_IP);
+        match original {
+            Some(orig) => std::fs::write(leases_path, orig).expect("restore leasefile"),
+            None => std::fs::remove_file(leases_path).expect("remove staged leasefile"),
+        }
+
+        let mac = resolved.expect("production resolver must resolve a leased IP");
+        assert_eq!(mac, FIXTURE_MAC);
+        assert_ne!(mac, "00:11:22:33:44:55");
     }
 }

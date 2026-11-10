@@ -40,18 +40,41 @@ impl MacResolver for StubMacResolver {
     }
 }
 
-pub struct DhcpLeasesResolver;
+/// OpenWrt dnsmasq default leasefile (`dhcp.lan.leasefile`).
+pub const DEFAULT_LEASES_FILE: &str = "/tmp/dhcp.leases";
+
+/// Resolves client IPs to MAC addresses via the dnsmasq leasefile
+/// (dnsmasq line format: `expiry mac ip hostname [client-id]`).
+pub struct DhcpLeasesResolver {
+    leases_path: std::path::PathBuf,
+}
+
+impl DhcpLeasesResolver {
+    pub fn with_path<P: Into<std::path::PathBuf>>(leases_path: P) -> Self {
+        Self {
+            leases_path: leases_path.into(),
+        }
+    }
+}
+
+impl Default for DhcpLeasesResolver {
+    fn default() -> Self {
+        Self::with_path(DEFAULT_LEASES_FILE)
+    }
+}
+
+/// Extract the MAC bound to `ip` from dnsmasq leasefile contents.
+fn mac_from_leases(contents: &str, ip: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        (parts.len() >= 3 && parts[2] == ip).then(|| parts[1].to_owned())
+    })
+}
 
 impl MacResolver for DhcpLeasesResolver {
     fn resolve(&self, ip: &str) -> Result<String, MacResolveError> {
-        let contents = std::fs::read_to_string("/tmp/dhcp.leases")?;
-        for line in contents.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 && parts[2] == ip {
-                return Ok(parts[1].to_owned());
-            }
-        }
-        Err(MacResolveError::NotFound(ip.to_owned()))
+        let contents = std::fs::read_to_string(&self.leases_path)?;
+        mac_from_leases(&contents, ip).ok_or_else(|| MacResolveError::NotFound(ip.to_owned()))
     }
 }
 
@@ -122,6 +145,49 @@ mod tests {
         let ci = make_connect_info("10.0.0.1");
         let headers = HeaderMap::new();
         assert_eq!(extract_client_ip(Some(&ci), &headers), "10.0.0.1");
+    }
+
+    #[test]
+    fn dhcp_leases_parse_finds_mac_for_ip() {
+        let fixture = "1718000000 aa:bb:cc:00:00:01 192.168.5.23 client1\n\
+                       1718000000 aa:bb:cc:00:00:02 192.168.5.24 client2\n";
+        assert_eq!(
+            mac_from_leases(fixture, "192.168.5.24"),
+            Some("aa:bb:cc:00:00:02".to_owned())
+        );
+    }
+
+    #[test]
+    fn dhcp_leases_parse_ignores_malformed_lines() {
+        let fixture = "garbage line\n1718000000 aa:bb:cc:00:00:03 10.0.0.7 host\n";
+        assert_eq!(
+            mac_from_leases(fixture, "10.0.0.7"),
+            Some("aa:bb:cc:00:00:03".to_owned())
+        );
+    }
+
+    #[test]
+    fn dhcp_leases_parse_unknown_ip_is_none() {
+        assert_eq!(mac_from_leases("", "192.168.5.23"), None);
+    }
+
+    #[test]
+    fn dhcp_leases_resolver_reads_configured_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("dhcp.leases");
+        std::fs::write(&path, "1718000000 aa:bb:cc:00:00:09 172.16.0.5 x\n")
+            .expect("write fixture");
+        let resolver = DhcpLeasesResolver::with_path(&path);
+        assert_eq!(
+            resolver.resolve("172.16.0.5").expect("resolve"),
+            "aa:bb:cc:00:00:09"
+        );
+        assert!(resolver.resolve("172.16.0.6").is_err());
+    }
+
+    #[test]
+    fn dhcp_leases_default_points_at_openwrt_dnsmasq_path() {
+        assert_eq!(DEFAULT_LEASES_FILE, "/tmp/dhcp.leases");
     }
 
     #[test]
