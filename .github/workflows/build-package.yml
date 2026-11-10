@@ -17,6 +17,18 @@ env:
   BINARY_NAME: "tollgate-net"
 
 jobs:
+  packaging-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - name: Run packaging tests
+        run: |
+          set -euo pipefail
+          sh packaging/tests/test-build-ipk.sh
+          sh packaging/tests/test-ci-staging-parity.sh
+
   # Unique Rust target triples. Each row produces one binary artifact that
   # may be consumed by multiple package-matrix cells (e.g. aarch64_cortex-a53
   # and aarch64_cortex-a72 share the same arm64 musl binary).
@@ -248,6 +260,7 @@ jobs:
           install -D -m 0755 packaging/files/etc/hotplug.d/iface/95-tollgate-restart           "$PAYLOAD/etc/hotplug.d/iface/95-tollgate-restart"
           install -D -m 0644 packaging/files/lib/upgrade/keep.d/tollgate                       "$PAYLOAD/lib/upgrade/keep.d/tollgate"
           install -D -m 0755 packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink "$PAYLOAD/etc/uci-defaults/90-tollgate-captive-portal-symlink"
+          install -D -m 0755 packaging/files/etc/uci-defaults/99-tollgate-setup "$PAYLOAD/etc/uci-defaults/99-tollgate-setup"
           mkdir -p "$PAYLOAD/etc/tollgate/ecash" "$PAYLOAD/etc/crontabs"
           install -D -m 0644 LICENSE "$PAYLOAD/usr/share/doc/tollgate-wrt/LICENSE"
 
