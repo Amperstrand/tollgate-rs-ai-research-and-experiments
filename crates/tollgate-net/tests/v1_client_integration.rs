@@ -100,6 +100,7 @@ fn make_config() -> V1ClientConfig {
         preferred_allotment: 60_000,
         poll_interval_secs: 1,
         renewal_threshold: 0.8,
+        recovery_file: std::path::PathBuf::from("/tmp/tollgate-test-recovery.txt"),
     }
 }
 
@@ -323,6 +324,146 @@ async fn v1_client_renew_throttles_rapid_calls() {
             "should only have 2 payments (connect + first renew), not 3"
         );
     }
+
+    server.abort();
+    let _ = server.await;
+}
+
+// ── Payment-failure recovery tests ──────────────────────────────────
+
+use std::future::Future;
+use std::pin::Pin;
+
+use axum::http::StatusCode;
+use tollgate_core::error::WalletError;
+use tollgate_core::types::Amount;
+use tollgate_core::wallet::Wallet;
+
+async fn reject_payment() -> impl IntoResponse {
+    (StatusCode::BAD_GATEWAY, "upstream rejected payment")
+}
+
+async fn zero_usage() -> impl IntoResponse {
+    // No existing session: allotment 0 forces the fresh-connection path.
+    "0/0".to_owned()
+}
+
+async fn start_failing_payment_server(
+    state: Arc<Mutex<ServerState>>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new()
+        .route("/", get(get_advertisement).post(reject_payment))
+        .route("/usage", get(zero_usage))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind to random port");
+    let addr = listener.local_addr().expect("local addr");
+    let base_url = format!("http://{addr}");
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("mock server error");
+    });
+    (base_url, handle)
+}
+
+struct RejectReceiveWallet {
+    inner: MockWallet,
+}
+
+impl Wallet for RejectReceiveWallet {
+    fn receive_token(
+        &self,
+        _token: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
+        Box::pin(async {
+            Err(WalletError::TokenRejected(
+                "auto-recovery disabled in test".to_owned(),
+            ))
+        })
+    }
+
+    fn create_token(
+        &self,
+        amount: Amount,
+        mint_url: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, WalletError>> + Send + '_>> {
+        self.inner.create_token(amount, mint_url)
+    }
+
+    fn mint_reachable(
+        &self,
+        mint: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, WalletError>> + Send + '_>> {
+        self.inner.mint_reachable(mint)
+    }
+
+    fn balance(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
+        self.inner.balance()
+    }
+}
+
+#[tokio::test]
+async fn v1_client_reclaims_token_when_payment_submission_fails() {
+    let keys = Keys::generate();
+    let state = Arc::new(Mutex::new(ServerState::new(keys)));
+    let (base_url, server) = start_failing_payment_server(state).await;
+
+    let wallet = Arc::new(MockWallet::new(1000));
+    let mut config = make_config();
+    config.recovery_file =
+        std::env::temp_dir().join(format!("tollgate-recover-auto-{}.txt", std::process::id()));
+    let mut client = V1Client::<MockWallet>::new_with_base_url(config, &base_url);
+
+    let result = client.connect(&wallet).await;
+    assert!(
+        result.is_err(),
+        "connect must fail when the gateway rejects the payment"
+    );
+
+    let balance = wallet.balance().await.expect("balance readable").0;
+    assert_eq!(
+        balance, 1000,
+        "payment amount must be auto-reclaimed after a failed submission"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn v1_client_persists_unrecoverable_token_to_recovery_file() {
+    let keys = Keys::generate();
+    let state = Arc::new(Mutex::new(ServerState::new(keys)));
+    let (base_url, server) = start_failing_payment_server(state).await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let recovery_file = dir.path().join("tokens-to-recover.txt");
+
+    let wallet = Arc::new(RejectReceiveWallet {
+        inner: MockWallet::new(1000),
+    });
+    let mut config = make_config();
+    config.recovery_file = recovery_file.clone();
+    let mut client = V1Client::<RejectReceiveWallet>::new_with_base_url(config, &base_url);
+
+    let result = client.connect(&wallet).await;
+    assert!(
+        result.is_err(),
+        "connect must fail when the gateway rejects the payment"
+    );
+
+    let contents = std::fs::read_to_string(&recovery_file)
+        .expect("recovery file must exist when auto-reclaim fails");
+    assert!(
+        contents.contains("mint=https://testnut.cashu.exchange"),
+        "recovery entry must name the mint: {contents}"
+    );
+    assert!(
+        contents.contains("token="),
+        "recovery entry must carry the token for manual reclaim: {contents}"
+    );
 
     server.abort();
     let _ = server.await;
