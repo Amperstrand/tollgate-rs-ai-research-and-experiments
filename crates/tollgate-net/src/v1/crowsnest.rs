@@ -235,6 +235,9 @@ mod tests {
 
     // ── Mock server helpers ──────────────────────────────────────────
 
+    // Mock scaffolding for upcoming crowsnest gateway tests
+    // (per-gateway disconnect targeting is tracked in audit issue #94).
+    #[allow(dead_code)]
     struct TestServerState {
         keys: Keys,
         payments_received: u64,
@@ -242,6 +245,7 @@ mod tests {
         allotment: u64,
     }
 
+    #[allow(dead_code)]
     impl TestServerState {
         fn new(keys: Keys) -> Self {
             Self {
@@ -253,6 +257,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     async fn get_advertisement(
         State(state): State<Arc<Mutex<TestServerState>>>,
     ) -> impl IntoResponse {
@@ -287,9 +292,8 @@ mod tests {
         axum::Json(serde_json::to_value(event).expect("serialize ad event"))
     }
 
-    async fn post_payment(
-        State(state): State<Arc<Mutex<TestServerState>>>,
-    ) -> impl IntoResponse {
+    #[allow(dead_code)]
+    async fn post_payment(State(state): State<Arc<Mutex<TestServerState>>>) -> impl IntoResponse {
         let mut s = state.lock().expect("lock");
         s.payments_received += 1;
         s.allotment += 60_000;
@@ -313,12 +317,14 @@ mod tests {
         axum::Json(serde_json::to_value(event).expect("serialize session event"))
     }
 
+    #[allow(dead_code)]
     async fn get_usage(State(state): State<Arc<Mutex<TestServerState>>>) -> impl IntoResponse {
         let mut s = state.lock().expect("lock");
         s.usage += 5000;
         format!("{}/{}", s.usage, s.allotment)
     }
 
+    #[allow(dead_code)]
     fn test_app(state: Arc<Mutex<TestServerState>>) -> Router {
         Router::new()
             .route("/", get(get_advertisement).post(post_payment))
@@ -326,6 +332,7 @@ mod tests {
             .with_state(state)
     }
 
+    #[allow(dead_code)]
     async fn start_test_server(
         state: Arc<Mutex<TestServerState>>,
     ) -> (String, tokio::task::JoinHandle<()>) {
@@ -370,7 +377,7 @@ mod tests {
     #[tokio::test]
     async fn crowsnest_config_default_values() {
         let config = CrowsnestConfig::default();
-        assert!(config.gateway_ips.is_empty());
+        assert_eq!(config.gateway_ips, [] as [String; 0]);
         assert_eq!(config.scan_interval, DEFAULT_SCAN_INTERVAL);
         assert_eq!(config.probe_timeout, DEFAULT_PROBE_TIMEOUT);
         assert!(config.verify_signature);
@@ -400,7 +407,10 @@ mod tests {
         cancel_token.cancel();
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle).await;
-        assert!(result.is_ok(), "crowsnest should terminate after cancellation");
+        assert!(
+            result.is_ok(),
+            "crowsnest should terminate after cancellation"
+        );
 
         sm.stop().await;
     }
@@ -428,7 +438,10 @@ mod tests {
 
         // No sessions should exist (all probes fail).
         let sessions = sm.get_active_sessions().await;
-        assert!(sessions.is_empty(), "no sessions should exist for failed probes");
+        assert!(
+            sessions.is_empty(),
+            "no sessions should exist for failed probes"
+        );
 
         cancel_token.cancel();
         sm.stop().await;

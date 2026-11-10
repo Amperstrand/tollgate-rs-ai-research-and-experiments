@@ -236,7 +236,7 @@ mod tests {
     async fn sqlite_create_table_on_open() {
         let store = SqliteSessionStore::open_in_memory().unwrap();
         let all = store.list_all().await.unwrap();
-        assert!(all.is_empty());
+        assert_eq!(all, [] as [super::CustomerSession; 0]);
     }
 
     #[tokio::test]
@@ -307,7 +307,10 @@ mod tests {
     #[tokio::test]
     async fn sqlite_list_all() {
         let store = SqliteSessionStore::open_in_memory().unwrap();
-        assert!(store.list_all().await.unwrap().is_empty());
+        assert_eq!(
+            store.list_all().await.unwrap(),
+            [] as [super::CustomerSession; 0]
+        );
 
         let s1 = make_session("aa:bb:cc:dd:ee:ff", 100, "milliseconds", 60_000);
         let s2 = make_session("11:22:33:44:55:66", 200, "milliseconds", 30_000);

@@ -20,7 +20,10 @@ use nostr::prelude::*;
 use tollgate_core::wallet::Wallet;
 
 use super::merchant;
-use super::{extract_client_ip, CustomerSession, LightningQuoteRecord, QuoteState, ServerState, V1ServerConfig};
+use super::{
+    extract_client_ip, CustomerSession, LightningQuoteRecord, QuoteState, ServerState,
+    V1ServerConfig,
+};
 
 pub fn build_router<W: Wallet + 'static>(state: Arc<ServerState<W>>) -> Router {
     Router::new()
@@ -57,12 +60,10 @@ pub(crate) fn apply_renewal(session: &mut CustomerSession, allotment: u64, now: 
 fn json_response(status: StatusCode, body: String) -> Response {
     (
         status,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/json"),
-            ),
-        ],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )],
         body,
     )
         .into_response()
@@ -359,7 +360,7 @@ fn extract_payment_token(body: &str) -> String {
     // Fallback: parse kind:21000 JSON directly without signature verification.
     // Go v1 does not verify signatures on incoming payment events.
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
-        if val.get("kind").and_then(|k| k.as_u64()) == Some(21_000) {
+        if val.get("kind").and_then(serde_json::Value::as_u64) == Some(21_000) {
             if let Some(tags) = val.get("tags").and_then(|t| t.as_array()) {
                 for tag in tags {
                     if let Some(arr) = tag.as_array() {

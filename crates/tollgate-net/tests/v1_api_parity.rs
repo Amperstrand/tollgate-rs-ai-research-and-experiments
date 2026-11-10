@@ -472,10 +472,7 @@ async fn parity_post_session_event_has_p_tag() {
             None
         }
     });
-    assert!(
-        p_tag.is_some(),
-        "session event must have a 'p' tag"
-    );
+    assert!(p_tag.is_some(), "session event must have a 'p' tag");
     assert!(
         p_tag.as_ref().unwrap().contains(':'),
         "p tag should contain MAC address with colons: {}",
@@ -494,12 +491,14 @@ async fn parity_post_session_event_has_start_time_tag() {
     let before = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() as i64;
+        .as_secs();
+    let before = i64::try_from(before).expect("unix secs fit i64");
     let event = pay(&client, &base_url, 10).await;
     let after = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() as i64;
+        .as_secs();
+    let after = i64::try_from(after).expect("unix secs fit i64");
 
     let start_time = event.tags.iter().find_map(|tag| {
         let items = tag.as_slice();
@@ -509,7 +508,10 @@ async fn parity_post_session_event_has_start_time_tag() {
             None
         }
     });
-    assert!(start_time.is_some(), "session event must have start-time tag");
+    assert!(
+        start_time.is_some(),
+        "session event must have start-time tag"
+    );
     let st = start_time.unwrap();
     assert!(
         st >= before && st <= after,
@@ -2174,7 +2176,7 @@ async fn parity_ln_invoice_full_lifecycle() {
     assert_eq!(post_resp["status"], 1);
     assert_eq!(post_resp["state"], "UNPAID");
     assert_eq!(post_resp["access_granted"], false);
-    assert!(!post_resp["quote"].as_str().unwrap().is_empty());
+    assert_ne!(post_resp["quote"].as_str().unwrap(), "");
     assert!(post_resp["invoice"].as_str().unwrap().starts_with("lnbc"));
 
     let quote_id = post_resp["quote"].as_str().unwrap();

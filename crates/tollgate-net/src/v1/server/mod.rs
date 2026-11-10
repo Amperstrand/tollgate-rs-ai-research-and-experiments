@@ -24,14 +24,19 @@ use std::time::Duration;
 use nostr::prelude::*;
 use tollgate_core::wallet::Wallet;
 
-pub use config::{load_or_generate_keys, ConfigError, KeyError, MintConfig as FileMintConfig, ProfitShareConfig, ServerConfig};
+pub use config::{
+    load_or_generate_keys, ConfigError, KeyError, MintConfig as FileMintConfig, ProfitShareConfig,
+    ServerConfig,
+};
 pub use janitor::spawn_janitor;
 pub use lightning_quotes::{
     spawn_quote_janitor, InMemoryLightningQuoteStore, LightningQuoteRecord, LightningQuoteStore,
     QuoteStoreError,
 };
 pub use logging::init_logging;
-pub use mac_resolver::{extract_client_ip, DhcpLeasesResolver, MacResolveError, MacResolver, StubMacResolver};
+pub use mac_resolver::{
+    extract_client_ip, DhcpLeasesResolver, MacResolveError, MacResolver, StubMacResolver,
+};
 pub use merchant::{
     build_advertisement, build_notice_event, build_session_event, calculate_allotment,
     AllotmentError,
@@ -106,7 +111,8 @@ impl V1Server {
         wallet: Arc<W>,
         valve: Arc<dyn Valve + Send + Sync>,
     ) -> Arc<ServerState<W>> {
-        let advertisement = merchant::build_advertisement(&config).expect("failed to build advertisement");
+        let advertisement =
+            merchant::build_advertisement(&config).expect("failed to build advertisement");
 
         Arc::new(ServerState {
             wallet: wallet.clone(),
@@ -197,16 +203,15 @@ mod run_wiring_tests {
             Arc::new(StubValve),
         );
 
-        let quote_wallet = state
-            .mint_quote_wallet
-            .as_ref()
-            .expect("production run() must wire mint_quote_wallet — None dead-ends POST /ln-invoice");
+        let quote_wallet = state.mint_quote_wallet.as_ref().expect(
+            "production run() must wire mint_quote_wallet — None dead-ends POST /ln-invoice",
+        );
 
         let quote = quote_wallet
             .request_mint_quote(21, "https://mint.example")
             .await
             .expect("wired quote wallet must be functional");
         assert_eq!(quote.amount, 21);
-        assert!(!quote.invoice.is_empty());
+        assert_ne!(quote.invoice, "");
     }
 }

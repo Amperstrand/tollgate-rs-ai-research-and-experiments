@@ -222,18 +222,18 @@ async fn bootstrap_lifecycle() {
     // Step 1: Announce exchange
     let provider_announce = provider.create_announce();
     let msgs = client.handle_message(provider_announce).await;
-    assert!(msgs.is_empty());
+    assert_eq!(msgs, [] as [tollgate_core::protocol::Message; 0]);
     assert_eq!(client.state(), &PeerSessionState::Announced);
 
     let client_announce = client.create_announce();
     let msgs = provider.handle_message(client_announce).await;
-    assert!(msgs.is_empty());
+    assert_eq!(msgs, [] as [tollgate_core::protocol::Message; 0]);
     assert_eq!(provider.state(), &PeerSessionState::Announced);
 
     // Step 2: PriceSheet
     let price_sheet = provider.create_price_sheet();
     let msgs = client.handle_message(price_sheet).await;
-    assert!(msgs.is_empty());
+    assert_eq!(msgs, [] as [tollgate_core::protocol::Message; 0]);
 
     // Step 3: Accept — client selects the product
     let accept = Message::Accept(Accept {
@@ -244,7 +244,7 @@ async fn bootstrap_lifecycle() {
         channel_funding: vec![],
     });
     let msgs = provider.handle_message(accept).await;
-    assert!(msgs.is_empty());
+    assert_eq!(msgs, [] as [tollgate_core::protocol::Message; 0]);
     assert_eq!(provider.state(), &PeerSessionState::Priced);
 
     // Step 4: BootstrapToken (100 sats)

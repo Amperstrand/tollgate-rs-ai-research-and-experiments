@@ -305,8 +305,12 @@ mod nds {
             let stats = self.fetch_client_stats(mac).await?;
             let baselines = self.data_baselines.lock().await;
             let baseline = baselines.get(mac).cloned().unwrap_or_default();
-            let dl = stats.downloaded_bytes().saturating_sub(baseline.downloaded_bytes);
-            let ul = stats.uploaded_bytes().saturating_sub(baseline.uploaded_bytes);
+            let dl = stats
+                .downloaded_bytes()
+                .saturating_sub(baseline.downloaded_bytes);
+            let ul = stats
+                .uploaded_bytes()
+                .saturating_sub(baseline.uploaded_bytes);
             Ok(dl + ul)
         }
 
@@ -383,7 +387,10 @@ mod nds {
                         .await;
                     match output {
                         Ok(out) if out.status.success() => {
-                            tracing::debug!(mac = mac_owned, "ndsctl deauth successful (auto-close)");
+                            tracing::debug!(
+                                mac = mac_owned,
+                                "ndsctl deauth successful (auto-close)"
+                            );
                         }
                         Ok(out) => {
                             tracing::error!(
@@ -471,7 +478,10 @@ mod nds {
 
         fn clear_data_baseline(&self, mac_address: &str) -> Result<(), ValveError> {
             let rt = tokio::runtime::Handle::current();
-            rt.block_on(async { self.clear_data_baseline_inner(mac_address).await; Ok(()) })
+            rt.block_on(async {
+                self.clear_data_baseline_inner(mac_address).await;
+                Ok(())
+            })
         }
     }
 
@@ -567,7 +577,10 @@ mod nds {
             assert!(result.is_ok(), "open_gate should succeed");
 
             let gates = valve.gates.lock().await;
-            assert!(gates.contains_key("aa:bb:cc:dd:ee:ff"), "MAC should be in gates map");
+            assert!(
+                gates.contains_key("aa:bb:cc:dd:ee:ff"),
+                "MAC should be in gates map"
+            );
             assert!(
                 matches!(gates.get("aa:bb:cc:dd:ee:ff"), Some(GateEntry::Indefinite)),
                 "gate should be Indefinite"
@@ -585,11 +598,16 @@ mod nds {
                 .as_secs() as i64
                 + 3600;
 
-            let result = valve.open_gate_until_inner("aa:bb:cc:dd:ee:ff", future_ts).await;
+            let result = valve
+                .open_gate_until_inner("aa:bb:cc:dd:ee:ff", future_ts)
+                .await;
             assert!(result.is_ok(), "open_gate_until should succeed");
 
             let gates = valve.gates.lock().await;
-            assert!(gates.contains_key("aa:bb:cc:dd:ee:ff"), "MAC should be in gates map");
+            assert!(
+                gates.contains_key("aa:bb:cc:dd:ee:ff"),
+                "MAC should be in gates map"
+            );
             assert!(
                 matches!(gates.get("aa:bb:cc:dd:ee:ff"), Some(GateEntry::Timed(_))),
                 "gate should be Timed"
@@ -602,7 +620,9 @@ mod nds {
             let valve = NdsValve::with_ndsctl_path(path);
 
             let past_ts = 1;
-            let result = valve.open_gate_until_inner("aa:bb:cc:dd:ee:ff", past_ts).await;
+            let result = valve
+                .open_gate_until_inner("aa:bb:cc:dd:ee:ff", past_ts)
+                .await;
             assert!(result.is_err(), "past timestamp should return error");
         }
 
@@ -696,7 +716,9 @@ mod nds {
             valve.open_gate_inner("aa:bb:cc:dd:ee:ff").await.unwrap();
 
             let baselines = valve.data_baselines.lock().await;
-            let baseline = baselines.get("aa:bb:cc:dd:ee:ff").expect("baseline should exist");
+            let baseline = baselines
+                .get("aa:bb:cc:dd:ee:ff")
+                .expect("baseline should exist");
             assert_eq!(baseline.downloaded_bytes, 1024 * 1024);
             assert_eq!(baseline.uploaded_bytes, 512 * 1024);
         }
@@ -713,7 +735,9 @@ mod nds {
                 .unwrap();
 
             let baselines = valve.data_baselines.lock().await;
-            let baseline = baselines.get("aa:bb:cc:dd:ee:ff").expect("baseline should exist");
+            let baseline = baselines
+                .get("aa:bb:cc:dd:ee:ff")
+                .expect("baseline should exist");
             assert_eq!(baseline.downloaded_bytes, 0);
             assert_eq!(baseline.uploaded_bytes, 0);
         }
@@ -741,7 +765,9 @@ mod tests {
     #[test]
     fn test_stub_valve_defaults() {
         let valve = StubValve;
-        assert!(valve.open_gate_until("aa:bb:cc:dd:ee:ff", 9999999999).is_ok());
+        assert!(valve
+            .open_gate_until("aa:bb:cc:dd:ee:ff", 9_999_999_999)
+            .is_ok());
 
         let stats = valve.get_client_stats("aa:bb:cc:dd:ee:ff").unwrap();
         assert_eq!(stats.downloaded, 0);

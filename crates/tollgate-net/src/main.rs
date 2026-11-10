@@ -285,11 +285,10 @@ async fn main() {
                 // Load from config file, then apply explicitly-passed CLI
                 // overrides for metric/step_size (UCI may provide different
                 // values than what's in the config file).
-                let mut sc =
-                    v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
-                        eprintln!("Failed to load config from {path}: {e}");
-                        std::process::exit(1);
-                    });
+                let mut sc = v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
+                    eprintln!("Failed to load config from {path}: {e}");
+                    std::process::exit(1);
+                });
                 apply_cli_overrides(&mut sc, metric, step_size);
                 sc
             } else {
@@ -313,37 +312,34 @@ async fn main() {
             let config = server_config.to_server_config(nostr_keys, port);
             let server = v1::server::V1Server::new(config);
 
-            let valve: Arc<dyn Valve + Send + Sync> = match valve.as_str() {
-                "nds" => {
-                    #[cfg(feature = "nds")]
-                    {
-                        let ndsctl = ndsctl_path.as_deref().unwrap_or("ndsctl");
-                        let path = resolve_ndsctl(ndsctl).unwrap_or_else(|| {
-                            tracing::error!(ndsctl = %ndsctl, "ndsctl binary not found on PATH or at the given path");
-                            eprintln!(
-                                "ERROR: ndsctl '{}' not found. \
-                                 Install nodogsplash or specify --ndsctl-path.",
-                                ndsctl
-                            );
-                            std::process::exit(1);
-                        });
-                        tracing::info!(ndsctl_path = %path.display(), "Using NDS valve");
-                        Arc::new(v1::server::NdsValve::with_ndsctl_path(path))
-                    }
-                    #[cfg(not(feature = "nds"))]
-                    {
-                        let _ = ndsctl_path;
+            let valve: Arc<dyn Valve + Send + Sync> = if valve.as_str() == "nds" {
+                #[cfg(feature = "nds")]
+                {
+                    let ndsctl = ndsctl_path.as_deref().unwrap_or("ndsctl");
+                    let path = resolve_ndsctl(ndsctl).unwrap_or_else(|| {
+                        tracing::error!(ndsctl = %ndsctl, "ndsctl binary not found on PATH or at the given path");
                         eprintln!(
-                            "ERROR: --valve nds requires the 'nds' feature. \
-                             Rebuild with: cargo build --features nds"
+                            "ERROR: ndsctl '{}' not found. \
+                             Install nodogsplash or specify --ndsctl-path.",
+                            ndsctl
                         );
                         std::process::exit(1);
-                    }
+                    });
+                    tracing::info!(ndsctl_path = %path.display(), "Using NDS valve");
+                    Arc::new(v1::server::NdsValve::with_ndsctl_path(path))
                 }
-                _ => {
-                    tracing::info!("Using stub valve (no real traffic control)");
-                    Arc::new(v1::server::StubValve)
+                #[cfg(not(feature = "nds"))]
+                {
+                    let _ = ndsctl_path;
+                    eprintln!(
+                        "ERROR: --valve nds requires the 'nds' feature. \
+                         Rebuild with: cargo build --features nds"
+                    );
+                    std::process::exit(1);
                 }
+            } else {
+                tracing::info!("Using stub valve (no real traffic control)");
+                Arc::new(v1::server::StubValve)
             };
 
             match wt {
@@ -355,7 +351,9 @@ async fn main() {
                     // Use the first accepted mint from config for wallet initialization.
                     // When --config is used, accepted_mints comes from the config file.
                     // When using CLI flags, accepted_mints[0].url was set from --mint-url above.
-                    let wallet_mint_url = server_config.accepted_mints.first()
+                    let wallet_mint_url = server_config
+                        .accepted_mints
+                        .first()
                         .map(|m| m.url.clone())
                         .unwrap_or(mint_url.clone());
                     let wallet = Arc::new(
@@ -389,7 +387,9 @@ async fn main() {
                 }
                 #[cfg(feature = "spilman")]
                 WalletType::Spilman => {
-                    let wallet_mint_url = server_config.accepted_mints.first()
+                    let wallet_mint_url = server_config
+                        .accepted_mints
+                        .first()
                         .map(|m| m.url.clone())
                         .unwrap_or(mint_url.clone());
                     let wallet = Arc::new(
@@ -479,9 +479,10 @@ async fn main() {
                 },
             };
 
-            let session_manager = Arc::new(
-                v1::session_manager::SessionManager::new(sm_config, wallet.clone()),
-            );
+            let session_manager = Arc::new(v1::session_manager::SessionManager::new(
+                sm_config,
+                wallet.clone(),
+            ));
 
             let crowsnest_config = v1::crowsnest::CrowsnestConfig {
                 gateway_ips,
@@ -539,7 +540,10 @@ fn apply_cli_overrides(
 /// used as given. Returns None when nothing executable-shaped is found.
 #[cfg(any(feature = "nds", test))]
 fn resolve_ndsctl(spec: &str) -> Option<std::path::PathBuf> {
-    fn first_matching(dirs: impl Iterator<Item = std::path::PathBuf>, name: &str) -> Option<std::path::PathBuf> {
+    fn first_matching(
+        dirs: impl Iterator<Item = std::path::PathBuf>,
+        name: &str,
+    ) -> Option<std::path::PathBuf> {
         dirs.map(|d| d.join(name)).find(|p| p.is_file())
     }
 
@@ -598,6 +602,9 @@ mod ndsctl_resolution_tests {
     use super::resolve_ndsctl;
     use std::os::unix::fs::PermissionsExt;
 
+    // PATH is process-global; tests mutate it, so serialize them.
+    static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn fixture_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("tg-ndsctl-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -620,10 +627,9 @@ mod ndsctl_resolution_tests {
         make_executable(&b, "ndsctl");
         let path_var = format!("{}:{}", a.display(), b.display());
 
-        // PATH is read from the environment; scope the mutation to this test.
-        // (Test binary runs tests in parallel threads — serialize via a mutex.)
-        static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PATH_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::env::set_var("PATH", &path_var);
         let resolved = resolve_ndsctl("ndsctl");
         std::env::remove_var("PATH");
@@ -639,8 +645,9 @@ mod ndsctl_resolution_tests {
 
     #[test]
     fn bare_name_does_not_resolve_from_cwd() {
-        static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PATH_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // An empty PATH with an ndsctl in the CWD must NOT resolve: the old
         // relative PathBuf::exists() check silently depended on the CWD.
         std::env::set_var("PATH", "");

@@ -203,7 +203,14 @@ mod tests {
     #[test]
     fn zero_budget_means_unlimited_for_milliseconds() {
         // CLI documents --max-price-per-ms 0 as "no limit".
-        assert!(validate_budget(&opt("https://m.example", 5, 1), 1000, "milliseconds", 0.0, 0.0001).is_ok());
+        assert!(validate_budget(
+            &opt("https://m.example", 5, 1),
+            1000,
+            "milliseconds",
+            0.0,
+            0.0001
+        )
+        .is_ok());
     }
 
     #[test]
@@ -213,22 +220,28 @@ mod tests {
 
     #[test]
     fn positive_budget_still_rejects_too_expensive_option() {
-        let err =
-            validate_budget(&opt("https://m.example", 10, 1), 1000, "milliseconds", 0.005, 0.0001)
-                .unwrap_err();
-        assert!(
-            matches!(err, PricingError::PriceTooHigh { .. }),
-            "{err:?}"
-        );
+        let err = validate_budget(
+            &opt("https://m.example", 10, 1),
+            1000,
+            "milliseconds",
+            0.005,
+            0.0001,
+        )
+        .unwrap_err();
+        assert!(matches!(err, PricingError::PriceTooHigh { .. }), "{err:?}");
     }
 
     #[test]
     fn price_equal_to_budget_is_accepted() {
         // price_per_step 5 / step_size 1000 == max 0.005 exactly.
-        assert!(
-            validate_budget(&opt("https://m.example", 5, 1), 1000, "milliseconds", 0.005, 0.0001)
-                .is_ok()
-        );
+        assert!(validate_budget(
+            &opt("https://m.example", 5, 1),
+            1000,
+            "milliseconds",
+            0.005,
+            0.0001
+        )
+        .is_ok());
     }
 
     // --- validate_trust_policy tests ---

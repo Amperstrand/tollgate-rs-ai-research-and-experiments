@@ -1338,7 +1338,7 @@ mod spilman_handler_tests {
         assert_eq!(params["capacity"], 1000);
         assert_eq!(params["unit"], "sat");
         assert!(payment.funding_proofs.is_some());
-        assert!(payment.funding_proofs.as_ref().unwrap().is_empty());
+        assert_eq!(payment.funding_proofs, Some(vec![]));
     }
 
     #[test]
@@ -1354,7 +1354,7 @@ mod spilman_handler_tests {
         assert_eq!(params["capacity"], 1000);
         assert_eq!(params["unit"], "sat");
         assert!(payment.funding_proofs.is_some());
-        assert!(payment.funding_proofs.as_ref().unwrap().is_empty());
+        assert_eq!(payment.funding_proofs, Some(vec![]));
     }
 
     // -----------------------------------------------------------------------

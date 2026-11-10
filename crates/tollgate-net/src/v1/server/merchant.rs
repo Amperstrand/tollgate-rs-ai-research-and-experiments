@@ -22,7 +22,12 @@ pub fn build_advertisement(
         ),
         Tag::custom(
             TagKind::Custom("tips".into()),
-            ["1".to_owned(), "2".to_owned(), "3".to_owned(), "4".to_owned()],
+            [
+                "1".to_owned(),
+                "2".to_owned(),
+                "3".to_owned(),
+                "4".to_owned(),
+            ],
         ),
     ];
 
