@@ -9,15 +9,45 @@ use tollgate_core::metering::PeerMetrics;
 use tollgate_core::types::Amount;
 use tollgate_core::wallet::Wallet;
 
+use crate::v1::server::mint_quote_wallet::MockMintQuoteWallet;
+use crate::v1::server::MintQuoteWallet;
+
 pub struct MockWallet {
     balance: Mutex<u64>,
+    quote: MockMintQuoteWallet,
 }
 
 impl MockWallet {
     pub fn new(initial_balance: u64) -> Self {
         Self {
             balance: Mutex::new(initial_balance),
+            quote: MockMintQuoteWallet::new(),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl MintQuoteWallet for MockWallet {
+    async fn request_mint_quote(
+        &self,
+        amount: u64,
+        mint_url: &str,
+    ) -> Result<crate::v1::server::MintQuoteInfo, crate::v1::server::MintQuoteError> {
+        self.quote.request_mint_quote(amount, mint_url).await
+    }
+
+    async fn check_mint_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<crate::v1::server::QuoteState, crate::v1::server::MintQuoteError> {
+        self.quote.check_mint_quote_status(quote_id).await
+    }
+
+    async fn mint_tokens(
+        &self,
+        quote_id: &str,
+    ) -> Result<crate::v1::server::MintResult, crate::v1::server::MintQuoteError> {
+        self.quote.mint_tokens(quote_id).await
     }
 }
 
