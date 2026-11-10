@@ -296,10 +296,14 @@ impl Wallet for CdkWallet {
         let token_str = String::from_utf8_lossy(token).to_string();
         Box::pin(async move {
             let _balance_gate = self.balance_gate.lock().await;
+            // Char-safe preview: a raw byte slice panics when offset 20
+            // lands inside a multibyte char (crafted tokens would kill the
+            // connection before CDK could reject them).
+            let preview: String = token_str.chars().take(20).collect();
             tracing::info!(
                 "[NUT-00] Receiving Cashu token ({} bytes, first 20 chars: {:?})",
                 token_str.len(),
-                &token_str[..token_str.len().min(20)]
+                preview
             );
 
             let balance_before = self.wallet.total_balance().await.map_or(0, u64::from);
@@ -522,6 +526,23 @@ mod balance_gate_tests {
         }
         task.abort();
         panic!("receive_token never held the balance gate — recovery attribution is unguarded");
+    }
+
+    #[tokio::test]
+    async fn multibyte_token_preview_does_not_panic() {
+        // Nineteen ASCII chars + a two-byte é: byte offset 20 lands mid-char.
+        // The preview slice is only evaluated when INFO is enabled, so the
+        // test pins the panic under a live INFO subscriber.
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(std::io::sink)
+            .finish();
+        let _log = tracing::subscriber::set_default(subscriber);
+
+        let token = format!("{}{}", "a".repeat(19), "é");
+        let wallet = CdkWallet::new(DEAD_MINT, [5u8; 64]).await.unwrap();
+        let result = wallet.receive_token(token.as_bytes()).await;
+        assert!(result.is_err(), "garbage token must be rejected");
     }
 
     #[tokio::test]
