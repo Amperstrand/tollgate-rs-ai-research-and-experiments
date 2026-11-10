@@ -187,7 +187,7 @@ mod tests {
         let msg: CLIMessage =
             serde_json::from_str(r#"{"command":"status","args":[],"flags":{}}"#).unwrap();
         assert_eq!(msg.command, "status");
-        assert!(msg.args.is_empty());
+        assert_eq!(msg.args, [] as [String; 0]);
         assert!(msg.flags.is_empty());
     }
 
@@ -195,7 +195,7 @@ mod tests {
     fn parse_cli_message_defaults() {
         let msg: CLIMessage = serde_json::from_str(r#"{"command":"version"}"#).unwrap();
         assert_eq!(msg.command, "version");
-        assert!(msg.args.is_empty());
+        assert_eq!(msg.args, [] as [String; 0]);
         assert!(msg.flags.is_empty());
     }
 

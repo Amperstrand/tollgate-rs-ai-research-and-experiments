@@ -432,7 +432,7 @@ mod tests {
         // by checking that it doesn't fail on the password length check.
         // The password "8chars!!" is exactly 8 chars — valid length.
         let password = "8chars!!";
-        assert!(!password.is_empty());
+        assert_ne!(password, "");
         assert!(password.len() >= 8 && password.len() <= 63);
     }
 

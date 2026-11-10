@@ -302,11 +302,7 @@ impl Wallet for CdkWallet {
                 &token_str[..token_str.len().min(20)]
             );
 
-            let balance_before = self
-                .wallet
-                .total_balance()
-                .await
-                .map_or(0, u64::from);
+            let balance_before = self.wallet.total_balance().await.map_or(0, u64::from);
             let mut last_err = String::new();
             for attempt in 0..3 {
                 match self
@@ -495,7 +491,10 @@ mod balance_gate_tests {
     #[tokio::test]
     async fn invalid_token_against_dead_mint_is_rejected() {
         let wallet = CdkWallet::new(DEAD_MINT, [7u8; 64]).await.unwrap();
-        let err = wallet.receive_token(b"not-a-cashu-token").await.unwrap_err();
+        let err = wallet
+            .receive_token(b"not-a-cashu-token")
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, WalletError::TokenRejected(_)),
             "garbage token must never be accepted: {err:?}"
@@ -504,8 +503,7 @@ mod balance_gate_tests {
 
     #[tokio::test]
     async fn receive_holds_the_balance_gate() {
-        let wallet =
-            std::sync::Arc::new(CdkWallet::new(DEAD_MINT, [9u8; 64]).await.unwrap());
+        let wallet = std::sync::Arc::new(CdkWallet::new(DEAD_MINT, [9u8; 64]).await.unwrap());
         let task = tokio::spawn({
             let wallet = wallet.clone();
             async move {
@@ -534,7 +532,10 @@ mod balance_gate_tests {
             drop(guard);
         }
         {
-            let guard = wallet.balance_gate.try_lock().expect("gate must be re-lockable");
+            let guard = wallet
+                .balance_gate
+                .try_lock()
+                .expect("gate must be re-lockable");
             drop(guard);
         }
     }

@@ -118,11 +118,7 @@ async fn build_session_response(
     let (remaining, access_level) = if session.metric == "milliseconds" {
         let elapsed_ms = (now - session.start_time) * 1000;
         let rem = session.allotment as i64 - elapsed_ms;
-        let level = if rem <= 0 {
-            "suspended"
-        } else {
-            "active"
-        };
+        let level = if rem <= 0 { "suspended" } else { "active" };
         (rem, level.to_owned())
     } else {
         let usage = if let Some(ref ext) = session.last_external_usage {
@@ -135,11 +131,7 @@ async fn build_session_response(
                 .unwrap_or(0)
         };
         let rem = session.allotment as i64 - usage as i64;
-        let level = if rem <= 0 {
-            "suspended"
-        } else {
-            "active"
-        };
+        let level = if rem <= 0 { "suspended" } else { "active" };
         (rem, level.to_owned())
     };
 
@@ -181,22 +173,10 @@ fn check_api_key(headers: &HeaderMap) -> bool {
 pub fn build_session_router() -> axum::Router<Arc<ServerState>> {
     axum::Router::new()
         .route("/sessions/{mac}", get(handle_get_session))
-        .route(
-            "/sessions/{mac}/usage",
-            post(handle_post_usage),
-        )
-        .route(
-            "/sessions/{mac}/topups",
-            post(handle_post_topup),
-        )
-        .route(
-            "/sessions/{mac}",
-            delete(handle_delete_session),
-        )
-        .route(
-            "/sessions/bootstrap",
-            post(handle_post_bootstrap),
-        )
+        .route("/sessions/{mac}/usage", post(handle_post_usage))
+        .route("/sessions/{mac}/topups", post(handle_post_topup))
+        .route("/sessions/{mac}", delete(handle_delete_session))
+        .route("/sessions/bootstrap", post(handle_post_bootstrap))
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +186,7 @@ pub fn build_session_router() -> axum::Router<Arc<ServerState>> {
 /// Normalize MAC address to lowercase with colon separators.
 /// FreeRADIUS sends uppercase (B6-95-54-46-E0-27), session store uses lowercase.
 fn normalize_mac(mac: &str) -> String {
-    mac.to_lowercase().replace('-', ":").replace('.', ":")
+    mac.to_lowercase().replace(['-', '.'], ":")
 }
 
 /// GET /v1/sessions/{mac}
@@ -219,11 +199,7 @@ async fn handle_get_session(
     let session = match state.sessions.get(&mac).await {
         Ok(Some(s)) => s,
         Ok(None) => {
-            return error_json(
-                StatusCode::NOT_FOUND,
-                "session not found",
-                Some(&mac),
-            );
+            return error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac));
         }
         Err(e) => {
             tracing::error!("Session store error for {mac}: {e}");
@@ -262,11 +238,7 @@ async fn handle_post_usage(
     let session = match state.sessions.get(&mac).await {
         Ok(Some(s)) => s,
         Ok(None) => {
-            return error_json(
-                StatusCode::NOT_FOUND,
-                "session not found",
-                Some(&mac),
-            );
+            return error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac));
         }
         Err(e) => {
             tracing::error!("Session store error for {mac}: {e}");
@@ -306,21 +278,12 @@ async fn handle_post_usage(
     }
 
     // Use the provided timestamp or generate one
-    let last_usage_update = report
-        .timestamp
-        .or_else(|| {
-            Some(now_secs.to_string())
-        });
+    let last_usage_update = report.timestamp.or_else(|| Some(now_secs.to_string()));
 
     // The response must reflect the snapshot just persisted — building it
     // from the pre-report `session` would answer an exhausting report with
     // the old quota/access decision.
-    let resp = build_session_response(
-        &updated_session,
-        &state,
-        last_usage_update.as_deref(),
-    )
-    .await;
+    let resp = build_session_response(&updated_session, &state, last_usage_update.as_deref()).await;
 
     json_response(
         StatusCode::OK,
@@ -342,14 +305,10 @@ async fn handle_post_topup(
     let mac = normalize_mac(&mac);
 
     // Verify session exists
-    let existing = match state.sessions.get(&mac).await {
+    let _existing = match state.sessions.get(&mac).await {
         Ok(Some(s)) => s,
         Ok(None) => {
-            return error_json(
-                StatusCode::NOT_FOUND,
-                "session not found",
-                Some(&mac),
-            );
+            return error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac));
         }
         Err(e) => {
             tracing::error!("Session store error for {mac}: {e}");
@@ -407,15 +366,7 @@ async fn handle_post_topup(
         }
     };
 
-    let _prior = Some(existing);
-
-    let session = match add_allotment(
-        &*state.sessions,
-        &mac,
-        &state.config.metric,
-        allotment,
-    )
-    .await
+    let session = match add_allotment(&*state.sessions, &mac, &state.config.metric, allotment).await
     {
         Ok(s) => s,
         Err(e) => {
@@ -467,11 +418,7 @@ async fn handle_delete_session(
     match state.sessions.remove(&mac).await {
         Ok(Some(_)) => {}
         Ok(None) => {
-            return error_json(
-                StatusCode::NOT_FOUND,
-                "session not found",
-                Some(&mac),
-            );
+            return error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac));
         }
         Err(e) => {
             tracing::error!("Session removal failed for {mac}: {e}");
@@ -673,12 +620,7 @@ mod tests {
     }
 
     async fn read_body(response: Response) -> String {
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
@@ -688,6 +630,7 @@ mod tests {
 
     static API_KEY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    #[allow(clippy::await_holding_lock)] // test-only serialization of the API-key env var
     async fn with_api_key<F, Fut>(key: &str, f: F)
     where
         F: FnOnce() -> Fut,
@@ -749,7 +692,8 @@ mod tests {
                 .unwrap();
             let response = app2.oneshot(req).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-        }).await;
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -773,7 +717,8 @@ mod tests {
 
             let response = app.oneshot(req).await.unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        }).await;
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -817,7 +762,8 @@ mod tests {
                 .unwrap();
             let response = app3.oneshot(req).await.unwrap();
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        }).await;
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -862,7 +808,8 @@ mod tests {
             let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
             assert_eq!(parsed["session_id"], "11:22:33:44:55:66");
             assert!(parsed["last_usage_update"].is_string());
-        }).await;
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -913,6 +860,7 @@ mod tests {
                 parsed["remaining_quota"].as_i64().unwrap_or(1) <= 0,
                 "got {parsed}"
             );
-        }).await;
+        })
+        .await;
     }
 }

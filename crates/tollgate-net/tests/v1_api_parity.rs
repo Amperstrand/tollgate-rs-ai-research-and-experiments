@@ -2271,7 +2271,7 @@ async fn parity_ln_invoice_full_lifecycle() {
     assert_eq!(post_resp["status"], 1);
     assert_eq!(post_resp["state"], "UNPAID");
     assert_eq!(post_resp["access_granted"], false);
-    assert!(!post_resp["quote"].as_str().unwrap().is_empty());
+    assert_ne!(post_resp["quote"].as_str().unwrap(), "");
     assert!(post_resp["invoice"].as_str().unwrap().starts_with("lnbc"));
 
     let quote_id = post_resp["quote"].as_str().unwrap();

@@ -695,10 +695,10 @@ Cell 04 - Address: AA:BB:CC:DD:EE:04
     fn test_parse_iwinfo_output_empty() {
         let scanner = WifiScanner::new();
         let results = scanner.parse_iwinfo_output("", "radio0");
-        assert!(results.is_empty());
+        assert_eq!(results, [] as [ScanResult; 0]);
 
         let results = scanner.parse_iwinfo_output("No scan results", "radio0");
-        assert!(results.is_empty());
+        assert_eq!(results, [] as [ScanResult; 0]);
     }
 
     #[test]

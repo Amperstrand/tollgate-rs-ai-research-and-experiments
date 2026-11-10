@@ -102,9 +102,9 @@ mod tests {
     #[test]
     fn empty_frame() {
         let encoded = encode_frame(&[]).unwrap();
-        assert!(encoded.is_empty());
+        assert_eq!(encoded, [] as [u8; 0]);
         let decoded = decode_frame(&encoded).unwrap();
-        assert!(decoded.is_empty());
+        assert_eq!(decoded, [] as [Message; 0]);
     }
 
     #[test]

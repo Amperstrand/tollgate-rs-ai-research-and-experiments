@@ -29,13 +29,13 @@ fn mermaid_empty_produces_valid_header() {
 #[test]
 fn json_empty() {
     let collector = TraceCollector::new();
-    assert!(collector.to_json().is_empty());
+    assert_eq!(collector.to_json(), "");
 }
 
 #[test]
 fn markdown_empty() {
     let collector = TraceCollector::new();
-    assert!(collector.to_markdown().is_empty());
+    assert_eq!(collector.to_markdown(), "");
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn spec_ref_all_message_types_covered() {
         MessageType::Disconnect,
     ];
     for mt in &all {
-        assert!(!spec_ref(*mt).is_empty());
+        assert_ne!(spec_ref(*mt), "");
     }
 }
 

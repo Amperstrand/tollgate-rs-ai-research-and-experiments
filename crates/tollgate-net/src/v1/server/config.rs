@@ -735,7 +735,7 @@ mod tests {
         let path = dir.join("keys.json");
 
         let keys = super::super::config::load_or_generate_keys(path.to_str().unwrap()).unwrap();
-        assert!(!keys.public_key().to_hex().is_empty());
+        assert_ne!(keys.public_key().to_hex(), "");
 
         let data = std::fs::read_to_string(&path).unwrap();
         assert!(data.contains("private_key"));

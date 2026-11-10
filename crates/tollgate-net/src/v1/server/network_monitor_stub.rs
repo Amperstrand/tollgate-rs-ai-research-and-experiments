@@ -11,7 +11,11 @@
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::cast_precision_loss,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    // Stub API keeps async signatures to match the netlink monitor's
+    // contract; the no-op bodies need no await.
+    clippy::unused_async,
+    clippy::unused_async_trait_impl
 )]
 
 use std::net::IpAddr;
@@ -159,14 +163,12 @@ impl NetworkMonitor {
     }
 
     /// Get current interfaces (stub — returns empty list).
-    #[allow(clippy::unused_async)]
     pub async fn get_current_interfaces(&self) -> Result<Vec<InterfaceInfo>, NetworkMonitorError> {
         tracing::debug!("Stub: get_current_interfaces returning empty list");
         Ok(Vec::new())
     }
 
     /// Get gateway for interface (stub — always returns None).
-    #[allow(clippy::unused_async)]
     pub async fn get_gateway_for_interface(
         &self,
         _iface: &str,
@@ -207,7 +209,7 @@ mod tests {
     fn test_config_default_values() {
         let config = NetworkMonitorConfig::default();
         assert_eq!(config.ignore_interfaces, vec!["lo"]);
-        assert!(config.only_interfaces.is_empty());
+        assert_eq!(config.only_interfaces, [] as [String; 0]);
         assert_eq!(config.throttle_duration, Duration::from_secs(2));
         assert_eq!(config.event_buffer_size, 100);
     }

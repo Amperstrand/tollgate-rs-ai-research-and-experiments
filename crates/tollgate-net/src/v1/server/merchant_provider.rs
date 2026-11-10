@@ -127,7 +127,7 @@ mod tests {
     }
 
     fn remaining(s: &CustomerSession, now: i64) -> i64 {
-        s.allotment as i64 - (now - s.start_time)
+        i64::try_from(s.allotment).unwrap_or(i64::MAX) - (now - s.start_time)
     }
 
     #[test]

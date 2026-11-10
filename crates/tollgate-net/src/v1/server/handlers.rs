@@ -30,10 +30,7 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
                 .options(handle_options),
         )
         .route("/pay", get(handle_get_details).options(handle_options))
-        .route(
-            "/verify",
-            post(handle_verify_token).options(handle_options),
-        )
+        .route("/verify", post(handle_verify_token).options(handle_options))
         .route("/usage", get(handle_usage).options(handle_options))
         .route("/whoami", get(handle_whoami).options(handle_options))
         .route("/balance", get(handle_balance).options(handle_options))
@@ -373,43 +370,43 @@ async fn handle_post_payment(
         }
     };
 
-    let mac = mac.to_lowercase().replace('-', ":").replace('.', ":");
+    let mac = mac.to_lowercase().replace(['-', '.'], ":");
 
     let token = extract_payment_token(&body);
 
     let wallet = state.merchant.get();
     let receive_future = wallet.receive_token(token.as_bytes());
-    let amount = match tokio::time::timeout(std::time::Duration::from_secs(30), receive_future).await
-    {
-        Ok(Ok(amount)) => amount,
-        Ok(Err(e)) => {
-            tracing::warn!("Token rejected: {e}");
-            let code = classify_payment_error(&e.to_string());
-            return notice_response(
-                "error",
-                code,
-                &format!("payment rejected: {e}"),
-                StatusCode::BAD_REQUEST,
-                &state.config,
-                origin.as_deref(),
-                is_local,
-                Some(&mac),
-            );
-        }
-        Err(_) => {
-            tracing::warn!("Payment processing timed out after 30s for mac={mac}");
-            return notice_response(
-                "error",
-                "payment-processing-timeout",
-                "Payment processing timed out after 30 seconds. Please try again.",
-                StatusCode::BAD_REQUEST,
-                &state.config,
-                origin.as_deref(),
-                is_local,
-                Some(&mac),
-            );
-        }
-    };
+    let amount =
+        match tokio::time::timeout(std::time::Duration::from_secs(30), receive_future).await {
+            Ok(Ok(amount)) => amount,
+            Ok(Err(e)) => {
+                tracing::warn!("Token rejected: {e}");
+                let code = classify_payment_error(&e.to_string());
+                return notice_response(
+                    "error",
+                    code,
+                    &format!("payment rejected: {e}"),
+                    StatusCode::BAD_REQUEST,
+                    &state.config,
+                    origin.as_deref(),
+                    is_local,
+                    Some(&mac),
+                );
+            }
+            Err(_) => {
+                tracing::warn!("Payment processing timed out after 30s for mac={mac}");
+                return notice_response(
+                    "error",
+                    "payment-processing-timeout",
+                    "Payment processing timed out after 30 seconds. Please try again.",
+                    StatusCode::BAD_REQUEST,
+                    &state.config,
+                    origin.as_deref(),
+                    is_local,
+                    Some(&mac),
+                );
+            }
+        };
 
     let mint_url = state
         .config
@@ -533,7 +530,7 @@ async fn handle_usage(
         }
     };
 
-    let mac = mac.to_lowercase().replace('-', ":").replace('.', ":");
+    let mac = mac.to_lowercase().replace(['-', '.'], ":");
 
     let session = match state.sessions.get(&mac).await.ok().flatten() {
         Some(s) => s,
@@ -640,7 +637,7 @@ async fn handle_balance(
         }
     };
 
-    let mac = mac.to_lowercase().replace('-', ":").replace('.', ":");
+    let mac = mac.to_lowercase().replace(['-', '.'], ":");
 
     let session = match state.sessions.get(&mac).await.ok().flatten() {
         Some(s) => s,
@@ -714,9 +711,10 @@ async fn handle_balance(
     });
 
     if !session.metric.is_empty() {
-        json.as_object_mut()
-            .unwrap()
-            .insert("metric".to_owned(), serde_json::Value::String(session.metric.clone()));
+        json.as_object_mut().unwrap().insert(
+            "metric".to_owned(),
+            serde_json::Value::String(session.metric.clone()),
+        );
     }
 
     cors_response(
@@ -1379,12 +1377,7 @@ mod tests {
 
     /// Read the full response body as a String.
     async fn read_body(response: Response) -> String {
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
@@ -1532,7 +1525,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = read_body(response).await;
         assert_ne!(body, "-1/-1", "session should be active");
-        assert!(body.contains('/'), "usage should be formatted as elapsed/allotment");
+        assert!(
+            body.contains('/'),
+            "usage should be formatted as elapsed/allotment"
+        );
         assert!(!body.starts_with('-'), "usage value should be non-negative");
     }
 

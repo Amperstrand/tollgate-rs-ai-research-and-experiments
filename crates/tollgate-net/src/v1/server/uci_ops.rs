@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn test_builder_default() {
         let ops = UciOpBuilder::default().build();
-        assert!(ops.is_empty());
+        assert_eq!(ops, [] as [UciOp; 0]);
     }
 
     #[test]

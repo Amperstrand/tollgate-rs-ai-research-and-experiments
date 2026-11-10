@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 
 use super::merchant;
 use super::mint_quote_wallet::QuoteState;
-use super::{ServerState, merchant_provider};
+use super::{merchant_provider, ServerState};
 
 #[derive(Debug, thiserror::Error)]
 pub enum QuoteStoreError {
@@ -274,9 +274,13 @@ pub fn spawn_quote_monitor(quote_id: String, state: Arc<ServerState>) -> JoinHan
                 };
 
             let mac = record.mac_address.clone();
-            if let Err(e) =
-                merchant_provider::add_allotment(&*state.sessions, &mac, &state.config.metric, allotment)
-                    .await
+            if let Err(e) = merchant_provider::add_allotment(
+                &*state.sessions,
+                &mac,
+                &state.config.metric,
+                allotment,
+            )
+            .await
             {
                 tracing::error!(%quote_id, mac, error = %e, "quote monitor: renewal failed");
             }

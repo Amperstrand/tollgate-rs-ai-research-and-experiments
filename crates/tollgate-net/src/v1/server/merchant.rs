@@ -108,8 +108,7 @@ pub fn build_session_event(
         ),
     ];
 
-    if amount_sat > 0 {
-        let effective_rate = session.allotment / 1000 / amount_sat;
+    if let Some(effective_rate) = (session.allotment / 1000).checked_div(amount_sat) {
         tags.push(Tag::custom(
             TagKind::Custom("effective_rate".into()),
             [effective_rate.to_string()],

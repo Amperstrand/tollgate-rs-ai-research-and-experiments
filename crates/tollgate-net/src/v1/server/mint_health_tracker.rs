@@ -420,7 +420,7 @@ mod tests {
         let url = unreachable_url();
         let tracker = MintHealthTracker::new(vec![url]);
         let reachable = tracker.run_initial_probe_async().await;
-        assert!(reachable.is_empty());
+        assert_eq!(reachable, [] as [String; 0]);
         assert_eq!(tracker.get_reachable_count(), 0);
     }
 

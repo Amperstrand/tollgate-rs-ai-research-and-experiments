@@ -375,7 +375,7 @@ mod tests {
     #[tokio::test]
     async fn crowsnest_config_default_values() {
         let config = CrowsnestConfig::default();
-        assert!(config.gateway_ips.is_empty());
+        assert_eq!(config.gateway_ips, [] as [String; 0]);
         assert_eq!(config.scan_interval, DEFAULT_SCAN_INTERVAL);
         assert_eq!(config.probe_timeout, DEFAULT_PROBE_TIMEOUT);
         assert!(config.verify_signature);
