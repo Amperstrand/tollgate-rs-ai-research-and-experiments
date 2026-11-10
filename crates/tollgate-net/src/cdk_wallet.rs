@@ -28,6 +28,11 @@ use crate::v1::server::mint_quote_wallet::{
 /// Uses an in-memory SQLite localstore for proof management.
 pub struct CdkWallet {
     wallet: cdk::Wallet,
+    /// Serializes balance-increasing operations (receive, mint) so the
+    /// wallet-balance delta measured inside a receive's recovery window
+    /// can only be attributed to that receive — a concurrent mint or
+    /// receive cannot land funds into the window (P1, audit 2026-11-08).
+    balance_gate: tokio::sync::Mutex<()>,
 }
 
 impl CdkWallet {
@@ -48,7 +53,10 @@ impl CdkWallet {
         );
         let wallet = cdk::Wallet::new(mint_url, CurrencyUnit::Sat, localstore, seed, None)
             .map_err(|e| WalletError::Internal(format!("wallet init: {e}")))?;
-        Ok(Self { wallet })
+        Ok(Self {
+            wallet,
+            balance_gate: tokio::sync::Mutex::new(()),
+        })
     }
 
     /// Try each mint URL in order, returning the first that initializes successfully.
@@ -287,6 +295,7 @@ impl Wallet for CdkWallet {
         // Our protocol transmits it as raw bytes (UTF-8 string).
         let token_str = String::from_utf8_lossy(token).to_string();
         Box::pin(async move {
+            let _balance_gate = self.balance_gate.lock().await;
             tracing::info!(
                 "[NUT-00] Receiving Cashu token ({} bytes, first 20 chars: {:?})",
                 token_str.len(),
@@ -465,6 +474,7 @@ impl MintQuoteWallet for CdkWallet {
     }
 
     async fn mint_tokens(&self, quote_id: &str) -> Result<MintResult, MintQuoteError> {
+        let _balance_gate = self.balance_gate.lock().await;
         let proofs = self
             .wallet
             .mint(quote_id, cdk::amount::SplitTarget::default(), None)
@@ -473,5 +483,59 @@ impl MintQuoteWallet for CdkWallet {
 
         let total: u64 = proofs.iter().map(|p| u64::from(p.amount)).sum();
         Ok(MintResult { amount: total })
+    }
+}
+
+#[cfg(test)]
+mod balance_gate_tests {
+    use super::*;
+
+    const DEAD_MINT: &str = "http://127.0.0.1:1";
+
+    #[tokio::test]
+    async fn invalid_token_against_dead_mint_is_rejected() {
+        let wallet = CdkWallet::new(DEAD_MINT, [7u8; 64]).await.unwrap();
+        let err = wallet.receive_token(b"not-a-cashu-token").await.unwrap_err();
+        assert!(
+            matches!(err, WalletError::TokenRejected(_)),
+            "garbage token must never be accepted: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_holds_the_balance_gate() {
+        let wallet =
+            std::sync::Arc::new(CdkWallet::new(DEAD_MINT, [9u8; 64]).await.unwrap());
+        let task = tokio::spawn({
+            let wallet = wallet.clone();
+            async move {
+                let _ = wallet.receive_token(b"garbage").await;
+            }
+        });
+
+        // The gate must be held for the whole receive (recovery window);
+        // if it is never acquired, delta attribution is unguarded.
+        for _ in 0..100 {
+            if wallet.balance_gate.try_lock().is_err() {
+                task.abort();
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        task.abort();
+        panic!("receive_token never held the balance gate — recovery attribution is unguarded");
+    }
+
+    #[tokio::test]
+    async fn balance_gate_admits_sequential_operations() {
+        let wallet = CdkWallet::new(DEAD_MINT, [3u8; 64]).await.unwrap();
+        {
+            let guard = wallet.balance_gate.try_lock().expect("gate must be free");
+            drop(guard);
+        }
+        {
+            let guard = wallet.balance_gate.try_lock().expect("gate must be re-lockable");
+            drop(guard);
+        }
     }
 }
