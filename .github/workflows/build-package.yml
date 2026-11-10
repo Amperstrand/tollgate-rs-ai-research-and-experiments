@@ -28,6 +28,7 @@ jobs:
           set -euo pipefail
           sh packaging/tests/test-build-ipk.sh
           sh packaging/tests/test-ci-staging-parity.sh
+          sh packaging/tests/test-vendored-portal.sh
 
   # Unique Rust target triples. Each row produces one binary artifact that
   # may be consumed by multiple package-matrix cells (e.g. aarch64_cortex-a53
@@ -218,30 +219,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y upx-ucl
 
-      - name: Fetch pre-built captive portal site
+      - name: Stage vendored captive portal site
         run: |
           set -euo pipefail
-          # Download the pre-built portal site from Go v1 repo (React SPA built by Vite).
-          # This avoids vendoring ~20 static files or adding an npm build step.
-          PORTAL_DIR=$(mktemp -d)
-          curl -sL "https://api.github.com/repos/OpenTollGate/tollgate-module-basic-go/git/trees/main?recursive=1" \
-            | python3 -c "
-          import json, sys, urllib.request
-          data = json.load(sys.stdin)
-          for item in data.get('tree', []):
-              p = item['path']
-              if p.startswith('packaging/files/tollgate-captive-portal-site/') and item['type'] == 'blob':
-                  rel = p.removeprefix('packaging/files/tollgate-captive-portal-site/')
-                  print(rel)
-          " | while read -r rel; do
-              url="https://raw.githubusercontent.com/OpenTollGate/tollgate-module-basic-go/main/packaging/files/tollgate-captive-portal-site/$rel"
-              dest="$PORTAL_DIR/$rel"
-              mkdir -p "$(dirname "$dest")"
-              curl -sL "$url" -o "$dest"
-          done
-          echo "PORTAL_DIR=$PORTAL_DIR" >> $GITHUB_ENV
-          echo "Downloaded portal site:"
+          # Portal assets are vendored in-repo (React SPA built by Vite,
+          # snapshot of OpenTollGate/tollgate-module-basic-go @ b4f1551).
+          # Packaging must not contact upstream repos (read-only-upstream
+          # rule) and must build offline; refresh the vendored copy
+          # deliberately in its own commit.
+          PORTAL_DIR="$GITHUB_WORKSPACE/packaging/files/tollgate-captive-portal-site"
+          test -f "$PORTAL_DIR/manifest.json"
+          test -f "$PORTAL_DIR/splash.html"
+          echo "Vendored portal site:"
           find "$PORTAL_DIR" -type f | head -20
+          echo "PORTAL_DIR=$PORTAL_DIR" >> $GITHUB_ENV
 
       - name: Build .ipk
         run: |
