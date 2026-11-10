@@ -318,16 +318,15 @@ async fn main() {
                     #[cfg(feature = "nds")]
                     {
                         let ndsctl = ndsctl_path.as_deref().unwrap_or("ndsctl");
-                        let path = std::path::PathBuf::from(ndsctl);
-                        if !path.exists() {
-                            tracing::error!(ndsctl_path = %path.display(), "ndsctl binary not found");
+                        let path = resolve_ndsctl(ndsctl).unwrap_or_else(|| {
+                            tracing::error!(ndsctl = %ndsctl, "ndsctl binary not found on PATH or at the given path");
                             eprintln!(
-                                "ERROR: ndsctl not found at '{}'. \
+                                "ERROR: ndsctl '{}' not found. \
                                  Install nodogsplash or specify --ndsctl-path.",
-                                path.display()
+                                ndsctl
                             );
                             std::process::exit(1);
-                        }
+                        });
                         tracing::info!(ndsctl_path = %path.display(), "Using NDS valve");
                         Arc::new(v1::server::NdsValve::with_ndsctl_path(path))
                     }
@@ -535,6 +534,23 @@ fn apply_cli_overrides(
     }
 }
 
+/// Resolve the ndsctl binary spec the way an operator expects: a bare
+/// name is looked up in PATH (never the process CWD), an explicit path is
+/// used as given. Returns None when nothing executable-shaped is found.
+#[cfg(any(feature = "nds", test))]
+fn resolve_ndsctl(spec: &str) -> Option<std::path::PathBuf> {
+    fn first_matching(dirs: impl Iterator<Item = std::path::PathBuf>, name: &str) -> Option<std::path::PathBuf> {
+        dirs.map(|d| d.join(name)).find(|p| p.is_file())
+    }
+
+    if spec.contains('/') {
+        let p = std::path::PathBuf::from(spec);
+        return p.is_file().then_some(p);
+    }
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    first_matching(path_var.split(':').map(std::path::PathBuf::from), spec)
+}
+
 #[cfg(test)]
 mod cli_override_tests {
     use super::apply_cli_overrides;
@@ -574,5 +590,76 @@ mod cli_override_tests {
         apply_cli_overrides(&mut sc, None, Some(30_000));
         assert_eq!(sc.metric, "bytes");
         assert_eq!(sc.step_size, 30_000);
+    }
+}
+
+#[cfg(test)]
+mod ndsctl_resolution_tests {
+    use super::resolve_ndsctl;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn fixture_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tg-ndsctl-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create fixture dir");
+        dir
+    }
+
+    fn make_executable(dir: &std::path::Path, name: &str) {
+        let f = dir.join(name);
+        std::fs::write(&f, b"#!/bin/sh\n").expect("write fixture bin");
+        let mut perms = std::fs::metadata(&f).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&f, perms).expect("chmod");
+    }
+
+    #[test]
+    fn bare_name_resolves_through_path_entries() {
+        let a = fixture_dir("a");
+        let b = fixture_dir("b");
+        make_executable(&b, "ndsctl");
+        let path_var = format!("{}:{}", a.display(), b.display());
+
+        // PATH is read from the environment; scope the mutation to this test.
+        // (Test binary runs tests in parallel threads — serialize via a mutex.)
+        static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("PATH", &path_var);
+        let resolved = resolve_ndsctl("ndsctl");
+        std::env::remove_var("PATH");
+
+        assert_eq!(
+            resolved.expect("ndsctl must resolve from PATH"),
+            b.join("ndsctl"),
+            "must resolve from the PATH entry that contains it, in order"
+        );
+        let _ = std::fs::remove_dir_all(a);
+        let _ = std::fs::remove_dir_all(b);
+    }
+
+    #[test]
+    fn bare_name_does_not_resolve_from_cwd() {
+        static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // An empty PATH with an ndsctl in the CWD must NOT resolve: the old
+        // relative PathBuf::exists() check silently depended on the CWD.
+        std::env::set_var("PATH", "");
+        let resolved = resolve_ndsctl("ndsctl");
+        std::env::remove_var("PATH");
+        assert!(resolved.is_none(), "bare names must not resolve via CWD");
+    }
+
+    #[test]
+    fn explicit_path_is_used_as_given() {
+        let d = fixture_dir("explicit");
+        make_executable(&d, "ndsctl-custom");
+        let f = d.join("ndsctl-custom");
+        assert_eq!(resolve_ndsctl(f.to_str().unwrap()), Some(f.clone()));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn missing_explicit_path_is_none() {
+        assert_eq!(resolve_ndsctl("/nonexistent/ndsctl"), None);
     }
 }
