@@ -457,7 +457,24 @@ async fn handle_post_bootstrap(
     }
 
     let mac = normalize_mac(&req.mac);
-    let metric = req.metric.unwrap_or_else(|| state.config.metric.clone());
+
+    // The server meters and prices in ONE configured metric; a caller-
+    // selected metric would buy allotment at the configured step size but
+    // be metered in the requested units (21 MiB of 'milliseconds' at byte
+    // pricing ≈ hours of access). Reject the mismatch before redeeming.
+    let metric = match req.metric {
+        Some(ref m) if *m != state.config.metric => {
+            return error_json(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "unsupported metric '{m}': this TollGate meters in '{}'",
+                    state.config.metric
+                ),
+                Some(&mac),
+            );
+        }
+        _ => state.config.metric.clone(),
+    };
 
     // Redeem token
     let wallet = state.merchant.get();
@@ -863,4 +880,78 @@ mod tests {
         })
         .await;
     }
+    #[tokio::test]
+    async fn test_bootstrap_rejects_mismatched_metric() {
+        with_api_key("session-api-test-key", || async {
+            let state = test_server_state();
+            let app = test_app(state.clone());
+
+            let body = serde_json::json!({
+                "access_method": "ssh",
+                "token": mock_token_string(8),
+                "mac": "aa:bb:cc:dd:ee:ff",
+                "metric": "bytes",
+            });
+
+            let req = Request::builder()
+                .method("POST")
+                .uri("/sessions/bootstrap")
+                .header("content-type", "application/json")
+                .header("x-api-key", "session-api-test-key")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap();
+
+            let response = app.oneshot(req).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "mismatched metric must be rejected"
+            );
+            let body = read_body(response).await;
+            assert!(
+                body.contains("unsupported metric"),
+                "error must name the metric problem: {body}"
+            );
+
+            let session = state.sessions.get("aa:bb:cc:dd:ee:ff").await.unwrap();
+            assert!(
+                session.is_none(),
+                "no session may be created from a rejected bootstrap"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_matching_metric_still_accepted() {
+        with_api_key("session-api-test-key", || async {
+            let state = test_server_state();
+            let app = test_app(state.clone());
+
+            let body = serde_json::json!({
+                "access_method": "ssh",
+                "token": mock_token_string(8),
+                "mac": "aa:bb:cc:dd:ee:ff",
+                "metric": "milliseconds",
+            });
+
+            let req = Request::builder()
+                .method("POST")
+                .uri("/sessions/bootstrap")
+                .header("content-type", "application/json")
+                .header("x-api-key", "session-api-test-key")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap();
+
+            let response = app.oneshot(req).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "the configured metric itself must stay accepted"
+            );
+        })
+        .await;
+    }
+
 }
+
