@@ -83,12 +83,13 @@ pub fn spawn_usage_tracker<W: Wallet + 'static>(
     gateway_ip: String,
     cancel: CancellationToken,
 ) -> UsageTrackerHandle {
+    let handle_cancel = cancel.clone();
     let join_handle = tokio::spawn(async move {
         run_tracker(http_client, config, renewal_callback, gateway_ip, cancel).await;
     });
 
     UsageTrackerHandle {
-        cancel: CancellationToken::new(),
+        cancel: handle_cancel,
         join_handle,
     }
 }
@@ -237,6 +238,45 @@ mod tests {
             axum::serve(listener, app).await.expect("mock server error");
         });
         (base_url, handle)
+    }
+
+    #[tokio::test]
+    async fn handle_cancel_stops_the_tracker_task() {
+        // The handle's cancel token must be the spawned task's token;
+        // cancelling through the handle is the documented shutdown path.
+        let state = Arc::new(Mutex::new(TrackerServerState {
+            usage: 0,
+            allotment: 60_000,
+            request_count: 0,
+        }));
+        let (base_url, server) = start_tracker_server(state).await;
+
+        let http_client = TollGateHttpClient::new_with_base_url(&base_url);
+        let wallet = Arc::new(MockWallet::new(1000));
+        let (tx, _rx) = tokio::sync::mpsc::channel::<RenewalRequest>(10);
+        let config = UsageTrackerConfig {
+            poll_interval: Duration::from_millis(50),
+            renewal_threshold: 0.8,
+        };
+
+        let handle = spawn_usage_tracker(
+            http_client,
+            config,
+            wallet,
+            tx,
+            "10.0.0.1".into(),
+            CancellationToken::new(),
+        );
+
+        handle.cancel.cancel();
+
+        tokio::time::timeout(Duration::from_secs(2), handle.join_handle)
+            .await
+            .expect("tracker task must finish after handle.cancel()")
+            .expect("tracker task must join cleanly");
+
+        server.abort();
+        let _ = server.await;
     }
 
     #[tokio::test]
