@@ -65,12 +65,12 @@ enum Commands {
         /// Port to listen on (default: 2121)
         #[arg(long, default_value = "2121")]
         port: u16,
-        /// Metric type: "milliseconds" or "bytes"
-        #[arg(long, default_value = "milliseconds")]
-        metric: String,
-        /// Step size (e.g. 60000 for 1 minute when metric is milliseconds)
-        #[arg(long, default_value = "60000")]
-        step_size: u64,
+        /// Metric type: "milliseconds" or "bytes" (default: config file value, else "milliseconds")
+        #[arg(long)]
+        metric: Option<String>,
+        /// Step size, e.g. 60000 for 1 minute when metric is milliseconds (default: config file value, else 60000)
+        #[arg(long)]
+        step_size: Option<u64>,
         /// Mint URL to accept
         #[arg(long, default_value = "https://testnut.cashu.exchange")]
         mint_url: String,
@@ -282,21 +282,20 @@ async fn main() {
                 None => nostr::prelude::Keys::generate(),
             };
             let server_config = if let Some(path) = config_path {
-                // Load from config file, then apply CLI overrides for
-                // port/metric/step_size (UCI may provide different values
-                // than what's in the config file).
+                // Load from config file, then apply explicitly-passed CLI
+                // overrides for metric/step_size (UCI may provide different
+                // values than what's in the config file).
                 let mut sc =
                     v1::server::ServerConfig::load_from_file(&path).unwrap_or_else(|e| {
                         eprintln!("Failed to load config from {path}: {e}");
                         std::process::exit(1);
                     });
-                sc.metric = metric.clone();
-                sc.step_size = step_size;
+                apply_cli_overrides(&mut sc, metric, step_size);
                 sc
             } else {
                 let mut sc = v1::server::ServerConfig {
-                    metric,
-                    step_size,
+                    metric: metric.unwrap_or_else(|| "milliseconds".to_owned()),
+                    step_size: step_size.unwrap_or(60_000),
                     ..v1::server::ServerConfig::default()
                 };
                 sc.accepted_mints = vec![v1::server::config::MintConfig {
@@ -515,5 +514,65 @@ async fn main() {
             crowsnest_handle.abort();
             sm_cancel.abort();
         }
+    }
+}
+
+/// Apply explicitly-passed CLI overrides on top of a loaded config file.
+///
+/// Flags the operator did not pass must leave the file values intact —
+/// injecting CLI defaults here would silently rewrite the file's
+/// metric/step_size on every start.
+fn apply_cli_overrides(
+    sc: &mut v1::server::ServerConfig,
+    metric: Option<String>,
+    step_size: Option<u64>,
+) {
+    if let Some(metric) = metric {
+        sc.metric = metric;
+    }
+    if let Some(step_size) = step_size {
+        sc.step_size = step_size;
+    }
+}
+
+#[cfg(test)]
+mod cli_override_tests {
+    use super::apply_cli_overrides;
+    use tollgate_net::v1::server::ServerConfig;
+
+    #[test]
+    fn unpassed_flags_keep_config_file_values() {
+        let mut sc = ServerConfig {
+            metric: "bytes".to_owned(),
+            step_size: 1_000_000,
+            ..ServerConfig::default()
+        };
+        apply_cli_overrides(&mut sc, None, None);
+        assert_eq!(sc.metric, "bytes");
+        assert_eq!(sc.step_size, 1_000_000);
+    }
+
+    #[test]
+    fn explicit_flags_override_config_file_values() {
+        let mut sc = ServerConfig {
+            metric: "bytes".to_owned(),
+            step_size: 1_000_000,
+            ..ServerConfig::default()
+        };
+        apply_cli_overrides(&mut sc, Some("milliseconds".to_owned()), Some(60_000));
+        assert_eq!(sc.metric, "milliseconds");
+        assert_eq!(sc.step_size, 60_000);
+    }
+
+    #[test]
+    fn one_explicit_flag_leaves_the_other_file_value_intact() {
+        let mut sc = ServerConfig {
+            metric: "bytes".to_owned(),
+            step_size: 1_000_000,
+            ..ServerConfig::default()
+        };
+        apply_cli_overrides(&mut sc, None, Some(30_000));
+        assert_eq!(sc.metric, "bytes");
+        assert_eq!(sc.step_size, 30_000);
     }
 }
