@@ -830,7 +830,10 @@ mod nds {
             let mac = "aa:bb:cc:dd:ee:ff";
 
             valve.open_gate_inner(mac).await.unwrap();
-            let usage = valve.get_client_usage_since_baseline_inner(mac).await.unwrap();
+            let usage = valve
+                .get_client_usage_since_baseline_inner(mac)
+                .await
+                .unwrap();
             assert_eq!(usage, 1024 * 1024, "one consumption step since baseline");
 
             // Top-up of an ongoing session: the gate re-opens but the meter
@@ -862,7 +865,10 @@ mod nds {
 
             // New session after close: meter starts fresh.
             valve.open_gate_inner(mac).await.unwrap();
-            let usage = valve.get_client_usage_since_baseline_inner(mac).await.unwrap();
+            let usage = valve
+                .get_client_usage_since_baseline_inner(mac)
+                .await
+                .unwrap();
             assert_eq!(usage, 1024 * 1024, "fresh session restarts the meter");
         }
 

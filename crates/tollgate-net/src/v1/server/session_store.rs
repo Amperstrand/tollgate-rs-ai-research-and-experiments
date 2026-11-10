@@ -121,23 +121,20 @@ impl SessionStore for InMemorySessionStore {
         now: i64,
     ) -> Result<CustomerSession, SessionStoreError> {
         let mut map = self.map.lock().await;
-        match map.get_mut(mac) {
-            Some(session) => {
-                super::merchant_provider::apply_renewal(session, amount, now);
-                Ok(session.clone())
-            }
-            None => {
-                let session = CustomerSession {
-                    mac_address: mac.to_owned(),
-                    start_time: now,
-                    metric: metric.to_owned(),
-                    allotment: amount,
-                    last_external_usage: None,
-                };
-                map.insert(mac.to_owned(), session.clone());
-                Ok(session)
-            }
+        if let Some(session) = map.get_mut(mac) {
+            super::merchant_provider::apply_renewal(session, amount, now);
+            return Ok(session.clone());
         }
+
+        let session = CustomerSession {
+            mac_address: mac.to_owned(),
+            start_time: now,
+            metric: metric.to_owned(),
+            allotment: amount,
+            last_external_usage: None,
+        };
+        map.insert(mac.to_owned(), session.clone());
+        Ok(session)
     }
 
     async fn record_external_usage(
@@ -266,9 +263,18 @@ impl SessionStore for SqliteSessionStore {
                 session.start_time,
                 session.metric,
                 session.allotment,
-                session.last_external_usage.as_ref().map(|u| u.input_octets as i64),
-                session.last_external_usage.as_ref().map(|u| u.output_octets as i64),
-                session.last_external_usage.as_ref().map(|u| u.session_time as i64),
+                session
+                    .last_external_usage
+                    .as_ref()
+                    .map(|u| u.input_octets as i64),
+                session
+                    .last_external_usage
+                    .as_ref()
+                    .map(|u| u.output_octets as i64),
+                session
+                    .last_external_usage
+                    .as_ref()
+                    .map(|u| u.session_time as i64),
                 session.last_external_usage.as_ref().map(|u| u.reported_at),
             ],
         )?;
@@ -298,9 +304,18 @@ impl SessionStore for SqliteSessionStore {
                 session.metric,
                 session.allotment,
                 mac,
-                session.last_external_usage.as_ref().map(|u| u.input_octets as i64),
-                session.last_external_usage.as_ref().map(|u| u.output_octets as i64),
-                session.last_external_usage.as_ref().map(|u| u.session_time as i64),
+                session
+                    .last_external_usage
+                    .as_ref()
+                    .map(|u| u.input_octets as i64),
+                session
+                    .last_external_usage
+                    .as_ref()
+                    .map(|u| u.output_octets as i64),
+                session
+                    .last_external_usage
+                    .as_ref()
+                    .map(|u| u.session_time as i64),
                 session.last_external_usage.as_ref().map(|u| u.reported_at),
             ],
         )?;
@@ -352,32 +367,29 @@ impl SessionStore for SqliteSessionStore {
             )
             .ok();
 
-        let session = match existing {
-            Some(mut s) => {
-                super::merchant_provider::apply_renewal(&mut s, amount, now);
-                // Renewal touches only start_time/allotment — the snapshot
-                // columns must survive this write.
-                conn.execute(
-                    "UPDATE sessions SET start_time = ?1, allotment = ?2 WHERE mac_address = ?3",
-                    rusqlite::params![s.start_time, s.allotment, mac],
-                )?;
-                s
-            }
-            None => {
-                let s = CustomerSession {
-                    mac_address: mac.to_owned(),
-                    start_time: now,
-                    metric: metric.to_owned(),
-                    allotment: amount,
-                    last_external_usage: None,
-                };
-                conn.execute(
-                    "INSERT INTO sessions (mac_address, start_time, metric, allotment) \
-                     VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![mac, s.start_time, s.metric, s.allotment],
-                )?;
-                s
-            }
+        let session = if let Some(mut s) = existing {
+            super::merchant_provider::apply_renewal(&mut s, amount, now);
+            // Renewal touches only start_time/allotment — the snapshot
+            // columns must survive this write.
+            conn.execute(
+                "UPDATE sessions SET start_time = ?1, allotment = ?2 WHERE mac_address = ?3",
+                rusqlite::params![s.start_time, s.allotment, mac],
+            )?;
+            s
+        } else {
+            let s = CustomerSession {
+                mac_address: mac.to_owned(),
+                start_time: now,
+                metric: metric.to_owned(),
+                allotment: amount,
+                last_external_usage: None,
+            };
+            conn.execute(
+                "INSERT INTO sessions (mac_address, start_time, metric, allotment) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![mac, s.start_time, s.metric, s.allotment],
+            )?;
+            s
         };
         Ok(session)
     }
@@ -419,7 +431,12 @@ impl SessionStore for SqliteSessionStore {
 mod tests {
     use super::*;
 
-    pub(super) fn make_session(mac: &str, start: i64, metric: &str, allotment: u64) -> CustomerSession {
+    pub(super) fn make_session(
+        mac: &str,
+        start: i64,
+        metric: &str,
+        allotment: u64,
+    ) -> CustomerSession {
         CustomerSession {
             mac_address: mac.to_owned(),
             start_time: start,
@@ -584,7 +601,10 @@ mod external_usage_tests {
         let store = SqliteSessionStore::open(path.to_str().unwrap()).unwrap();
 
         let loaded = store.get("aa:bb:cc:dd:ee:ff").await.unwrap().unwrap();
-        assert_eq!(loaded.allotment, 60_000, "legacy row must survive migration");
+        assert_eq!(
+            loaded.allotment, 60_000,
+            "legacy row must survive migration"
+        );
         assert_eq!(
             loaded.last_external_usage, None,
             "legacy row has no snapshot until one is reported"
@@ -666,9 +686,14 @@ mod atomicity_tests {
             }));
         }
         let results = futures::future::join_all(joins).await;
-        let final_allotment = results.into_iter().map(|r| r.unwrap().allotment).max().unwrap();
+        let final_allotment = results
+            .into_iter()
+            .map(|r| r.unwrap().allotment)
+            .max()
+            .unwrap();
         assert_eq!(
-            final_allotment, 8 * 1_000,
+            final_allotment,
+            8 * 1_000,
             "every overlapping payment through add_allotment must land"
         );
     }

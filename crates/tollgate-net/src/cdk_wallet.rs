@@ -630,7 +630,9 @@ mod mint_binding_tests {
                 );
             }
             Ok(Ok(_)) => {}
-            Err(_) => panic!("bound-mint quote must not hang on the guard"),
+            Err(elapsed) => {
+                panic!("bound-mint quote must not hang on the guard (elapsed: {elapsed:?})")
+            }
         }
     }
 }

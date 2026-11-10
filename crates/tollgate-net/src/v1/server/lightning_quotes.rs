@@ -596,12 +596,7 @@ mod tests {
             let store = store.clone();
             let winners = winners.clone();
             joins.push(tokio::spawn(async move {
-                if store
-                    .claim_for_processing("q1")
-                    .await
-                    .unwrap()
-                    .is_some()
-                {
+                if store.claim_for_processing("q1").await.unwrap().is_some() {
                     winners.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
             }));

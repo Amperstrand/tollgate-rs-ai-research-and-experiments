@@ -397,9 +397,7 @@ impl Wallet for RejectReceiveWallet {
         self.inner.mint_reachable(mint)
     }
 
-    fn balance(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
+    fn balance(&self) -> Pin<Box<dyn Future<Output = Result<Amount, WalletError>> + Send + '_>> {
         self.inner.balance()
     }
 }

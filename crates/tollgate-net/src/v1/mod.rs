@@ -142,36 +142,7 @@ impl<W: Wallet> V1Client<W> {
                 allotment,
                 "Existing session found, re-attaching without new payment"
             );
-            // We have a session but no ad — fetch it for metadata
-            let ad = self.http.fetch_advertisement().await?;
-            let metric = ad.metric().unwrap_or_else(|| "milliseconds".into());
-            let step_size = ad.step_size().unwrap_or(60_000);
-            let options = ad.pricing_options();
-            let pricing = pricing::select_cheapest_compatible(
-                &options,
-                &self.config.our_mint_urls,
-                &self.config.unit,
-            )?;
-
-            // Reattached sessions renew at the advertised price: the same
-            // budget cap as a fresh connection applies, or a restart with a
-            // stricter cap would keep auto-paying above it.
-            pricing::validate_budget(
-                pricing,
-                step_size,
-                &metric,
-                self.config.max_price_per_ms,
-                self.config.max_price_per_byte,
-            )?;
-
-            self.session = Some(V1Session {
-                advertisement: ad,
-                selected_pricing: pricing.clone(),
-                session_event: None,
-                total_allotment: allotment.max(0) as u64,
-                metric,
-                step_size,
-            });
+            self.session = Some(self.reattach_session(allotment).await?);
             tracing::info!("Re-attached to existing session");
             return Ok(());
         }
@@ -357,6 +328,41 @@ impl<W: Wallet> V1Client<W> {
                 Err(e.into())
             }
         }
+    }
+
+    /// Adopt an existing upstream session: fetch the ad for metadata,
+    /// select pricing, and budget-check it. Reattached sessions renew at
+    /// the advertised price — the same budget cap as a fresh connection
+    /// applies, or a restart with a stricter cap would keep auto-paying
+    /// above it.
+    async fn reattach_session(&self, allotment: i64) -> Result<V1Session, V1ClientError> {
+        // We have a session but no ad — fetch it for metadata
+        let ad = self.http.fetch_advertisement().await?;
+        let metric = ad.metric().unwrap_or_else(|| "milliseconds".into());
+        let step_size = ad.step_size().unwrap_or(60_000);
+        let options = ad.pricing_options();
+        let pricing = pricing::select_cheapest_compatible(
+            &options,
+            &self.config.our_mint_urls,
+            &self.config.unit,
+        )?;
+
+        pricing::validate_budget(
+            pricing,
+            step_size,
+            &metric,
+            self.config.max_price_per_ms,
+            self.config.max_price_per_byte,
+        )?;
+
+        Ok(V1Session {
+            advertisement: ad,
+            selected_pricing: pricing.clone(),
+            session_event: None,
+            total_allotment: allotment.max(0) as u64,
+            metric,
+            step_size,
+        })
     }
 
     /// Poll usage and return (usage, allotment, needs_renewal).

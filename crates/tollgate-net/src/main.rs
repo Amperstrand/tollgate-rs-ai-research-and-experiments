@@ -622,9 +622,7 @@ async fn main() {
                 preferred_allotment,
                 poll_interval_secs: poll_interval,
                 renewal_threshold,
-                recovery_file: std::path::PathBuf::from(
-                    v1::recovery::DEFAULT_RECOVERY_FILE,
-                ),
+                recovery_file: std::path::PathBuf::from(v1::recovery::DEFAULT_RECOVERY_FILE),
             };
 
             let mut client = v1::V1Client::<cdk_wallet::CdkWallet>::new(config);
@@ -677,9 +675,7 @@ async fn main() {
                 preferred_allotment,
                 poll_interval_secs: poll_interval,
                 renewal_threshold,
-                recovery_file: std::path::PathBuf::from(
-                    v1::recovery::DEFAULT_RECOVERY_FILE,
-                ),
+                recovery_file: std::path::PathBuf::from(v1::recovery::DEFAULT_RECOVERY_FILE),
             };
 
             let sm_config = v1::session_manager::SessionManagerConfig {
