@@ -40,6 +40,31 @@ pub trait LightningQuoteStore: Send + Sync {
         quote_id: &str,
         record: LightningQuoteRecord,
     ) -> Result<(), QuoteStoreError>;
+    /// Atomically claim a paid-but-unprocessed quote for minting/granting.
+    /// Exactly one concurrent caller gets the record; the others get `None`
+    /// (another writer holds the claim, or the quote is already granted).
+    async fn claim_for_processing(
+        &self,
+        quote_id: &str,
+    ) -> Result<Option<LightningQuoteRecord>, QuoteStoreError>;
+    /// Record the completed grant for a claimed quote.
+    async fn mark_granted(
+        &self,
+        quote_id: &str,
+        allotment: u64,
+        now: i64,
+    ) -> Result<(), QuoteStoreError>;
+    /// Release a failed claim so a later poll can retry it (no-op when the
+    /// quote has since been granted).
+    async fn reset_processing(&self, quote_id: &str) -> Result<(), QuoteStoreError>;
+    /// Refresh only the cached status snapshot — must never touch the
+    /// processing/granted flags.
+    async fn refresh_cached_state(
+        &self,
+        quote_id: &str,
+        quote_state: QuoteState,
+        at: i64,
+    ) -> Result<(), QuoteStoreError>;
     async fn remove(&self, quote_id: &str) -> Result<(), QuoteStoreError>;
     async fn list_stale(
         &self,
@@ -115,6 +140,61 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
     async fn remove(&self, quote_id: &str) -> Result<(), QuoteStoreError> {
         let mut map = self.map.lock().await;
         map.remove(quote_id);
+        Ok(())
+    }
+
+    async fn claim_for_processing(
+        &self,
+        quote_id: &str,
+    ) -> Result<Option<LightningQuoteRecord>, QuoteStoreError> {
+        let mut map = self.map.lock().await;
+        match map.get_mut(quote_id) {
+            Some(record) if !record.session_granted && !record.processing => {
+                record.processing = true;
+                Ok(Some(record.clone()))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn mark_granted(
+        &self,
+        quote_id: &str,
+        allotment: u64,
+        now: i64,
+    ) -> Result<(), QuoteStoreError> {
+        let mut map = self.map.lock().await;
+        if let Some(record) = map.get_mut(quote_id) {
+            record.session_granted = true;
+            record.processing = false;
+            record.completed_at = Some(now);
+            record.allotment = allotment;
+            record.cached_state = Some(QuoteState::Issued);
+        }
+        Ok(())
+    }
+
+    async fn reset_processing(&self, quote_id: &str) -> Result<(), QuoteStoreError> {
+        let mut map = self.map.lock().await;
+        if let Some(record) = map.get_mut(quote_id) {
+            if !record.session_granted {
+                record.processing = false;
+            }
+        }
+        Ok(())
+    }
+
+    async fn refresh_cached_state(
+        &self,
+        quote_id: &str,
+        quote_state: QuoteState,
+        at: i64,
+    ) -> Result<(), QuoteStoreError> {
+        let mut map = self.map.lock().await;
+        if let Some(record) = map.get_mut(quote_id) {
+            record.cached_state = Some(quote_state);
+            record.cached_state_at = Some(at);
+        }
         Ok(())
     }
 
@@ -238,50 +318,57 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
                 }
             };
 
-            record.cached_state = Some(quote_state);
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64;
-            record.cached_state_at = Some(now);
 
             if quote_state != QuoteState::Paid && quote_state != QuoteState::Issued {
-                let _ = state.lightning_quotes.update(&quote_id, record).await;
+                let _ = state
+                    .lightning_quotes
+                    .refresh_cached_state(&quote_id, quote_state, now)
+                    .await;
                 continue;
             }
 
-            record.processing = true;
-            let _ = state
-                .lightning_quotes
-                .update(&quote_id, record.clone())
-                .await;
+            let claimed = match state.lightning_quotes.claim_for_processing(&quote_id).await {
+                Ok(Some(record)) => record,
+                Ok(None) => {
+                    // A concurrent GET poll owns the grant, or it is done.
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!("quote monitor: claim failed for {quote_id}: {e}");
+                    continue;
+                }
+            };
 
             if quote_state == QuoteState::Paid {
                 if let Err(e) = wallet.mint_tokens(&quote_id).await {
                     tracing::error!("quote monitor: mint_tokens failed for {quote_id}: {e}");
-                    record.processing = false;
-                    let _ = state.lightning_quotes.update(&quote_id, record).await;
+                    let _ = state.lightning_quotes.reset_processing(&quote_id).await;
                     continue;
                 }
             }
 
             let allotment =
-                match merchant::calculate_allotment(record.amount, &record.mint_url, &state.config)
-                {
+                match merchant::calculate_allotment(
+                    claimed.amount,
+                    &claimed.mint_url,
+                    &state.config,
+                ) {
                     Ok(a) => a,
                     Err(e) => {
                         tracing::error!("quote monitor: allotment calc failed for {quote_id}: {e}");
-                        record.processing = false;
-                        let _ = state.lightning_quotes.update(&quote_id, record).await;
+                        let _ = state.lightning_quotes.reset_processing(&quote_id).await;
                         continue;
                     }
                 };
 
-            let mac = record.mac_address.clone();
+            let mac = claimed.mac_address.clone();
             let existing = state.sessions.get(&mac).await.ok().flatten();
             if let Some(mut s) = existing {
-                s.allotment += allotment;
-                s.start_time = now;
+                super::handlers::apply_renewal(&mut s, allotment, now);
                 let _ = state.sessions.update(&mac, s).await;
             } else {
                 let s = CustomerSession {
@@ -297,11 +384,10 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
                 tracing::warn!("quote monitor: valve open failed for {mac}: {e}");
             }
 
-            record.session_granted = true;
-            record.completed_at = Some(now);
-            record.allotment = allotment;
-            record.cached_state = Some(QuoteState::Issued);
-            let _ = state.lightning_quotes.update(&quote_id, record).await;
+            let _ = state
+                .lightning_quotes
+                .mark_granted(&quote_id, allotment, now)
+                .await;
 
             tracing::info!(
                 "quote monitor: granted access for {quote_id} mac={mac} allotment={allotment}"
@@ -389,6 +475,157 @@ mod tests {
             cached_state,
             cached_state_at: None,
         }
+    }
+
+    #[tokio::test]
+    async fn claim_for_processing_grants_exactly_one_claim() {
+        let store = InMemoryLightningQuoteStore::new();
+        store
+            .insert(make_quote(
+                "q1",
+                "aa:bb:cc:dd:ee:ff",
+                "http://mint.example.com",
+                1000,
+                1000,
+                2000,
+                Some(QuoteState::Paid),
+            ))
+            .await
+            .unwrap();
+
+        let first = store.claim_for_processing("q1").await.unwrap();
+        let second = store.claim_for_processing("q1").await.unwrap();
+
+        assert!(first.is_some(), "first claimant wins the quote");
+        assert!(second.is_none(), "second concurrent claimant is rejected");
+    }
+
+    #[tokio::test]
+    async fn claim_rejected_after_grant() {
+        let store = InMemoryLightningQuoteStore::new();
+        store
+            .insert(make_quote(
+                "q1",
+                "aa:bb:cc:dd:ee:ff",
+                "http://mint.example.com",
+                1000,
+                1000,
+                2000,
+                Some(QuoteState::Issued),
+            ))
+            .await
+            .unwrap();
+
+        store.claim_for_processing("q1").await.unwrap().unwrap();
+        store.mark_granted("q1", 6000, 1234).await.unwrap();
+
+        assert!(
+            store.claim_for_processing("q1").await.unwrap().is_none(),
+            "a granted quote can never be claimed again"
+        );
+
+        let record = store.get("q1").await.unwrap().unwrap();
+        assert!(record.session_granted);
+        assert!(!record.processing);
+        assert_eq!(record.allotment, 6000);
+        assert_eq!(record.completed_at, Some(1234));
+    }
+
+    #[tokio::test]
+    async fn reset_processing_ignored_once_granted() {
+        let store = InMemoryLightningQuoteStore::new();
+        store
+            .insert(make_quote(
+                "q1",
+                "aa:bb:cc:dd:ee:ff",
+                "http://mint.example.com",
+                1000,
+                1000,
+                2000,
+                Some(QuoteState::Paid),
+            ))
+            .await
+            .unwrap();
+
+        store.claim_for_processing("q1").await.unwrap().unwrap();
+        store.mark_granted("q1", 6000, 1234).await.unwrap();
+
+        // A late failure path must not resurrect a completed grant.
+        store.reset_processing("q1").await.unwrap();
+        let record = store.get("q1").await.unwrap().unwrap();
+        assert!(record.session_granted, "grant state must survive reset");
+    }
+
+    #[tokio::test]
+    async fn refresh_cached_state_preserves_flags() {
+        let store = InMemoryLightningQuoteStore::new();
+        store
+            .insert(make_quote(
+                "q1",
+                "aa:bb:cc:dd:ee:ff",
+                "http://mint.example.com",
+                1000,
+                1000,
+                2000,
+                Some(QuoteState::Unpaid),
+            ))
+            .await
+            .unwrap();
+
+        store.claim_for_processing("q1").await.unwrap().unwrap();
+        store.refresh_cached_state("q1", QuoteState::Paid, 1500).await.unwrap();
+
+        let record = store.get("q1").await.unwrap().unwrap();
+        assert_eq!(record.cached_state, Some(QuoteState::Paid));
+        assert_eq!(record.cached_state_at, Some(1500));
+        assert!(
+            record.processing,
+            "a stale status refresh must not clear the processing flag"
+        );
+        assert!(!record.session_granted);
+    }
+
+    #[tokio::test]
+    async fn concurrent_claims_yield_exactly_one_winner() {
+        let store = Arc::new(InMemoryLightningQuoteStore::new());
+        store
+            .insert(make_quote(
+                "q1",
+                "aa:bb:cc:dd:ee:ff",
+                "http://mint.example.com",
+                1000,
+                1000,
+                2000,
+                Some(QuoteState::Paid),
+            ))
+            .await
+            .unwrap();
+
+        let winners = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut joins = Vec::new();
+        for _ in 0..16 {
+            let store = store.clone();
+            let winners = winners.clone();
+            joins.push(tokio::spawn(async move {
+                if store
+                    .claim_for_processing("q1")
+                    .await
+                    .unwrap()
+                    .is_some()
+                {
+                    winners.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }));
+        }
+        for j in joins {
+            j.await.unwrap();
+        }
+
+        assert_eq!(
+            winners.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "exactly one of 16 concurrent claimants may win"
+        );
     }
 
     #[tokio::test]

@@ -665,7 +665,7 @@ async fn handle_get_ln_invoice<W: Wallet>(
                     record.cached_state_at = Some(now);
                     let _ = state
                         .lightning_quotes
-                        .update(&quote_id, record.clone())
+                        .refresh_cached_state(&quote_id, s, now)
                         .await;
                 }
                 Err(e) => {
@@ -677,25 +677,24 @@ async fn handle_get_ln_invoice<W: Wallet>(
 
     let cached_state = record.cached_state.unwrap_or(QuoteState::Unpaid);
 
-    if (cached_state == QuoteState::Paid || cached_state == QuoteState::Issued)
-        && !record.session_granted
-        && !record.processing
-    {
-        record.processing = true;
-        let _ = state
-            .lightning_quotes
-            .update(&quote_id, record.clone())
-            .await;
+    // The claim is atomic in the store: when two polls (or a poll and the
+    // quote monitor) race on the same paid quote, exactly one mints and
+    // grants — the losers fall through to the plain status response and can
+    // no longer overwrite completion flags with a stale record.
+    let claim = if cached_state == QuoteState::Paid || cached_state == QuoteState::Issued {
+        state.lightning_quotes.claim_for_processing(&quote_id).await
+    } else {
+        Ok(None)
+    };
 
-        if cached_state == QuoteState::Paid {
+    if let Ok(Some(claimed)) = claim {
+        let effective_state = claimed.cached_state.unwrap_or(cached_state);
+
+        if effective_state == QuoteState::Paid {
             if let Some(ref wallet) = state.mint_quote_wallet {
                 if let Err(e) = wallet.mint_tokens(&quote_id).await {
                     tracing::error!("Mint tokens failed: {e}");
-                    record.processing = false;
-                    let _ = state
-                        .lightning_quotes
-                        .update(&quote_id, record.clone())
-                        .await;
+                    let _ = state.lightning_quotes.reset_processing(&quote_id).await;
                     return cors_response(ln_error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "mint tokens failed",
@@ -705,15 +704,11 @@ async fn handle_get_ln_invoice<W: Wallet>(
         }
 
         let allotment =
-            match merchant::calculate_allotment(record.amount, &record.mint_url, &state.config) {
+            match merchant::calculate_allotment(claimed.amount, &claimed.mint_url, &state.config) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!("Allotment calculation failed: {e}");
-                    record.processing = false;
-                    let _ = state
-                        .lightning_quotes
-                        .update(&quote_id, record.clone())
-                        .await;
+                    let _ = state.lightning_quotes.reset_processing(&quote_id).await;
                     return cors_response(ln_error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "allotment calculation failed",
@@ -739,14 +734,14 @@ async fn handle_get_ln_invoice<W: Wallet>(
             tracing::warn!("Failed to open valve for {mac}: {e}");
         }
 
-        record.session_granted = true;
-        record.completed_at = Some(now);
-        record.allotment = allotment;
-        record.cached_state = Some(QuoteState::Issued);
         let _ = state
             .lightning_quotes
-            .update(&quote_id, record.clone())
+            .mark_granted(&quote_id, allotment, now)
             .await;
+
+        record.session_granted = true;
+        record.allotment = allotment;
+        record.cached_state = Some(QuoteState::Issued);
     }
 
     let resp = if record.session_granted {

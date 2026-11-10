@@ -2259,3 +2259,142 @@ async fn parity_ln_invoice_full_lifecycle() {
 
     stop_server(server).await;
 }
+
+// ── Concurrent quote polls must grant exactly once ──────────────────
+
+use tollgate_net::v1::server::{MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult};
+use tollgate_net::v1::server::{CustomerSession as LnCustomerSession, SessionStore as _};
+
+struct SlowMintWallet {
+    inner: MockMintQuoteWallet,
+    mint_calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl MintQuoteWallet for SlowMintWallet {
+    async fn request_mint_quote(
+        &self,
+        amount: u64,
+        mint_url: &str,
+    ) -> Result<MintQuoteInfo, MintQuoteError> {
+        self.inner.request_mint_quote(amount, mint_url).await
+    }
+
+    async fn check_mint_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<tollgate_net::v1::server::QuoteState, MintQuoteError> {
+        // Widen the window between each poll's record snapshot and its
+        // flags-check: a second poller loading the record while the first
+        // one awaits the status check is exactly the double-grant race.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        self.inner.check_mint_quote_status(quote_id).await
+    }
+
+    async fn mint_tokens(&self, quote_id: &str) -> Result<MintResult, MintQuoteError> {
+        self.mint_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.mint_tokens(quote_id).await
+    }
+}
+
+#[tokio::test]
+async fn parity_ln_invoice_concurrent_polls_grant_exactly_once() {
+    let config = test_config();
+    let wallet = Arc::new(MockWallet::new(0));
+    let advertisement = build_advertisement(&config).unwrap();
+    let slow_mint = Arc::new(SlowMintWallet {
+        inner: MockMintQuoteWallet::new(),
+        mint_calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let state = Arc::new(ServerState {
+        wallet: wallet.clone(),
+        config,
+        sessions: Arc::new(InMemorySessionStore::new()),
+        mac_resolver: Arc::new(StubMacResolver::default()),
+        valve: Arc::new(StubValve),
+        mint_quote_wallet: Some(slow_mint.clone()),
+        lightning_quotes: Arc::new(InMemoryLightningQuoteStore::new()),
+        advertisement,
+    });
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let base_url = format!("http://{addr}");
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("server");
+    });
+    let client = Client::new();
+
+    let post_resp: serde_json::Value = client
+        .post(format!("{base_url}/ln-invoice"))
+        .json(&serde_json::json!({
+            "amount": 10,
+            "mint_url": "https://testnut.cashu.exchange"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let quote_id = post_resp["quote"].as_str().unwrap().to_owned();
+    slow_mint
+        .inner
+        .set_quote_state(&quote_id, QuoteState::Paid)
+        .await;
+
+    let mut record = state
+        .lightning_quotes
+        .get(&quote_id)
+        .await
+        .unwrap()
+        .unwrap();
+    record.cached_state_at = Some(0);
+    state
+        .lightning_quotes
+        .update(&quote_id, record)
+        .await
+        .unwrap();
+
+    let url = format!("{base_url}/ln-invoice?quote={quote_id}");
+    let (resp_a, resp_b) = tokio::join!(client.get(&url).send(), client.get(&url).send());
+    let body_a: serde_json::Value = resp_a.unwrap().json().await.unwrap();
+    let body_b: serde_json::Value = resp_b.unwrap().json().await.unwrap();
+
+    let granted = [&body_a, &body_b]
+        .iter()
+        .filter(|b| b["access_granted"] == true)
+        .count();
+    assert_eq!(
+        granted, 1,
+        "exactly one of the two racing polls may grant: a={body_a} b={body_b}"
+    );
+
+    assert_eq!(
+        slow_mint.mint_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the quote must be minted exactly once"
+    );
+
+    let session: LnCustomerSession = state
+        .sessions
+        .get("00:11:22:33:44:55")
+        .await
+        .unwrap()
+        .expect("session must exist");
+    assert_eq!(
+        session.allotment, 600_000,
+        "the purchase must be granted exactly once (no double-grant)"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
