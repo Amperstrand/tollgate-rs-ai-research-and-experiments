@@ -66,7 +66,9 @@ pub fn validate_budget(
         other => return Err(PricingError::UnsupportedMetric(other.into())),
     };
 
-    if price_per_unit > max_price {
+    // A budget of 0 means "no limit" (CLI documents --max-price-per-* 0 as
+    // unlimited), so only a positive cap can reject.
+    if max_price > 0.0 && price_per_unit > max_price {
         return Err(PricingError::PriceTooHigh {
             price_per_unit,
             unit_name: unit_name.into(),
@@ -194,6 +196,39 @@ mod tests {
             mint_url: mint_url.to_owned(),
             min_steps,
         }
+    }
+
+    // --- validate_budget tests ---
+
+    #[test]
+    fn zero_budget_means_unlimited_for_milliseconds() {
+        // CLI documents --max-price-per-ms 0 as "no limit".
+        assert!(validate_budget(&opt("https://m.example", 5, 1), 1000, "milliseconds", 0.0, 0.0001).is_ok());
+    }
+
+    #[test]
+    fn zero_budget_means_unlimited_for_bytes() {
+        assert!(validate_budget(&opt("https://m.example", 5, 1), 1024, "bytes", 0.01, 0.0).is_ok());
+    }
+
+    #[test]
+    fn positive_budget_still_rejects_too_expensive_option() {
+        let err =
+            validate_budget(&opt("https://m.example", 10, 1), 1000, "milliseconds", 0.005, 0.0001)
+                .unwrap_err();
+        assert!(
+            matches!(err, PricingError::PriceTooHigh { .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn price_equal_to_budget_is_accepted() {
+        // price_per_step 5 / step_size 1000 == max 0.005 exactly.
+        assert!(
+            validate_budget(&opt("https://m.example", 5, 1), 1000, "milliseconds", 0.005, 0.0001)
+                .is_ok()
+        );
     }
 
     // --- validate_trust_policy tests ---
