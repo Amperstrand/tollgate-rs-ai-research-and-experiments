@@ -468,3 +468,75 @@ async fn v1_client_persists_unrecoverable_token_to_recovery_file() {
     server.abort();
     let _ = server.await;
 }
+
+// ── Reattach budget validation ──────────────────────────────────────
+
+async fn existing_session_usage() -> impl IntoResponse {
+    "1000/60000".to_owned()
+}
+
+async fn start_existing_session_server(
+    state: Arc<Mutex<ServerState>>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new()
+        .route("/", get(get_advertisement).post(post_payment))
+        .route("/usage", get(existing_session_usage))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind to random port");
+    let addr = listener.local_addr().expect("local addr");
+    let base_url = format!("http://{addr}");
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("mock server error");
+    });
+    (base_url, handle)
+}
+
+#[tokio::test]
+async fn v1_client_reattach_rejects_pricing_above_budget_cap() {
+    let keys = Keys::generate();
+    let state = Arc::new(Mutex::new(ServerState::new(keys)));
+    let (base_url, server) = start_existing_session_server(state).await;
+
+    let wallet = Arc::new(MockWallet::new(1000));
+    let mut config = make_config();
+    // The mock ad prices 1 sat per 60_000 ms step ≈ 1.67e-5 sat/ms — cap
+    // below that so the reattached pricing violates the budget.
+    config.max_price_per_ms = 1e-6;
+    let mut client = V1Client::<MockWallet>::new_with_base_url(config, &base_url);
+
+    let result = client.connect(&wallet).await;
+    assert!(
+        result.is_err(),
+        "reattaching to over-cap pricing must fail, not adopt it silently: {result:?}"
+    );
+    assert!(
+        client.session().is_none(),
+        "no session may be adopted from a rejected reattach"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn v1_client_reattach_accepts_pricing_within_budget() {
+    let keys = Keys::generate();
+    let state = Arc::new(Mutex::new(ServerState::new(keys)));
+    let (base_url, server) = start_existing_session_server(state).await;
+
+    let wallet = Arc::new(MockWallet::new(1000));
+    let mut client = V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
+
+    client
+        .connect(&wallet)
+        .await
+        .expect("reattach within budget must succeed");
+
+    let session = client.session().expect("session adopted");
+    assert_eq!(session.total_allotment, 60_000);
+
+    server.abort();
+    let _ = server.await;
+}

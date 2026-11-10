@@ -151,12 +151,22 @@ impl<W: Wallet> V1Client<W> {
                 &options,
                 &self.config.our_mint_urls,
                 &self.config.unit,
-            )?
-            .clone();
+            )?;
+
+            // Reattached sessions renew at the advertised price: the same
+            // budget cap as a fresh connection applies, or a restart with a
+            // stricter cap would keep auto-paying above it.
+            pricing::validate_budget(
+                pricing,
+                step_size,
+                &metric,
+                self.config.max_price_per_ms,
+                self.config.max_price_per_byte,
+            )?;
 
             self.session = Some(V1Session {
                 advertisement: ad,
-                selected_pricing: pricing,
+                selected_pricing: pricing.clone(),
                 session_event: None,
                 total_allotment: allotment.max(0) as u64,
                 metric,
