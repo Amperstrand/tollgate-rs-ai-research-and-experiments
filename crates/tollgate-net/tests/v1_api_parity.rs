@@ -2392,7 +2392,6 @@ async fn parity_verify_response_has_cors_headers_for_local_origin() {
 
 // ── Concurrent quote polls must grant exactly once ──────────────────
 
-use tollgate_net::v1::server::session_store::SessionStore as _;
 use tollgate_net::v1::server::{MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult};
 
 struct SlowStatusWallet {

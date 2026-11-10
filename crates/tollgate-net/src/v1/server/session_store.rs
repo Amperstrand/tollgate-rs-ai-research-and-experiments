@@ -34,6 +34,26 @@ pub trait SessionStore: Send + Sync {
     /// `metric == "milliseconds"`) has been fully consumed by time elapsed
     /// since `start_time`.
     async fn list_expired(&self, now_secs: i64) -> Result<Vec<CustomerSession>, SessionStoreError>;
+    /// Atomically add `amount` to the MAC's allotment (renewal semantics
+    /// per `merchant_provider::apply_renewal`), creating the session when
+    /// absent. The read-modify-write happens under the store's own lock so
+    /// overlapping payments cannot lose each other's tokens-already-redeemed
+    /// top-ups.
+    async fn add_allotment(
+        &self,
+        mac: &str,
+        metric: &str,
+        amount: u64,
+        now: i64,
+    ) -> Result<CustomerSession, SessionStoreError>;
+    /// Atomically record an external-usage snapshot, touching ONLY the
+    /// snapshot — a concurrent renewal's allotment write cannot be clobbered
+    /// by a report's stale session clone.
+    async fn record_external_usage(
+        &self,
+        mac: &str,
+        snapshot: ExternalUsageSnapshot,
+    ) -> Result<Option<CustomerSession>, SessionStoreError>;
 }
 
 #[derive(Default)]
@@ -91,6 +111,48 @@ impl SessionStore for InMemorySessionStore {
             .cloned()
             .collect();
         Ok(expired)
+    }
+
+    async fn add_allotment(
+        &self,
+        mac: &str,
+        metric: &str,
+        amount: u64,
+        now: i64,
+    ) -> Result<CustomerSession, SessionStoreError> {
+        let mut map = self.map.lock().await;
+        match map.get_mut(mac) {
+            Some(session) => {
+                super::merchant_provider::apply_renewal(session, amount, now);
+                Ok(session.clone())
+            }
+            None => {
+                let session = CustomerSession {
+                    mac_address: mac.to_owned(),
+                    start_time: now,
+                    metric: metric.to_owned(),
+                    allotment: amount,
+                    last_external_usage: None,
+                };
+                map.insert(mac.to_owned(), session.clone());
+                Ok(session)
+            }
+        }
+    }
+
+    async fn record_external_usage(
+        &self,
+        mac: &str,
+        snapshot: ExternalUsageSnapshot,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        let mut map = self.map.lock().await;
+        Ok(match map.get_mut(mac) {
+            Some(session) => {
+                session.last_external_usage = Some(snapshot);
+                Some(session.clone())
+            }
+            None => None,
+        })
     }
 }
 
@@ -270,6 +332,86 @@ impl SessionStore for SqliteSessionStore {
             .query_map(rusqlite::params![now_secs], Self::row_to_session)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(sessions)
+    }
+
+    async fn add_allotment(
+        &self,
+        mac: &str,
+        metric: &str,
+        amount: u64,
+        now: i64,
+    ) -> Result<CustomerSession, SessionStoreError> {
+        let conn = self.conn.lock().await;
+        let existing = conn
+            .query_row(
+                "SELECT mac_address, start_time, metric, allotment, last_input_octets, \
+                 last_output_octets, last_session_time, last_reported_at FROM sessions \
+                 WHERE mac_address = ?1",
+                rusqlite::params![mac],
+                Self::row_to_session,
+            )
+            .ok();
+
+        let session = match existing {
+            Some(mut s) => {
+                super::merchant_provider::apply_renewal(&mut s, amount, now);
+                // Renewal touches only start_time/allotment — the snapshot
+                // columns must survive this write.
+                conn.execute(
+                    "UPDATE sessions SET start_time = ?1, allotment = ?2 WHERE mac_address = ?3",
+                    rusqlite::params![s.start_time, s.allotment, mac],
+                )?;
+                s
+            }
+            None => {
+                let s = CustomerSession {
+                    mac_address: mac.to_owned(),
+                    start_time: now,
+                    metric: metric.to_owned(),
+                    allotment: amount,
+                    last_external_usage: None,
+                };
+                conn.execute(
+                    "INSERT INTO sessions (mac_address, start_time, metric, allotment) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![mac, s.start_time, s.metric, s.allotment],
+                )?;
+                s
+            }
+        };
+        Ok(session)
+    }
+
+    async fn record_external_usage(
+        &self,
+        mac: &str,
+        snapshot: ExternalUsageSnapshot,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        let conn = self.conn.lock().await;
+        let changed = conn.execute(
+            "UPDATE sessions SET last_input_octets = ?1, last_output_octets = ?2, \
+             last_session_time = ?3, last_reported_at = ?4 WHERE mac_address = ?5",
+            rusqlite::params![
+                snapshot.input_octets as i64,
+                snapshot.output_octets as i64,
+                snapshot.session_time as i64,
+                snapshot.reported_at,
+                mac,
+            ],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        let session = conn
+            .query_row(
+                "SELECT mac_address, start_time, metric, allotment, last_input_octets, \
+                 last_output_octets, last_session_time, last_reported_at FROM sessions \
+                 WHERE mac_address = ?1",
+                rusqlite::params![mac],
+                Self::row_to_session,
+            )
+            .ok();
+        Ok(session)
     }
 }
 
@@ -458,5 +600,108 @@ mod external_usage_tests {
             Some(snapshot(10, 20, 99)),
             "post-migration writes must persist snapshots"
         );
+    }
+}
+
+#[cfg(test)]
+mod atomicity_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Eight overlapping top-ups for one MAC; returns the final allotment.
+    async fn concurrent_topups(store: Arc<dyn SessionStore>) -> u64 {
+        let mut joins = Vec::new();
+        for _ in 0..8 {
+            let store = store.clone();
+            joins.push(tokio::spawn(async move {
+                store
+                    .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 1_000, 5_000)
+                    .await
+                    .unwrap()
+            }));
+        }
+        let results = futures::future::join_all(joins).await;
+        results
+            .into_iter()
+            .map(|r| r.unwrap().allotment)
+            .max()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn inmemory_overlapping_payments_are_all_counted() {
+        let store = Arc::new(InMemorySessionStore::new());
+        let final_allotment = concurrent_topups(store).await;
+        assert_eq!(
+            final_allotment,
+            8 * 1_000,
+            "every overlapping top-up must land (start_time keeps sessions unexpired)"
+        );
+    }
+
+    #[tokio::test]
+    async fn sqlite_overlapping_payments_are_all_counted() {
+        let store = Arc::new(SqliteSessionStore::open_in_memory().unwrap());
+        let final_allotment = concurrent_topups(store).await;
+        assert_eq!(final_allotment, 8 * 1_000);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn merchant_provider_overlapping_payments_are_all_counted() {
+        // Through the PUBLIC entry point the payment paths use — this is the
+        // exact sequence two overlapping ln-invoice/bootstrap grants run.
+        let store = Arc::new(InMemorySessionStore::new());
+        let mut joins = Vec::new();
+        for _ in 0..8 {
+            let store = store.clone();
+            joins.push(tokio::spawn(async move {
+                crate::v1::server::merchant_provider::add_allotment(
+                    &*store,
+                    "aa:bb:cc:dd:ee:ff",
+                    "milliseconds",
+                    1_000,
+                )
+                .await
+                .unwrap()
+            }));
+        }
+        let results = futures::future::join_all(joins).await;
+        let final_allotment = results.into_iter().map(|r| r.unwrap().allotment).max().unwrap();
+        assert_eq!(
+            final_allotment, 8 * 1_000,
+            "every overlapping payment through add_allotment must land"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_usage_report_cannot_clobber_a_concurrent_topup() {
+        let store = InMemorySessionStore::new();
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "bytes", 5_000, 10_000)
+            .await
+            .unwrap();
+
+        let snapshot = ExternalUsageSnapshot {
+            input_octets: 100,
+            output_octets: 200,
+            session_time: 5,
+            reported_at: 11_000,
+        };
+        let updated = store
+            .record_external_usage("aa:bb:cc:dd:ee:ff", snapshot.clone())
+            .await
+            .unwrap()
+            .expect("session exists");
+        assert_eq!(updated.allotment, 5_000);
+        assert_eq!(updated.last_external_usage, Some(snapshot.clone()));
+
+        // A top-up after a report keeps the snapshot.
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "bytes", 3_000, 12_000)
+            .await
+            .unwrap();
+        let after = store.get("aa:bb:cc:dd:ee:ff").await.unwrap().unwrap();
+        assert_eq!(after.allotment, 8_000);
+        assert_eq!(after.last_external_usage, Some(snapshot));
     }
 }

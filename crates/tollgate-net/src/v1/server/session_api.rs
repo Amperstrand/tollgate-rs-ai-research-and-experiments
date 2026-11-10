@@ -271,11 +271,19 @@ async fn handle_post_usage(
         reported_at: now_secs,
     };
 
-    let mut updated_session = session.clone();
-    updated_session.last_external_usage = Some(snapshot);
-    if let Err(e) = state.sessions.update(&mac, updated_session.clone()).await {
-        tracing::error!("Failed to update external usage for {mac}: {e}");
-    }
+    // Targeted snapshot write: a whole-session update here would race a
+    // concurrent renewal and clobber its allotment with this report's
+    // older clone.
+    let updated_session = match state.sessions.record_external_usage(&mac, snapshot).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac));
+        }
+        Err(e) => {
+            tracing::error!("Failed to update external usage for {mac}: {e}");
+            session
+        }
+    };
 
     // Use the provided timestamp or generate one
     let last_usage_update = report.timestamp.or_else(|| Some(now_secs.to_string()));

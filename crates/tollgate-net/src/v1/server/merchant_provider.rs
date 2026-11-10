@@ -73,27 +73,13 @@ pub async fn add_allotment(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let existing = sessions.get(mac).await.map_err(|e| e.to_string())?;
-
-    let session = if let Some(mut s) = existing {
-        apply_renewal(&mut s, allotment, now);
-        let updated = s.clone();
-        sessions.update(mac, s).await.map_err(|e| e.to_string())?;
-        updated
-    } else {
-        let s = CustomerSession {
-            mac_address: mac.to_owned(),
-            start_time: now,
-            metric: metric.to_owned(),
-            allotment,
-            last_external_usage: None,
-        };
-        let cloned = s.clone();
-        sessions.insert(s).await.map_err(|e| e.to_string())?;
-        cloned
-    };
-
-    Ok(session)
+    // Delegates to the store's atomic add_allotment: the read-modify-write
+    // runs under the store lock so overlapping payments for one MAC cannot
+    // discard each other's (already-redeemed) top-ups.
+    sessions
+        .add_allotment(mac, metric, allotment, now)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
