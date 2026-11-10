@@ -198,13 +198,13 @@ impl<W: Wallet + 'static> Crowsnest<W> {
                             );
                             if let Err(e) = self
                                 .session_manager
-                                .handle_disconnect(&self.config.interface_name)
+                                .handle_gateway_disconnect(gateway_ip)
                                 .await
                             {
                                 tracing::warn!(
                                     %gateway_ip,
                                     %e,
-                                    "Crowsnest: failed to disconnect sessions for interface"
+                                    "Crowsnest: failed to disconnect the failed gateway's session"
                                 );
                             }
                             // Reset to avoid repeatedly disconnecting.

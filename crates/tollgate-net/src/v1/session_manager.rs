@@ -161,6 +161,32 @@ impl<W: Wallet + 'static> SessionManager<W> {
         Ok(())
     }
 
+    /// Handle a single gateway failure — stop only that gateway's session,
+    /// leaving other sessions on the same interface untouched.
+    pub async fn handle_gateway_disconnect(
+        &self,
+        gateway_ip: &str,
+    ) -> Result<(), SessionManagerError> {
+        let session = {
+            let mut sessions = self.sessions.write().await;
+            sessions.remove(gateway_ip)
+        };
+
+        if let Some(session) = session {
+            session.cancel.cancel();
+            if let Some(handle) = session.tracker_handle {
+                handle.join_handle.abort();
+            }
+            tracing::info!(
+                gateway_ip,
+                interface = %session.interface_name,
+                "Session removed for failed gateway"
+            );
+        }
+
+        Ok(())
+    }
+
     /// Handle interface disconnection — stop all sessions on the given interface.
     pub async fn handle_disconnect(&self, interface_name: &str) -> Result<(), SessionManagerError> {
         let mut sessions = self.sessions.write().await;
@@ -558,6 +584,64 @@ mod tests {
         manager.stop().await;
         server.abort();
         let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn session_manager_gateway_disconnect_removes_only_that_gateway() {
+        let wallet = Arc::new(MockWallet::new(1000));
+        let config = make_manager_config("10.0.0.1");
+        let manager = SessionManager::new(config, wallet);
+
+        // Two gateways on the SAME interface — one failing gateway must not
+        // tear down its healthy sibling.
+        let mut server_handles = Vec::new();
+        for gw_ip in ["10.0.0.1", "10.0.0.2"] {
+            let keys = Keys::generate();
+            let state = Arc::new(Mutex::new(MockServerState::new(keys)));
+            let (base_url, server) = start_session_test_server(state.clone()).await;
+            server_handles.push(server);
+
+            let mut client =
+                V1Client::<MockWallet>::new_with_base_url(make_session_config(gw_ip), &base_url);
+            client.connect(&manager.wallet).await.expect("connect");
+
+            let session_state = UpstreamSessionState {
+                gateway_ip: gw_ip.to_owned(),
+                interface_name: "eth0".to_owned(),
+                client,
+                tracker_handle: None,
+                cancel: CancellationToken::new(),
+                created_at: std::time::Instant::now(),
+                last_payment_at: None,
+                total_spent_sats: 0,
+                payment_count: 0,
+            };
+
+            let mut sessions = manager.sessions.write().await;
+            sessions.insert(gw_ip.to_owned(), session_state);
+        }
+
+        assert_eq!(manager.get_active_sessions().await.len(), 2);
+
+        manager
+            .handle_gateway_disconnect("10.0.0.1")
+            .await
+            .expect("gateway disconnect");
+
+        let active = manager.get_active_sessions().await;
+        assert_eq!(
+            active.len(),
+            1,
+            "only the failed gateway's session may be removed"
+        );
+        assert_eq!(active[0].gateway_ip, "10.0.0.2");
+        assert_eq!(active[0].interface_name, "eth0");
+
+        manager.stop().await;
+        for s in server_handles {
+            s.abort();
+            let _ = s.await;
+        }
     }
 
     #[tokio::test]
