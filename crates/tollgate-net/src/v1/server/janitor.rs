@@ -88,10 +88,7 @@ pub fn spawn_janitor(
                 }
             };
 
-            for session in all
-                .iter()
-                .filter(|s| s.metric != "milliseconds")
-            {
+            for session in all.iter().filter(|s| s.metric != "milliseconds") {
                 let usage = valve
                     .get_client_usage_since_baseline(&session.mac_address)
                     .unwrap_or_else(|e| {
@@ -188,10 +185,7 @@ mod byte_tests {
             Ok(())
         }
 
-        fn get_client_usage_since_baseline(
-            &self,
-            _mac_address: &str,
-        ) -> Result<u64, ValveError> {
+        fn get_client_usage_since_baseline(&self, _mac_address: &str) -> Result<u64, ValveError> {
             Ok(self.usage)
         }
     }
@@ -210,7 +204,10 @@ mod byte_tests {
         let store = Arc::new(InMemorySessionStore::new());
         let valve = Arc::new(MeteredValve::new(6_000));
 
-        store.insert(byte_session("aa:bb:cc:dd:ee:ff", 5_000)).await.unwrap();
+        store
+            .insert(byte_session("aa:bb:cc:dd:ee:ff", 5_000))
+            .await
+            .unwrap();
 
         let handle = spawn_janitor(store.clone(), valve.clone(), Duration::from_millis(50));
         tokio::time::sleep(Duration::from_millis(200)).await;

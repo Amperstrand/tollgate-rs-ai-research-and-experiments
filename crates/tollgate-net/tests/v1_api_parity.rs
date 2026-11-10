@@ -2262,8 +2262,8 @@ async fn parity_ln_invoice_full_lifecycle() {
 
 // ── Concurrent quote polls must grant exactly once ──────────────────
 
+use tollgate_net::v1::server::CustomerSession as LnCustomerSession;
 use tollgate_net::v1::server::{MintQuoteError, MintQuoteInfo, MintQuoteWallet, MintResult};
-use tollgate_net::v1::server::{CustomerSession as LnCustomerSession, SessionStore as _};
 
 struct SlowMintWallet {
     inner: MockMintQuoteWallet,
@@ -2379,7 +2379,9 @@ async fn parity_ln_invoice_concurrent_polls_grant_exactly_once() {
     );
 
     assert_eq!(
-        slow_mint.mint_calls.load(std::sync::atomic::Ordering::SeqCst),
+        slow_mint
+            .mint_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
         1,
         "the quote must be minted exactly once"
     );

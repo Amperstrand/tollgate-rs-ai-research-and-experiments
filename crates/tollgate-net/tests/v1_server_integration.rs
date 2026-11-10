@@ -273,10 +273,6 @@ impl ByteMeterValve {
             closed: std::sync::Mutex::new(Vec::new()),
         }
     }
-
-    fn set_usage(&self, bytes: u64) {
-        *self.usage.lock().unwrap() = bytes;
-    }
 }
 
 impl Valve for ByteMeterValve {
@@ -361,7 +357,11 @@ async fn v1_server_usage_reports_byte_consumption() {
         .unwrap();
 
     let client = Client::new();
-    let resp = client.get(format!("{base_url}/usage")).send().await.unwrap();
+    let resp = client
+        .get(format!("{base_url}/usage"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
     assert_eq!(body, "1000/5000", "byte usage must come from the valve");
@@ -387,7 +387,11 @@ async fn v1_server_usage_expires_exhausted_byte_session() {
         .unwrap();
 
     let client = Client::new();
-    let resp = client.get(format!("{base_url}/usage")).send().await.unwrap();
+    let resp = client
+        .get(format!("{base_url}/usage"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert_eq!(body, "-1/-1", "exhausted byte quota must close the session");
 
@@ -427,7 +431,11 @@ async fn v1_server_balance_reports_byte_remaining() {
         .unwrap();
 
     let client = Client::new();
-    let resp = client.get(format!("{base_url}/balance")).send().await.unwrap();
+    let resp = client
+        .get(format!("{base_url}/balance"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["usage"], 1_000, "byte usage must come from the valve");

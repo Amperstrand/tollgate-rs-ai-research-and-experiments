@@ -154,7 +154,6 @@ fn make_manager_config() -> SessionManagerConfig {
         tracker_config: UsageTrackerConfig {
             poll_interval: std::time::Duration::from_millis(50),
             renewal_threshold: 0.8,
-        recovery_file: std::path::PathBuf::from("/tmp/tollgate-test-recovery.txt"),
         },
     }
 }

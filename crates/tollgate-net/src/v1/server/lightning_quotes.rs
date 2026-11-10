@@ -351,19 +351,18 @@ pub fn spawn_quote_monitor<W: Wallet + 'static>(
                 }
             }
 
-            let allotment =
-                match merchant::calculate_allotment(
-                    claimed.amount,
-                    &claimed.mint_url,
-                    &state.config,
-                ) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        tracing::error!("quote monitor: allotment calc failed for {quote_id}: {e}");
-                        let _ = state.lightning_quotes.reset_processing(&quote_id).await;
-                        continue;
-                    }
-                };
+            let allotment = match merchant::calculate_allotment(
+                claimed.amount,
+                &claimed.mint_url,
+                &state.config,
+            ) {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::error!("quote monitor: allotment calc failed for {quote_id}: {e}");
+                    let _ = state.lightning_quotes.reset_processing(&quote_id).await;
+                    continue;
+                }
+            };
 
             let mac = claimed.mac_address.clone();
             let existing = state.sessions.get(&mac).await.ok().flatten();
@@ -573,7 +572,10 @@ mod tests {
             .unwrap();
 
         store.claim_for_processing("q1").await.unwrap().unwrap();
-        store.refresh_cached_state("q1", QuoteState::Paid, 1500).await.unwrap();
+        store
+            .refresh_cached_state("q1", QuoteState::Paid, 1500)
+            .await
+            .unwrap();
 
         let record = store.get("q1").await.unwrap().unwrap();
         assert_eq!(record.cached_state, Some(QuoteState::Paid));
@@ -607,12 +609,7 @@ mod tests {
             let store = store.clone();
             let winners = winners.clone();
             joins.push(tokio::spawn(async move {
-                if store
-                    .claim_for_processing("q1")
-                    .await
-                    .unwrap()
-                    .is_some()
-                {
+                if store.claim_for_processing("q1").await.unwrap().is_some() {
                     winners.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
             }));

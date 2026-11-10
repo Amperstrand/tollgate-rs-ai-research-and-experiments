@@ -436,10 +436,9 @@ mod payout_address_tests {
 
     #[test]
     fn profit_share_lightning_address_defaults_to_none() {
-        let ps: ProfitShareConfig = serde_json::from_str(
-            r#"{ "factor": 0.5, "identity": "owner" }"#,
-        )
-        .expect("legacy config (no lightning_address) must parse");
+        let ps: ProfitShareConfig =
+            serde_json::from_str(r#"{ "factor": 0.5, "identity": "owner" }"#)
+                .expect("legacy config (no lightning_address) must parse");
         assert_eq!(ps.lightning_address, None);
         assert_eq!(ps.identity, "owner");
     }

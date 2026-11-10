@@ -389,10 +389,7 @@ impl Wallet for RejectReceiveWallet {
         self.inner.create_token(amount, mint_url)
     }
 
-    fn mint_reachable(
-        &self,
-        mint: &str,
-    ) -> impl Future<Output = Result<bool, WalletError>> + Send {
+    fn mint_reachable(&self, mint: &str) -> impl Future<Output = Result<bool, WalletError>> + Send {
         self.inner.mint_reachable(mint)
     }
 
@@ -524,8 +521,7 @@ async fn v1_client_reattach_accepts_pricing_within_budget() {
     let (base_url, server) = start_existing_session_server(state).await;
 
     let wallet = Arc::new(MockWallet::new(1000));
-    let mut client =
-        V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
+    let mut client = V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
 
     client
         .connect(&wallet)
