@@ -538,3 +538,124 @@ async fn v1_client_reattach_accepts_pricing_within_budget() {
     server.abort();
     let _ = server.await;
 }
+
+// ── Minimum-steps affordability guard ───────────────────────────────
+
+async fn min_steps_ad(State(state): State<Arc<Mutex<ServerState>>>) -> impl IntoResponse {
+    let keys = {
+        let s = state.lock().expect("lock");
+        s.keys.clone()
+    };
+
+    let tags = Tags::from_list(vec![
+        Tag::custom(
+            TagKind::Custom("metric".into()),
+            ["milliseconds".to_owned()],
+        ),
+        Tag::custom(TagKind::Custom("step_size".into()), ["60000".to_owned()]),
+        Tag::custom(
+            TagKind::Custom("price_per_step".into()),
+            [
+                "cashu".to_owned(),
+                "1".to_owned(),
+                "sat".to_owned(),
+                "https://testnut.cashu.exchange".to_owned(),
+                "10".to_owned(), // min_steps: the cheapest purchase is 10 steps
+            ],
+        ),
+    ]);
+
+    let event = EventBuilder::new(Kind::Custom(10_021), "")
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .expect("sign ad event");
+
+    axum::Json(serde_json::to_value(event).expect("serialize ad event"))
+}
+
+async fn start_min_steps_server(
+    state: Arc<Mutex<ServerState>>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new()
+        .route("/", get(min_steps_ad).post(post_payment))
+        .route("/usage", get(zero_usage))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind to random port");
+    let addr = listener.local_addr().expect("local addr");
+    let base_url = format!("http://{addr}");
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("mock server error");
+    });
+    (base_url, handle)
+}
+
+#[tokio::test]
+async fn v1_client_rejects_purchase_below_minimum_steps() {
+    let keys = Keys::generate();
+    let state = Arc::new(Mutex::new(ServerState::new(keys)));
+    let (base_url, server) = start_min_steps_server(state.clone()).await;
+
+    // 5 sats affords 5 steps, but the ad requires 10 — the pre-fix code
+    // minted a 5-sat token the gateway would redeem and then reject with
+    // InsufficientSteps (funds lost).
+    let wallet = Arc::new(MockWallet::new(5));
+    let mut client = V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
+
+    let result = client.connect(&wallet).await;
+    assert!(
+        result.is_err(),
+        "a balance below the advertised minimum must be rejected before token creation: {result:?}"
+    );
+    let err = result.expect_err("checked is_err above").to_string();
+    assert!(
+        err.contains("insufficient funds"),
+        "error must name the shortfall: {err}"
+    );
+    assert!(
+        client.session().is_none(),
+        "no session may be adopted from a rejected purchase"
+    );
+    {
+        let s = state.lock().expect("lock");
+        assert_eq!(
+            s.payments_received, 0,
+            "no token may be submitted for a below-minimum purchase"
+        );
+    }
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn v1_client_renew_rejects_purchase_below_minimum_steps() {
+    let keys = Keys::generate();
+    let state = Arc::new(Mutex::new(ServerState::new(keys)));
+    let (base_url, server) = start_min_steps_server(state).await;
+
+    // 15 sats affords the 10-step minimum for the initial connection
+    // (10-sat token), leaving 5 — below the minimum for a renewal.
+    let wallet = Arc::new(MockWallet::new(15));
+    let mut client = V1Client::<MockWallet>::new_with_base_url(make_config(), &base_url);
+
+    client
+        .connect(&wallet)
+        .await
+        .expect("connect with 15 sats must afford the 10-step minimum");
+
+    let result = client.renew(&wallet).await;
+    assert!(
+        result.is_err(),
+        "renewal with a below-minimum balance must be rejected before token creation: {result:?}"
+    );
+    let err = result.expect_err("checked is_err above").to_string();
+    assert!(
+        err.contains("insufficient funds"),
+        "error must name the shortfall: {err}"
+    );
+
+    server.abort();
+    let _ = server.await;
+}

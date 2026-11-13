@@ -200,6 +200,19 @@ impl<W: Wallet> V1Client<W> {
             return self.connect_via_lightning(&ad, pricing, steps).await;
         }
 
+        // A partial balance below the minimum would buy an undersized
+        // token: the gateway redeems it, then rejects the session with
+        // InsufficientSteps — the client loses the funds and no recovery
+        // path exists for an already-redeemed token.
+        if max_affordable < pricing.min_steps {
+            return Err(V1ClientError::Pricing(
+                pricing::PricingError::InsufficientFunds {
+                    required: pricing.min_steps * pricing.price_per_step,
+                    available: balance_sats,
+                },
+            ));
+        }
+
         // Step 6: Create token and send
         let token_bytes = wallet
             .create_token_with_overpayment(
@@ -410,6 +423,18 @@ impl<W: Wallet> V1Client<W> {
             .unwrap_or(1);
         let balance = wallet.balance().await?;
         let max_affordable = balance.0.checked_div(pricing.price_per_step).unwrap_or(0);
+
+        // Same funds-loss guard as connect(): a partial balance below the
+        // minimum would mint an undersized token the gateway redeems and
+        // then rejects with InsufficientSteps.
+        if max_affordable < pricing.min_steps {
+            return Err(V1ClientError::Pricing(
+                pricing::PricingError::InsufficientFunds {
+                    required: pricing.min_steps * pricing.price_per_step,
+                    available: balance.0,
+                },
+            ));
+        }
 
         let steps = preferred_steps
             .max(pricing.min_steps)
