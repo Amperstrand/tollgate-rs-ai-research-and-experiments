@@ -14,8 +14,6 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use super::wallet::CdkWallet;
-
 /// Default recovery file path.
 pub const DEFAULT_RECOVERY_FILE: &str = "/etc/tollgate/tokens-to-recover.txt";
 
@@ -37,8 +35,8 @@ pub enum RecoveryResult {
 /// 1. Try `wallet.receive_token()` to reclaim the token.
 /// 2. If that fails, save token + timestamp + mint_url to `recovery_file`.
 /// 3. If the file write also fails, return [`RecoveryResult::Failed`].
-pub async fn recover_failed_token(
-    wallet: &CdkWallet,
+pub async fn recover_failed_token<W: super::client::V1ClientWallet>(
+    wallet: &W,
     token: &[u8],
     mint_url: &str,
     error: &str,
