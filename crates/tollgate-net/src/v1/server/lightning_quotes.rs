@@ -224,10 +224,7 @@ impl LightningQuoteStore for InMemoryLightningQuoteStore {
                     }
                 }
                 // OR expiry > 0 AND now > expiry + 300 (5min grace past expiry)
-                if r.expiry > 0 && now > r.expiry + 300 {
-                    return true;
-                }
-                false
+                r.expiry > 0 && now > r.expiry + 300
             })
             .cloned()
             .collect();
