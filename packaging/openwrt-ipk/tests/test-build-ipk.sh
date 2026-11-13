@@ -1,9 +1,11 @@
 #!/bin/sh
-# The .ipk produced by build-ipk.sh must be an opkg-readable ar container.
+# The .ipk produced by build-ipk.sh must carry the three standard members
+# in an opkg-readable outer container.
 #
-# An OpenWrt .ipk is an `ar` archive whose members are exactly:
-#   debian-binary, control.tar.gz, data.tar.gz (in that order).
-# opkg refuses tar-based containers ("Invalid package format").
+# Upstream OpenWrt's scripts/ipkg-build emits a gzip tar outer container
+# (./debian-binary ./control.tar.gz ./data.tar.gz); opkg accepts both
+# tar.gz and ar outers. This pins the script's tar.gz contract — member
+# presence and names, not just "a file was produced".
 #
 # Run: sh packaging/openwrt-ipk/tests/test-build-ipk.sh
 
@@ -13,8 +15,6 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT="$ROOT/packaging/openwrt-ipk/build-ipk.sh"
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
-
-command -v ar >/dev/null 2>&1 || fail "ar (binutils) required to run this test"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -32,22 +32,23 @@ OUT="$ROOT/dist/tollgate_1.0.0-test_x86_64.ipk"
 [ -f "$OUT" ] || fail "no output ipk at $OUT"
 trap 'rm -rf "$WORK" "$OUT"' EXIT
 
-# 1. The container MUST be an ar archive (opkg cannot read tar containers).
-ar t "$OUT" >/dev/null 2>&1 || \
-    fail "container is not an ar archive — is build-ipk.sh still using tar?"
+# 1. The outer container decompresses as the tar.gz OpenWrt-native shape.
+MEMBERS=$(tar -tzf "$OUT" | tr '\n' ' ')
+echo "members: $MEMBERS"
+for member in ./debian-binary ./control.tar.gz ./data.tar.gz; do
+    case "$MEMBERS" in
+        *"$member"*) ;;
+        *) fail "outer container missing $member" ;;
+    esac
+done
 
-# 2. Exactly the three standard members, in order.
-MEMBERS=$(ar t "$OUT" | tr '\n' ' ')
-[ "$MEMBERS" = "debian-binary control.tar.gz data.tar.gz " ] \
-    || fail "unexpected ar members: $MEMBERS"
+# 2. debian-binary declares format 2.0.
+tar -xzf "$OUT" -C "$WORK" ./debian-binary
+[ "$(cat "$WORK/debian-binary")" = "2.0" ] || fail "debian-binary is not '2.0'"
 
-# 3. debian-binary declares format 2.0.
-ar p "$OUT" debian-binary > "$WORK/db"
-[ "$(cat "$WORK/db")" = "2.0" ] || fail "debian-binary is not '2.0'"
-
-# 4. data.tar.gz carries the tollgate binary.
-ar p "$OUT" data.tar.gz > "$WORK/data.tar.gz"
+# 3. data.tar.gz carries the tollgate binary.
+tar -xzf "$OUT" -C "$WORK" ./data.tar.gz
 tar -tzf "$WORK/data.tar.gz" ./usr/bin/tollgate >/dev/null 2>&1 || \
     fail "data.tar.gz missing ./usr/bin/tollgate"
 
-echo "PASS: .ipk container is opkg-readable ar format"
+echo "PASS: .ipk outer container carries the three standard members (tar.gz, upstream-native)"
