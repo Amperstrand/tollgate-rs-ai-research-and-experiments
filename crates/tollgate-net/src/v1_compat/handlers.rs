@@ -1,3 +1,4 @@
+use super::ln_grant;
 use std::sync::Arc;
 
 use axum::Router;
@@ -72,6 +73,7 @@ pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
         )
         .route("/log-beacon", axum::routing::post(handle_log_beacon))
         .layer(axum::Extension(config))
+        .layer(axum::Extension(Arc::new(ln_grant::LnGrantRegistry::new())))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .with_state(driver)
 }
@@ -360,7 +362,11 @@ async fn handle_post_ln_invoice(
 }
 
 async fn handle_get_ln_invoice(
+    State(driver): State<Driver>,
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
+    axum::Extension(grant_registry): axum::Extension<Arc<ln_grant::LnGrantRegistry>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let quote_id = match params.get("quote") {
@@ -381,24 +387,8 @@ async fn handle_get_ln_invoice(
         None => return json_error(StatusCode::SERVICE_UNAVAILABLE, "wallet not configured"),
     };
 
-    match wallet.check_mint_quote_status(quote_id).await {
-        Ok(state) => {
-            let state_str = match state {
-                crate::v1_compat::wallet::QuoteState::Unpaid => "UNPAID",
-                crate::v1_compat::wallet::QuoteState::Paid => "PAID",
-                crate::v1_compat::wallet::QuoteState::Issued => "ISSUED",
-            };
-            let json = serde_json::json!({
-                "quote": quote_id,
-                "state": state_str,
-            });
-            (
-                StatusCode::OK,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
-            )
-                .into_response()
-        }
+    let state = match wallet.check_mint_quote_status(quote_id).await {
+        Ok(state) => state,
         Err(e) => {
             let json =
                 serde_json::json!({"error": format!("quote check failed: {e}"), "quote": quote_id});
@@ -407,14 +397,94 @@ async fn handle_get_ln_invoice(
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
             };
-            (
+            return (
                 status,
                 [("content-type", "application/json")],
                 serde_json::to_string(&json).unwrap_or_default(),
             )
-                .into_response()
+                .into_response();
         }
+    };
+
+    if state != crate::v1_compat::wallet::QuoteState::Unpaid {
+        // A paid quote grants access exactly once: mint the proofs,
+        // re-serialize them as a bootstrap token, and admit the peer
+        // through the Driver — the same verification path a Cashu POST
+        // payment takes. Concurrent pollers are serialized by the registry.
+        let client_ip = extract_ip_full(
+            &headers,
+            Some(&ConnectInfo(addr)),
+            config.trust_proxy_headers,
+        );
+        let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
+            Some(hex) => hex,
+            None => {
+                return json_error(StatusCode::BAD_REQUEST, "could not resolve client identity");
+            }
+        };
+        let outcome = ln_grant::grant_if_paid(
+            &grant_registry,
+            &ln_grant::GrantContext {
+                minter: &*wallet,
+                admitter: &driver,
+                peer_hex: &peer_hex,
+                ip: client_ip,
+                mint_url: wallet.mint_url(),
+                config: &config,
+            },
+            quote_id,
+            state,
+        )
+        .await;
+
+        return match outcome {
+            ln_grant::GrantOutcome::Issued { allotment }
+            | ln_grant::GrantOutcome::AlreadyIssued { allotment } => {
+                let json = serde_json::json!({
+                    "quote": quote_id,
+                    "state": "ISSUED",
+                    "access_granted": true,
+                    "allotment": allotment,
+                    "metric": config.metric,
+                });
+                (
+                    StatusCode::OK,
+                    [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default(),
+                )
+                    .into_response()
+            }
+            ln_grant::GrantOutcome::Processing => {
+                let json = serde_json::json!({
+                    "quote": quote_id,
+                    "state": "PAID",
+                    "access_granted": false,
+                });
+                (
+                    StatusCode::OK,
+                    [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default(),
+                )
+                    .into_response()
+            }
+            ln_grant::GrantOutcome::Failed(reason) => json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("grant failed: {reason}"),
+            ),
+        };
     }
+
+    let json = serde_json::json!({
+        "quote": quote_id,
+        "state": "UNPAID",
+        "access_granted": false,
+    });
+    (
+        StatusCode::OK,
+        [("content-type", "application/json")],
+        serde_json::to_string(&json).unwrap_or_default(),
+    )
+        .into_response()
 }
 
 async fn handle_log_beacon(body: String) -> Response {
@@ -646,6 +716,7 @@ mod tests {
                 Request::builder()
                     .method("GET")
                     .uri("/ln-invoice?quote=abc123")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
                     .body(Body::empty())
                     .unwrap(),
             )
