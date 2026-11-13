@@ -6,7 +6,8 @@
 #   ./debian-binary   — format version ("2.0\n")
 #   ./control.tar.gz  — package metadata, conffiles, pre/post scripts
 #   ./data.tar.gz     — the actual filesystem tree
-# (Debian .deb uses ar; OpenWrt .ipk uses tar.gz. NOT an ar archive.)
+# (Debian .deb uses ar; OpenWrt .ipk uses tar.gz. NOT an ar archive —
+# this matches upstream OpenWrt's own scripts/ipkg-build.)
 #
 # Usage:
 #   ./packaging/openwrt-ipk/build-ipk.sh [--arch <name>] [--features <list>] [--bin-dir <dir>]
@@ -304,9 +305,10 @@ ipk_tar() {
 ipk_tar "$IPK_WORK/control.tar.gz" "$CONTROL_DIR" .
 ipk_tar "$IPK_WORK/data.tar.gz"    "$DATA_DIR"    .
 
-# The outer .ipk container is a gzip-compressed tar — NOT an ar archive.
-# (Debian .deb uses ar; OpenWrt .ipk uses tar.gz.)
-# Entries must be named with ./ prefix, as ipkg-build produces.
+# The outer .ipk container is a gzip-compressed tar, matching upstream
+# OpenWrt's scripts/ipkg-build (opkg accepts both tar.gz and ar outers;
+# tar.gz is the OpenWrt-native shape). Entries use the ./ prefix, as
+# ipkg-build produces.
 mkdir -p "$DIST_DIR"
 ipk_tar "$DIST_DIR/$PKG_FILENAME" "$IPK_WORK" ./debian-binary ./control.tar.gz ./data.tar.gz
 

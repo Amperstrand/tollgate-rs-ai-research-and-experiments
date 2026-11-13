@@ -63,6 +63,9 @@ pub struct CdkWallet {
     wallet: cdk::Wallet,
     /// HTTP client for lightweight NUT-07 checkstate calls (verify path).
     client: reqwest::Client,
+    /// The mint this wallet is bound to (used to re-serialize minted
+    /// funds as bootstrap tokens in the Lightning grant flow).
+    mint_url: String,
 }
 
 impl CdkWallet {
@@ -86,7 +89,13 @@ impl CdkWallet {
         Ok(Self {
             wallet,
             client: reqwest::Client::new(),
+            mint_url: mint_url.to_owned(),
         })
+    }
+
+    /// The mint this wallet is bound to.
+    pub fn mint_url(&self) -> &str {
+        &self.mint_url
     }
 
     /// Try each mint URL in order, returning the first that initializes successfully.
