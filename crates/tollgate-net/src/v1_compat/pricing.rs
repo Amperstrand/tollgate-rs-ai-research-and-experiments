@@ -82,7 +82,10 @@ pub fn validate_budget(
         other => return Err(PricingError::UnsupportedMetric(other.into())),
     };
 
-    if price_per_unit > max_price {
+    // A budget of 0 means "no limit" (V1ClientConfig documents both cap
+    // fields as 0 = no limit — the shipped v1-consume command runs with
+    // 0.0 caps), so only a positive cap can reject.
+    if max_price > 0.0 && price_per_unit > max_price {
         return Err(PricingError::PriceTooHigh {
             price_per_unit,
             unit_name: unit_name.into(),
@@ -197,6 +200,24 @@ pub fn select_compatible_with_funds<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_budget_zero_ms_cap_means_unlimited() {
+        let option = opt("https://mint.example", 10, 1);
+        assert!(validate_budget(&option, 60_000, "milliseconds", 0.0, 1.0).is_ok());
+    }
+
+    #[test]
+    fn validate_budget_zero_byte_cap_means_unlimited() {
+        let option = opt("https://mint.example", 10, 1);
+        assert!(validate_budget(&option, 22_020_096, "bytes", 1.0, 0.0).is_ok());
+    }
+
+    #[test]
+    fn validate_budget_positive_cap_still_rejects() {
+        let option = opt("https://mint.example", 10, 1);
+        assert!(validate_budget(&option, 60_000, "milliseconds", 1e-9, 1.0).is_err());
+    }
 
     fn opt(mint_url: &str, price_per_step: u64, min_steps: u64) -> PricingOption {
         PricingOption {

@@ -596,6 +596,7 @@ async fn v1_consume(gateway: &str, mint: &str, amount: u64, interval: u64) -> an
         preferred_allotment: amount * 60_000,
         poll_interval_secs: interval,
         renewal_threshold: 0.2,
+        recovery_file: std::path::PathBuf::from(v1_compat::recovery::DEFAULT_RECOVERY_FILE),
     };
 
     tracing::info!(gateway = %base_url, "v1 client configured; starting consume loop");
@@ -747,6 +748,7 @@ async fn v1_auto(
         preferred_allotment: amount * 60_000,
         poll_interval_secs: interval,
         renewal_threshold: 0.2,
+        recovery_file: std::path::PathBuf::from(v1_compat::recovery::DEFAULT_RECOVERY_FILE),
     };
 
     let tracker_config = UsageTrackerConfig {
