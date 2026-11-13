@@ -2,11 +2,12 @@
 # Build a TollGate .ipk package for OpenWrt without the OpenWrt SDK.
 #
 # Uses cargo-zigbuild for cross-compilation and assembles the .ipk directly.
-# An OpenWrt .ipk is a gzip-compressed tar archive containing:
+# An OpenWrt .ipk is an `ar` archive whose members are exactly:
 #   ./debian-binary   — format version ("2.0\n")
 #   ./control.tar.gz  — package metadata, conffiles, pre/post scripts
 #   ./data.tar.gz     — the actual filesystem tree
-# (Debian .deb uses ar; OpenWrt .ipk uses tar.gz. NOT an ar archive.)
+# debian-binary, control.tar.gz, data.tar.gz — opkg refuses tar-based
+# containers ("Invalid package format").
 #
 # Usage:
 #   ./packaging/openwrt-ipk/build-ipk.sh [--arch <name>] [--features <list>] [--bin-dir <dir>]
@@ -304,11 +305,16 @@ ipk_tar() {
 ipk_tar "$IPK_WORK/control.tar.gz" "$CONTROL_DIR" .
 ipk_tar "$IPK_WORK/data.tar.gz"    "$DATA_DIR"    .
 
-# The outer .ipk container is a gzip-compressed tar — NOT an ar archive.
-# (Debian .deb uses ar; OpenWrt .ipk uses tar.gz.)
-# Entries must be named with ./ prefix, as ipkg-build produces.
+# The outer .ipk container is an ar archive (debian-binary,
+# control.tar.gz, data.tar.gz — in that order): opkg refuses tar-based
+# containers with "Invalid package format".
+command -v ar >/dev/null 2>&1 || {
+    echo "error: ar (binutils) is required to build the .ipk container" >&2
+    exit 1
+}
 mkdir -p "$DIST_DIR"
-ipk_tar "$DIST_DIR/$PKG_FILENAME" "$IPK_WORK" ./debian-binary ./control.tar.gz ./data.tar.gz
+( cd "$IPK_WORK" && \
+  ar rcD "$DIST_DIR/$PKG_FILENAME" ./debian-binary ./control.tar.gz ./data.tar.gz )
 
 echo ""
 echo "==> Done: dist/$PKG_FILENAME"
