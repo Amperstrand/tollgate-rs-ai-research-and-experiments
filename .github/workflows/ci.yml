@@ -122,8 +122,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install MIPS cross-compiler
-        run: sudo apt-get update && sudo apt-get install -y gcc-mips-linux-gnu
+      - name: MIPS cross-compiler (bootlin mirror)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Ubuntu 26 (resolute) DROPPED gcc-mips-linux-gnu from apt
+          # (verified: packages.ubuntu.com resolute has no such package),
+          # and musl.cc blocks GitHub Actions wholesale — so the apt install
+          # that worked through 2026-10 now fails every run. Use the bootlin
+          # mips32 glibc toolchain, mirrored as a release asset
+          # (sha256 677402719c545e49eb71c3d27a5f495af38f60463b40ed705e24e43a9834c137,
+          # verified in-CI). Toolchain prefix: mips-linux- (un-suffixed alias).
+          set -e
+          fetch_ok=0
+          for i in 1 2 3; do
+            gh release download mips32-glibc-mirror-2024.05 \
+              -p mips32-glibc.tar.xz -O /tmp/mips32.tar.xz \
+              && tar -tJf /tmp/mips32.tar.xz >/dev/null 2>&1 && { fetch_ok=1; break; }
+            echo "mirror download failed (attempt $i)"; sleep 5
+          done
+          # fallback: bootlin direct (not runner-blocked, but no SLA)
+          if [ "$fetch_ok" != 1 ]; then
+            curl -sfL --retry 3 --max-time 300 \
+              https://toolchains.bootlin.com/downloads/releases/toolchains/mips32/tarballs/mips32--glibc--stable-2024.05-1.tar.xz \
+              -o /tmp/mips32.tar.xz
+          fi
+          echo "677402719c545e49eb71c3d27a5f495af38f60463b40ed705e24e43a9834c137  /tmp/mips32.tar.xz" | sha256sum -c -
+          mkdir -p "$HOME/mips32" && tar -xJf /tmp/mips32.tar.xz -C "$HOME/mips32" --strip-components=1
+          echo "$HOME/mips32/bin" >> "$GITHUB_PATH"
       # rust-src only — do NOT `rustup target add`: nightly ships no
       # prebuilt std for mips-unknown-linux-gnu (tier-3 demotion; the
       # target-add step is what failed), and the target is builtin to
@@ -143,10 +169,10 @@ jobs:
           build-std = ["std", "panic_abort"]
 
           [target.mips-unknown-linux-gnu]
-          linker = "mips-linux-gnu-gcc"
+          linker = "mips-linux-gcc"
           CFG
       - name: Check tollgate-net for MIPS
         env:
-          CC_mips_unknown_linux_gnu: mips-linux-gnu-gcc
+          CC_mips_unknown_linux_gnu: mips-linux-gcc
           AR_mips_unknown_linux_gnu: mips-linux-gnu-ar
         run: cargo +nightly check --features v1-compat -Z build-std --target mips-unknown-linux-gnu -p tollgate-net
