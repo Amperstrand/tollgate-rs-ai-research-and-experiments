@@ -19,6 +19,7 @@ pub mod wallet;
 
 pub mod merchant;
 
+pub mod ln_grant;
 pub mod ln_quotes;
 
 pub mod mint_health;

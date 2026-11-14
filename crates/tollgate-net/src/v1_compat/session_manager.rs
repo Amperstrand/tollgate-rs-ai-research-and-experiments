@@ -203,6 +203,32 @@ impl SessionManager {
     /// # Errors
     ///
     /// Currently always returns `Ok`; errors are reserved for future use.
+    /// Handle a single gateway failure — stop only that gateway's session,
+    /// leaving other sessions on the same interface untouched.
+    pub async fn handle_gateway_disconnect(
+        &self,
+        gateway_ip: &str,
+    ) -> Result<(), SessionManagerError> {
+        let session = {
+            let mut sessions = self.sessions.write().await;
+            sessions.remove(gateway_ip)
+        };
+
+        if let Some(session) = session {
+            session.cancel.cancel();
+            if let Some(handle) = session.tracker_handle {
+                handle.join_handle.abort();
+            }
+            tracing::info!(
+                gateway_ip,
+                interface = %session.interface_name,
+                "Session removed for failed gateway"
+            );
+        }
+
+        Ok(())
+    }
+
     pub async fn handle_disconnect(&self, interface_name: &str) -> Result<(), SessionManagerError> {
         let mut sessions = self.sessions.write().await;
         let gateway_ips: Vec<String> = sessions
@@ -387,5 +413,130 @@ impl GatewayHandler for SessionManager {
                 .await
                 .map_err(|e| GatewayHandlerError::Other(e.to_string()))
         })
+    }
+
+    fn handle_gateway_disconnect(
+        &self,
+        gateway_ip: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), GatewayHandlerError>> + Send + '_>> {
+        let gateway_ip = gateway_ip.to_owned();
+        Box::pin(async move {
+            SessionManager::handle_gateway_disconnect(self, &gateway_ip)
+                .await
+                .map_err(|e| GatewayHandlerError::Other(e.to_string()))
+        })
+    }
+}
+
+#[cfg(test)]
+mod gateway_disconnect_tests {
+    use super::*;
+    use crate::v1_compat::client::V1ClientConfig;
+
+    async fn offline_manager() -> SessionManager {
+        let config = SessionManagerConfig {
+            client_config: V1ClientConfig {
+                gateway_ip: String::new(),
+                mac_address: "00:11:22:33:44:55".to_owned(),
+                our_mint_urls: vec!["https://testnut.cashu.exchange".to_owned()],
+                unit: "sat".to_owned(),
+                max_price_per_ms: 1.0,
+                max_price_per_byte: 1.0,
+                preferred_allotment: 60_000,
+                poll_interval_secs: 1,
+                renewal_threshold: 0.8,
+                recovery_file: std::path::PathBuf::from("/tmp/tollgate-v1c-test-recovery.txt"),
+            },
+            tracker_config: UsageTrackerConfig::default(),
+        };
+        let wallet = Arc::new(
+            CdkWallet::new("https://mint.example", [7u8; 64])
+                .await
+                .expect("offline wallet construction"),
+        );
+        SessionManager::new(config, wallet)
+    }
+
+    fn session_state(
+        manager: &SessionManager,
+        gateway_ip: &str,
+        interface: &str,
+    ) -> UpstreamSessionState {
+        UpstreamSessionState {
+            gateway_ip: gateway_ip.to_owned(),
+            interface_name: interface.to_owned(),
+            client: V1Client::new(manager.config.client_config.clone()),
+            tracker_handle: None,
+            cancel: CancellationToken::new(),
+            created_at: std::time::Instant::now(),
+            last_payment_at: None,
+            total_spent_sats: 0,
+            payment_count: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_disconnect_removes_only_that_gateway() {
+        let manager = offline_manager().await;
+        {
+            let mut sessions = manager.sessions.write().await;
+            sessions.insert(
+                "10.0.0.1".to_owned(),
+                session_state(&manager, "10.0.0.1", "eth0"),
+            );
+            sessions.insert(
+                "10.0.0.2".to_owned(),
+                session_state(&manager, "10.0.0.2", "eth0"),
+            );
+        }
+
+        manager
+            .handle_gateway_disconnect("10.0.0.1")
+            .await
+            .expect("gateway disconnect");
+
+        let sessions = manager.sessions.read().await;
+        assert_eq!(
+            sessions.len(),
+            1,
+            "only the failed gateway's session may be removed"
+        );
+        assert!(
+            sessions.contains_key("10.0.0.2"),
+            "the healthy sibling survives"
+        );
+        assert!(!sessions.contains_key("10.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn interface_disconnect_still_removes_all_on_interface() {
+        let manager = offline_manager().await;
+        {
+            let mut sessions = manager.sessions.write().await;
+            sessions.insert(
+                "10.0.0.1".to_owned(),
+                session_state(&manager, "10.0.0.1", "eth0"),
+            );
+            sessions.insert(
+                "10.0.0.2".to_owned(),
+                session_state(&manager, "10.0.0.2", "eth0"),
+            );
+            sessions.insert(
+                "10.0.0.3".to_owned(),
+                session_state(&manager, "10.0.0.3", "wlan0"),
+            );
+        }
+
+        manager
+            .handle_disconnect("eth0")
+            .await
+            .expect("interface disconnect");
+
+        let sessions = manager.sessions.read().await;
+        assert_eq!(sessions.len(), 1, "all eth0 sessions removed");
+        assert!(
+            sessions.contains_key("10.0.0.3"),
+            "other interfaces untouched"
+        );
     }
 }

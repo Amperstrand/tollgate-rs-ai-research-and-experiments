@@ -121,6 +121,13 @@ pub trait GatewayHandler: Send + Sync {
         &self,
         interface_name: &str,
     ) -> BoxFuture<'_, Result<(), GatewayHandlerError>>;
+
+    /// Called when a SINGLE gateway should be disconnected — other
+    /// sessions on the same interface must survive.
+    fn handle_gateway_disconnect(
+        &self,
+        gateway_ip: &str,
+    ) -> BoxFuture<'_, Result<(), GatewayHandlerError>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -435,12 +442,11 @@ impl Crowsnest {
                                 failures = *count,
                                 "Crowsnest: gateway unreachable after consecutive failures, disconnecting"
                             );
-                            if let Err(e) = handler.handle_disconnect(&config.interface_name).await
-                            {
+                            if let Err(e) = handler.handle_gateway_disconnect(gateway_ip).await {
                                 tracing::warn!(
                                     %gateway_ip,
                                     %e,
-                                    "Crowsnest: failed to disconnect sessions for interface"
+                                    "Crowsnest: failed to disconnect the failed gateway's session"
                                 );
                             }
                             // Reset to avoid repeatedly disconnecting.
