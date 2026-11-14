@@ -569,19 +569,19 @@ async fn consume(
     client::consume(peer, identity, &cfg.unit, mint, opts).await
 }
 
-#[cfg(feature = "v1-compat")]
 /// Default location of the v1 client's wallet seed (matches the server's
 /// /var/lib/tollgate state dir).
+#[cfg(feature = "v1-compat")]
 const V1_CLIENT_SEED_FILE: &str = "/var/lib/tollgate/v1-client-seed";
 
 /// Load the v1 client's wallet seed, generating and persisting a fresh
 /// cryptographically random one (0600) on first use. A hardcoded shared
 /// seed would give every deployment the same wallet identity — anyone
 /// knowing it could derive and spend the wallet's proofs.
+#[cfg(feature = "v1-compat")]
 fn load_or_generate_v1_seed(path: &str) -> anyhow::Result<[u8; 64]> {
     if std::path::Path::new(path).exists() {
-        let raw = std::fs::read(path)
-            .map_err(|e| anyhow::anyhow!("read seed {path}: {e}"))?;
+        let raw = std::fs::read(path).map_err(|e| anyhow::anyhow!("read seed {path}: {e}"))?;
         let seed: [u8; 64] = raw.try_into().map_err(|v: Vec<u8>| {
             anyhow::anyhow!("seed file {path} must be exactly 64 bytes, got {}", v.len())
         })?;
@@ -590,8 +590,7 @@ fn load_or_generate_v1_seed(path: &str) -> anyhow::Result<[u8; 64]> {
 
     let mut seed = [0u8; 64];
     use secp256k1::rand::RngCore;
-    secp256k1::rand::rngs::OsRng
-        .try_fill_bytes(&mut seed);
+    secp256k1::rand::rngs::OsRng.fill_bytes(&mut seed);
 
     let path_obj = std::path::Path::new(path);
     if let Some(parent) = path_obj.parent() {
@@ -599,19 +598,18 @@ fn load_or_generate_v1_seed(path: &str) -> anyhow::Result<[u8; 64]> {
             .map_err(|e| anyhow::anyhow!("create {}: {e}", parent.display()))?;
     }
     let tmp = format!("{path}.tmp");
-    std::fs::write(&tmp, seed)
-        .map_err(|e| anyhow::anyhow!("write seed: {e}"))?;
+    std::fs::write(&tmp, seed).map_err(|e| anyhow::anyhow!("write seed: {e}"))?;
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| anyhow::anyhow!("chmod seed: {e}"))?;
     }
-    std::fs::rename(&tmp, path)
-        .map_err(|e| anyhow::anyhow!("finalize seed: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| anyhow::anyhow!("finalize seed: {e}"))?;
     tracing::info!(path, "generated new v1 client wallet seed");
     Ok(seed)
 }
 
+#[cfg(feature = "v1-compat")]
 async fn v1_consume(gateway: &str, mint: &str, amount: u64, interval: u64) -> anyhow::Result<()> {
     use v1_compat::client::V1ClientConfig;
     use v1_compat::wallet::CdkWallet;
@@ -883,6 +881,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "v1-compat")]
 mod v1_seed_tests {
     use super::*;
 
@@ -916,7 +915,10 @@ mod v1_seed_tests {
         let path = dir.join("seed");
         std::fs::write(&path, [0u8; 8]).unwrap();
         let result = load_or_generate_v1_seed(path.to_str().unwrap());
-        assert!(result.is_err(), "a malformed seed file must fail loudly, not regenerate");
+        assert!(
+            result.is_err(),
+            "a malformed seed file must fail loudly, not regenerate"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
