@@ -174,5 +174,6 @@ jobs:
       - name: Check tollgate-net for MIPS
         env:
           CC_mips_unknown_linux_gnu: mips-linux-gcc
+          AR_mips_unknown_linux_gnu: mips-linux-ar
           AR_mips_unknown_linux_gnu: mips-linux-gnu-ar
         run: cargo +nightly check --features v1-compat -Z build-std --target mips-unknown-linux-gnu -p tollgate-net
