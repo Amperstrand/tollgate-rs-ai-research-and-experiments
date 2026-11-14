@@ -570,13 +570,55 @@ async fn consume(
 }
 
 #[cfg(feature = "v1-compat")]
+/// Default location of the v1 client's wallet seed (matches the server's
+/// /var/lib/tollgate state dir).
+const V1_CLIENT_SEED_FILE: &str = "/var/lib/tollgate/v1-client-seed";
+
+/// Load the v1 client's wallet seed, generating and persisting a fresh
+/// cryptographically random one (0600) on first use. A hardcoded shared
+/// seed would give every deployment the same wallet identity — anyone
+/// knowing it could derive and spend the wallet's proofs.
+fn load_or_generate_v1_seed(path: &str) -> anyhow::Result<[u8; 64]> {
+    if std::path::Path::new(path).exists() {
+        let raw = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("read seed {path}: {e}"))?;
+        let seed: [u8; 64] = raw.try_into().map_err(|v: Vec<u8>| {
+            anyhow::anyhow!("seed file {path} must be exactly 64 bytes, got {}", v.len())
+        })?;
+        return Ok(seed);
+    }
+
+    let mut seed = [0u8; 64];
+    use secp256k1::rand::RngCore;
+    secp256k1::rand::rngs::OsRng
+        .try_fill_bytes(&mut seed);
+
+    let path_obj = std::path::Path::new(path);
+    if let Some(parent) = path_obj.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("create {}: {e}", parent.display()))?;
+    }
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, seed)
+        .map_err(|e| anyhow::anyhow!("write seed: {e}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| anyhow::anyhow!("chmod seed: {e}"))?;
+    }
+    std::fs::rename(&tmp, path)
+        .map_err(|e| anyhow::anyhow!("finalize seed: {e}"))?;
+    tracing::info!(path, "generated new v1 client wallet seed");
+    Ok(seed)
+}
+
 async fn v1_consume(gateway: &str, mint: &str, amount: u64, interval: u64) -> anyhow::Result<()> {
     use v1_compat::client::V1ClientConfig;
     use v1_compat::wallet::CdkWallet;
 
     tracing::info!(%gateway, %mint, amount, interval, "v1 consume: paying upstream Go router");
 
-    let wallet = CdkWallet::new(mint, [0u8; 64])
+    let wallet = CdkWallet::new(mint, load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?)
         .await
         .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
 
@@ -655,7 +697,7 @@ async fn v1_consume_spilman(
     tracing::info!(sender = %service.sender_pubkey(), "SpilmanService initialized");
 
     tracing::info!("Creating CdkWallet to fund channel...");
-    let wallet = CdkWallet::new(mint, [0u8; 64])
+    let wallet = CdkWallet::new(mint, load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?)
         .await
         .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
     let token = wallet
@@ -733,7 +775,7 @@ async fn v1_auto(
     tracing::info!(%mint, amount, interval, "v1 auto: multi-gateway discovery mode");
 
     let wallet = Arc::new(
-        CdkWallet::new(mint, [0u8; 64])
+        CdkWallet::new(mint, load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?)
             .await
             .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?,
     );
@@ -837,5 +879,55 @@ mod tests {
             IntervalRange::new(5000, 60000),
         );
         assert_eq!(format_price_sheet(&sheet), "PRICESHEET products=1 mints=0");
+    }
+}
+
+#[cfg(test)]
+mod v1_seed_tests {
+    use super::*;
+
+    #[test]
+    fn seed_is_generated_once_and_stable_across_loads() {
+        let dir = std::env::temp_dir().join(format!("tg-seed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("seed").to_str().unwrap().to_owned();
+
+        let first = load_or_generate_v1_seed(&path).expect("first load generates");
+        assert_eq!(first.len(), 64);
+
+        let meta = std::fs::metadata(&path).expect("seed file exists after generation");
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            meta.permissions().mode() & 0o777,
+            0o600,
+            "seed file must be owner-only"
+        );
+
+        let second = load_or_generate_v1_seed(&path).expect("second load reads");
+        assert_eq!(first, second, "seed must be stable across loads");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn seed_generation_rejects_wrong_sized_files() {
+        let dir = std::env::temp_dir().join(format!("tg-seed-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("seed");
+        std::fs::write(&path, [0u8; 8]).unwrap();
+        let result = load_or_generate_v1_seed(path.to_str().unwrap());
+        assert!(result.is_err(), "a malformed seed file must fail loudly, not regenerate");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn no_hardcoded_seed_remains_in_client_commands() {
+        // The grep-level contract: the [0u8; 64] literal must not come back.
+        let src = include_str!("main.rs");
+        let needle = format!("CdkWallet::new(mint, [{}u8; 64])", 0);
+        assert!(
+            !src.contains(&needle),
+            "hardcoded v1 client seed reintroduced"
+        );
     }
 }
