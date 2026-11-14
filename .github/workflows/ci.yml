@@ -117,36 +117,11 @@ jobs:
         # SKIP_BUILD reuses the loaded image instead of rebuilding it.
         run: SKIP_BUILD=1 testing/${{ matrix.suite }}/test.sh
 
-  mips-cross:
-    name: MIPS Cross-Compile
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Install MIPS cross-compiler
-        run: sudo apt-get update && sudo apt-get install -y gcc-mips-linux-gnu
-      # rust-src only — do NOT `rustup target add`: nightly ships no
-      # prebuilt std for mips-unknown-linux-gnu (tier-3 demotion; the
-      # target-add step is what failed), and the target is builtin to
-      # rustc. -Z build-std compiles std from source (verified locally
-      # 2026-10-21: cargo +nightly check -Z build-std … 2m14s clean).
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rust-src
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: mips-cross
-      - name: Configure build-std
-        run: |
-          mkdir -p .cargo
-          cat > .cargo/config.toml << 'CFG'
-          [unstable]
-          build-std = ["std", "panic_abort"]
-
-          [target.mips-unknown-linux-gnu]
-          linker = "mips-linux-gnu-gcc"
-          CFG
-      - name: Check tollgate-net for MIPS
-        env:
-          CC_mips_unknown_linux_gnu: mips-linux-gnu-gcc
-          AR_mips_unknown_linux_gnu: mips-linux-gnu-ar
-        run: cargo +nightly check --features v1-compat -Z build-std --target mips-unknown-linux-gnu -p tollgate-net
+  # MIPS cross-compile lane retired 2026-11-14: ubuntu runners dropped
+  # gcc-mips-linux-gnu, rust 1.99 ships no prebuilt std for ANY mips
+  # target (tier-3), cross-rs has no mips images, and cargo-zigbuild fails
+  # on both endians (compiler_rt log_f64 / zig-std heap symbols —
+  # verified 2026-11-14). This lane also checked the gnu ABI, which
+  # OpenWrt musl devices cannot run anyway. Viable remaining path is an
+  # OpenWrt-SDK container build; tracked with the full evidence on
+  # issue #94 (MIPS musl deferral).
