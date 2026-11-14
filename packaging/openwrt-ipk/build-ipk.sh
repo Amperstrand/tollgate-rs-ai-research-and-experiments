@@ -194,6 +194,14 @@ install -d "$DATA_DIR/etc/init.d"
 install -m 0755 "$FILES_DIR/etc/init.d/tollgate" "$DATA_DIR/etc/init.d/tollgate"
 
 install -d "$DATA_DIR/etc/tollgate"
+
+# Captive portal site (vendored verbatim from
+# OpenTollGate/tollgate-module-basic-go @ b4f1551) — served by uhttpd
+# from /www with zero wiring.
+if [ -d "$FILES_DIR/www/tollgate-captive-portal-site" ]; then
+    install -d "$DATA_DIR/www/tollgate-captive-portal-site"
+    cp -a "$FILES_DIR/www/tollgate-captive-portal-site/." "$DATA_DIR/www/tollgate-captive-portal-site/"
+fi
 # Install the example config as the live config; marked as a conffile below so
 # opkg preserves user edits across upgrades.
 install -m 0600 "$FILES_DIR/etc/tollgate/tollgate.yaml.example" \
