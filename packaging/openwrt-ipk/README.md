@@ -1,14 +1,19 @@
 # TollGate OpenWrt Package
 
-This directory builds and installs the Rust **TollGate** node on any OpenWrt
-22.03+ router via the standard `opkg` package system.
+This directory builds and installs the Rust **TollGate** node on OpenWrt
+routers.
 
-Two build paths are provided:
+**Primary target: OpenWrt 25.x (latest stable).** 25.12+ dropped opkg
+entirely — packages are `apk`-format (`build-apk.sh`). The `.ipk` path is
+**LEGACY, for already-deployed 24.10 devices only**: it works, but it is
+no longer the focus of testing and will be removed when 24.10 leaves the
+bench.
 
-| Path | When to use | Tool |
-| --- | --- | --- |
-| [`build-ipk.sh`](build-ipk.sh) | Standalone, no SDK | `cargo-zigbuild` cross-compile + manual `.ipk` assembly |
-| [`Makefile`](Makefile) | Inside the OpenWrt SDK | Standard `make package/tollgate/compile` |
+| Path | Target | When to use | Tool |
+| --- | --- | --- | --- |
+| [`build-apk.sh`](build-apk.sh) | **25.12+ (primary)** | Standalone, no SDK | `cargo-zigbuild` cross-compile + `apk mkpkg` (apk-tools 3) |
+| [`build-ipk.sh`](build-ipk.sh) | 24.10 (legacy) | Updating existing deployments | `cargo-zigbuild` cross-compile + manual `.ipk` assembly |
+| [`Makefile`](Makefile) | Inside the OpenWrt SDK | Standard `make package/tollgate/compile` | |
 
 ## Package contents
 
