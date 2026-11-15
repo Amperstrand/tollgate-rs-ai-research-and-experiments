@@ -5,7 +5,28 @@ to production FIPS mesh networking with internet exit capabilities.
 
 ---
 
-## Phase 1 — FIPS Integration (In Progress)
+## Phase 0 — v1 Compat Layer (Complete)
+
+Go v1 TollGate protocol compatibility on OpenWrt — the payment layer
+that runs today while the FIPS-native design is finalized.
+
+- [x] Cashu wallet (CDK): NUT-02/04/05/07/09/13/23
+- [x] Lightning payments: BOLT11 invoice → mint → Driver admission
+- [x] Exactly-once grant registry (concurrent pollers safe)
+- [x] NUT-07 startup reconciliation (ambiguous receive recovery)
+- [x] NUT-09/13 seed-only wallet restore (disaster recovery)
+- [x] SSRF validation on checkstate (security)
+- [x] OpenWrt packaging: .apk (25.12+) + .ipk (24.10 legacy)
+- [x] VM E2E harness (QEMU, 24.10 + 25.12)
+- [x] Real-mint integration (testnut.cashu.space, keyset fees)
+- [x] Persistent wallet localstore (NUT-13 counter survives restarts)
+- [ ] Bench E2E (physical router validation) ← next
+- [ ] Payout flow (melt to Lightning address)
+- [ ] m2 runtime modules (session API, NDS valve, wifi/ubus/uci)
+
+---
+
+## Phase 1 — FIPS Integration (Design Complete, Implementation Paused)
 
 TollGate RS integrates with [FIPS](https://github.com/nicobao/fips) as the
 ideal network layer: cryptographic peer authentication, encrypted forwarding,
