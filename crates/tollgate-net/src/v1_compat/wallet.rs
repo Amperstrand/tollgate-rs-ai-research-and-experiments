@@ -68,6 +68,17 @@ pub struct MintResult {
     pub amount: u64,
 }
 
+/// Balance summary from a NUT-09/13 wallet restore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoredBalance {
+    /// Unspent proofs recovered to the localstore.
+    pub unspent: u64,
+    /// Proofs that were already spent (recovered but not usable).
+    pub spent: u64,
+    /// Proofs currently pending (in an in-flight transaction).
+    pub pending: u64,
+}
+
 // ---------------------------------------------------------------------------
 // CdkWallet
 // ---------------------------------------------------------------------------
@@ -664,6 +675,36 @@ impl CdkWallet {
     ///
     /// Returns proofs in standard Cashu JSON format.
     #[allow(clippy::missing_errors_doc)]
+    /// Restore the wallet from its seed using NUT-09/NUT-13.
+    ///
+    /// Regenerates all deterministic secrets from counter=0, queries the
+    /// mint's `/v1/restore` endpoint for blind signatures on each batch,
+    /// unblinds them, filters out spent proofs, and saves unspent proofs
+    /// to the localstore. Works against any mint that supports NUT-09.
+    ///
+    /// Returns the restored balance split into (unspent, spent, pending).
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn restore_from_seed(&self) -> anyhow::Result<RestoredBalance> {
+        let result = self
+            .wallet
+            .restore()
+            .await
+            .map_err(|e| anyhow::anyhow!("restore: {e}"))?;
+
+        tracing::info!(
+            unspent = u64::from(result.unspent),
+            spent = u64::from(result.spent),
+            pending = u64::from(result.pending),
+            "NUT-09/13 restore complete"
+        );
+
+        Ok(RestoredBalance {
+            unspent: u64::from(result.unspent),
+            spent: u64::from(result.spent),
+            pending: u64::from(result.pending),
+        })
+    }
+
     pub async fn unspent_proofs_json(&self) -> anyhow::Result<String> {
         let proofs = self
             .wallet
