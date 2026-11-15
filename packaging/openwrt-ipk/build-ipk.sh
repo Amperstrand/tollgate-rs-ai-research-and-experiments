@@ -1,4 +1,7 @@
 #!/bin/bash
+# LEGACY (OpenWrt 24.10 / opkg): 25.12+ uses apk — see build-apk.sh.
+# Kept functional for already-deployed 24.10 devices; not the test focus.
+#
 # Build a TollGate .ipk package for OpenWrt without the OpenWrt SDK.
 #
 # Uses cargo-zigbuild for cross-compilation and assembles the .ipk directly.

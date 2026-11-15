@@ -1,4 +1,5 @@
 #!/bin/sh
+# LEGACY (24.10 .ipk): the primary format is .apk (test-build-apk.sh).
 # The .ipk produced by build-ipk.sh must carry the three standard members
 # in an opkg-readable outer container.
 #

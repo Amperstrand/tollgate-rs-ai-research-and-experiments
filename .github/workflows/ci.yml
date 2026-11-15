@@ -80,6 +80,31 @@ jobs:
   # Build the single test image ONCE, then fan out integration suites that reuse
   # it (mirrors the FIPS build-once / run-many shape). The image is shared via a
   # docker-save artifact so each matrix leg loads it instead of rebuilding.
+  packaging:
+    name: Packaging (apk, 25.x primary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install apk-tools 3 (mkpkg)
+        run: |
+          set -eu
+          sudo apt-get install -y -q meson ninja-build
+          # apk-tools v3.0.9 source, mirrored in this repo's releases
+          # (GitLab blocks GitHub-runner IPs with 418/HTML). sha-pinned.
+          curl -sSL -o /tmp/apk-tools.tar.gz \
+            "https://github.com/Amperstrand/tollgate-rs-ai-research-and-experiments/releases/download/vendor-apk-tools-3.0.9/apk-t2.tar.gz"
+          echo "0063029a3eb228fd494b6804613ac53c30372a1a79ac83e23cefa78368767726  /tmp/apk-tools.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/apk-tools && tar -xzf /tmp/apk-tools.tar.gz -C /tmp/apk-tools --strip-components=1
+          meson setup /tmp/apk-tools/build /tmp/apk-tools >/dev/null
+          ninja -C /tmp/apk-tools/build >/dev/null
+          /tmp/apk-tools/build/src/apk --version
+      - name: apk package builds and parses (v3 magic)
+        run: sh packaging/openwrt-ipk/tests/test-build-apk.sh
+        env:
+          APK: /tmp/apk-tools/build/src/apk
+      - name: portal staged, no upstream fetches at build time
+        run: sh packaging/openwrt-ipk/tests/test-portal-staged.sh
+
   image:
     runs-on: ubuntu-latest
     needs: [check]

@@ -62,15 +62,14 @@ command -v qemu-system-x86_64 >/dev/null 2>&1 || skip "qemu-system-x86_64 not in
 command -v curl >/dev/null 2>&1 || fail "curl required"
 command -v ssh >/dev/null 2>&1 || fail "openssh client required"
 
-# Pick the newest lab image when not given one.
+# Pick the latest lab image when not given one (25.x only — the primary
+# target; pass --image explicitly for legacy 24.10 runs).
 if [ -z "${IMAGE:-}" ]; then
-    for cand in \
-        "$LAB_IMAGES/openwrt-25.12.6-x86-64.img" \
-        "$LAB_IMAGES/openwrt-24.10.1-x86-64-generic-ext4-combined.img"; do
-        if [ -f "$cand" ]; then IMAGE="$cand"; break; fi
+    for cand in $(ls -1 "$LAB_IMAGES"/openwrt-25.*-x86-64.img 2>/dev/null | sort -V | tail -1); do
+        IMAGE="$cand"
     done
 fi
-[ -n "${IMAGE:-}" ] || skip "no OpenWrt x86-64 image found (set --image)"
+[ -n "${IMAGE:-}" ] || skip "no OpenWrt 25.x x86-64 image found (set --image)"
 echo "==> image: $IMAGE"
 
 # Determine target format from the image version.
