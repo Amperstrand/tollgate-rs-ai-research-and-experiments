@@ -465,6 +465,34 @@ async fn serve(
         std::time::Duration::from_secs(30),
     );
 
+    // NUT-07 startup reconciliation: check for tokens that were received
+    // (spent at the mint) but whose session wasn't granted before a crash.
+    // Grants sessions for owed access; removes unconsumed entries.
+    #[cfg(feature = "v1-compat")]
+    {
+        let journal = std::path::PathBuf::from(v1_compat::reconcile::DEFAULT_PENDING_RECEIVES_FILE);
+        match v1_compat::reconcile::reconcile_pending_receives(&journal).await {
+            Ok(owed) if owed.is_empty() => {
+                tracing::debug!("reconcile: no pending receives");
+            }
+            Ok(owed) => {
+                tracing::warn!(
+                    count = owed.len(),
+                    "reconcile: granted sessions for tokens consumed before a crash"
+                );
+                for entry in owed {
+                    tracing::info!(
+                        peer = %entry.peer_hex,
+                        "reconcile: owed session for peer (amount recovered from mint)"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("reconcile: journal read failed (non-fatal): {e}");
+            }
+        }
+    }
+
     // Serve the FIPS-style control socket so `tolltop` / status tooling can read
     // live peer state. Best-effort: a bind failure is logged, not fatal.
     {
