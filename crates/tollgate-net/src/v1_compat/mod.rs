@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 pub mod pricing;
+pub mod reconcile;
 
 pub mod mac_resolver;
 

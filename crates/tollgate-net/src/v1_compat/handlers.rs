@@ -8,6 +8,7 @@
 //! breaking them breaks every Go-lineage client at its first poll).
 
 use super::ln_grant;
+use super::reconcile;
 use std::sync::Arc;
 
 use axum::Router;
@@ -68,6 +69,9 @@ fn decode_cashu_amount(token: &str) -> Option<u64> {
         .unwrap_or(0);
     Some(amount)
 }
+
+/// Journal for ambiguous-receive reconciliation (NUT-07 startup recovery).
+const PENDING_RECEIVES_FILE: &str = "/var/lib/tollgate/pending-receives.jsonl";
 
 pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
     Router::new()
@@ -153,7 +157,27 @@ async fn handle_post_payment(
         }
     };
 
+    // Journal the intent BEFORE the receive — if the process dies between
+    // the receive and the response, startup reconciliation checks NUT-07
+    // and grants the owed session (Go v1 ambiguous-outcome pattern).
+    let journal_path = std::path::Path::new(PENDING_RECEIVES_FILE);
+    let _ = reconcile::journal_pending_receive(
+        journal_path,
+        &reconcile::PendingReceive {
+            token: token.clone(),
+            peer_hex: peer_hex.clone(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+        },
+    );
+
     let result = adapter::admit_peer_with_token(&driver, &peer_hex, client_ip, &token).await;
+
+    // Journal cleanup: remove the entry on a definitive outcome
+    // (accepted or rejected — either way the token's fate is known).
+    let _ = reconcile::complete_pending_receive(journal_path, &token);
 
     if result.accepted {
         let (amount_sat, allotment) = extract_token_amount_and_allotment(&token, &config);
