@@ -130,6 +130,24 @@ enum Command {
         spilman: bool,
     },
     #[cfg(feature = "v1-compat")]
+    /// Restore a v1 wallet from its seed using NUT-09/13 (seed-only recovery).
+    ///
+    /// Regenerates deterministic secrets from the seed, queries the mint's
+    /// /v1/restore endpoint, recovers unspent proofs to the persistent
+    /// localstore. Works even after total database loss.
+    V1Restore {
+        /// Mint URL the wallet was funded on.
+        #[arg(long)]
+        mint: String,
+        /// Hex-encoded 64-byte wallet seed. If omitted, reads the client
+        /// seed file (default /var/lib/tollgate/v1-client-seed).
+        #[arg(long)]
+        seed: Option<String>,
+        /// Override the wallet database path (default /var/lib/tollgate/v1-client-wallet.sqlite).
+        #[arg(long)]
+        db: Option<String>,
+    },
+    #[cfg(feature = "v1-compat")]
     /// Pay upstream Go v1 TollGate routers with auto-discovery (multi-gateway mode).
     V1Auto {
         /// Mint URL to draw Cashu tokens on.
@@ -236,6 +254,40 @@ async fn main() -> anyhow::Result<()> {
             }
             #[cfg(not(feature = "spilman"))]
             v1_consume(&gateway, &mint, amount, interval).await
+        }
+        #[cfg(feature = "v1-compat")]
+        Command::V1Restore { mint, seed, db } => {
+            use v1_compat::wallet::CdkWallet;
+
+            let seed_bytes = match seed {
+                Some(hex_str) => {
+                    let raw = hex::decode(hex_str.trim())
+                        .map_err(|e| anyhow::anyhow!("invalid seed hex: {e}"))?;
+                    raw.try_into().map_err(|v: Vec<u8>| {
+                        anyhow::anyhow!("seed must be exactly 64 bytes, got {}", v.len())
+                    })?
+                }
+                None => load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?,
+            };
+
+            let db_path = db.as_deref().unwrap_or(V1_CLIENT_WALLET_DB);
+            let wallet = CdkWallet::with_store(&mint, seed_bytes, Some(db_path))
+                .await
+                .map_err(|e| anyhow::anyhow!("wallet init: {e}"))?;
+
+            println!("Restoring from seed against {mint}...");
+            let result = wallet
+                .restore_from_seed()
+                .await
+                .map_err(|e| anyhow::anyhow!("restore failed: {e}"))?;
+
+            println!("Restore complete:");
+            println!("  unspent: {} sat (saved to {db_path})", result.unspent);
+            println!("  spent:   {} sat (already used)", result.spent);
+            if result.pending > 0 {
+                println!("  pending: {} sat (in-flight)", result.pending);
+            }
+            anyhow::Ok(())
         }
         #[cfg(feature = "v1-compat")]
         Command::V1Auto {
