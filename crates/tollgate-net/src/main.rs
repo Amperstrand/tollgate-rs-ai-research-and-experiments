@@ -471,7 +471,7 @@ async fn build_v1_wallet(
         .filter(|s| !s.is_empty())
         .unwrap_or("http://localhost:3338");
 
-    let wallet = CdkWallet::new(mint_url, seed)
+    let wallet = CdkWallet::with_store(mint_url, seed, Some("/var/lib/tollgate/cdk-wallet.sqlite"))
         .await
         .map_err(|e| anyhow::anyhow!("wallet init: {e}"))?;
     Ok(std::sync::Arc::new(wallet))
@@ -574,6 +574,12 @@ async fn consume(
 #[cfg(feature = "v1-compat")]
 const V1_CLIENT_SEED_FILE: &str = "/var/lib/tollgate/v1-client-seed";
 
+/// Persistent localstore for the v1 client wallet — the NUT-13 derivation
+/// counter must survive restarts or every boot re-derives the same blinded
+/// messages (UNIQUE constraint failure at the mint, 2026-11-15).
+#[cfg(feature = "v1-compat")]
+const V1_CLIENT_WALLET_DB: &str = "/var/lib/tollgate/v1-client-wallet.sqlite";
+
 /// Load the v1 client's wallet seed, generating and persisting a fresh
 /// cryptographically random one (0600) on first use. A hardcoded shared
 /// seed would give every deployment the same wallet identity — anyone
@@ -616,9 +622,13 @@ async fn v1_consume(gateway: &str, mint: &str, amount: u64, interval: u64) -> an
 
     tracing::info!(%gateway, %mint, amount, interval, "v1 consume: paying upstream Go router");
 
-    let wallet = CdkWallet::new(mint, load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?)
-        .await
-        .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
+    let wallet = CdkWallet::with_store(
+        mint,
+        load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?,
+        Some(V1_CLIENT_WALLET_DB),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
 
     let base_url = if gateway.starts_with("http") {
         gateway.to_string()
@@ -701,9 +711,13 @@ async fn v1_consume_spilman(
     tracing::info!(sender = %service.sender_pubkey(), "SpilmanService initialized");
 
     tracing::info!("Creating CdkWallet to fund channel...");
-    let wallet = CdkWallet::new(mint, load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?)
-        .await
-        .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
+    let wallet = CdkWallet::with_store(
+        mint,
+        load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?,
+        Some(V1_CLIENT_WALLET_DB),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?;
     let token = wallet
         .create_token(amount, mint)
         .await
@@ -779,9 +793,13 @@ async fn v1_auto(
     tracing::info!(%mint, amount, interval, "v1 auto: multi-gateway discovery mode");
 
     let wallet = Arc::new(
-        CdkWallet::new(mint, load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?)
-            .await
-            .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?,
+        CdkWallet::with_store(
+            mint,
+            load_or_generate_v1_seed(V1_CLIENT_SEED_FILE)?,
+            Some(V1_CLIENT_WALLET_DB),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("wallet init failed: {e}"))?,
     );
 
     let client_config = V1ClientConfig {

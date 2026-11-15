@@ -79,11 +79,34 @@ impl CdkWallet {
     /// Returns an error if the localstore or wallet initialization fails.
     #[allow(clippy::missing_errors_doc)]
     pub async fn new(mint_url: &str, seed: [u8; 64]) -> anyhow::Result<Self> {
-        let localstore = Arc::new(
-            memory::empty()
-                .await
-                .map_err(|e| anyhow::anyhow!("localstore: {e}"))?,
-        );
+        Self::with_store(mint_url, seed, None).await
+    }
+
+    /// Create a wallet with an explicit localstore path. `None` falls back
+    /// to an in-memory store (tests only — the NUT-13 derivation counter
+    /// resets every boot, causing duplicate blinded messages on restart).
+    pub async fn with_store(
+        mint_url: &str,
+        seed: [u8; 64],
+        db_path: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let localstore = match db_path {
+            Some(path) => {
+                // Persistent sqlite: the NUT-13 derivation counter survives
+                // restarts, so each boot mints with fresh blinded messages
+                // (same seed + new counter = new derivation, per NUT-13).
+                Arc::new(
+                    cdk_sqlite::wallet::WalletSqliteDatabase::new(path)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("sqlite localstore {path}: {e}"))?,
+                )
+            }
+            None => Arc::new(
+                memory::empty()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("localstore: {e}"))?,
+            ),
+        };
         let wallet = cdk::Wallet::new(mint_url, CurrencyUnit::Sat, localstore, seed, None)
             .map_err(|e| anyhow::anyhow!("wallet init: {e}"))?;
         Ok(Self {
