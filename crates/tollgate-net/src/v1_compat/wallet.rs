@@ -6,6 +6,23 @@
 //! Connects to a Cashu mint (e.g., testnut.cashu.space) and handles real
 //! Cashu token operations: token receive (NUT-00), mint quote (NUT-04/05),
 //! melt, and multi-mint fallback.
+//!
+//! # Localstore persistence (NUT-13) — CRITICAL
+//!
+//! The wallet derives secrets AND blinding factors deterministically from
+//! the seed via a per-keyset counter (NUT-13). The counter lives in the
+//! LOCALSTORE and increments on each successful mint — different counter →
+//! different derivation → different blinded message. An ephemeral
+//! localstore (`memory::empty()`) resets the counter to 0 on every boot:
+//! same seed + same keyset + counter=0 → same blinded message → the mint
+//! rejects with `UNIQUE constraint failed: blind_signature.blinded_message`.
+//!
+//! Production wallets MUST use a persistent localstore (`with_store` with
+//! a `Some(path)` argument). Tests may use `None` (in-memory) for
+//! single-shot operations where the counter never advances.
+//!
+//! See: NUT-13 (deterministic secrets), NUT-09 (restore endpoint for
+//! seed-only recovery).
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -275,9 +292,17 @@ impl CdkWallet {
     pub async fn create_token(&self, amount: u64, _mint_url: &str) -> anyhow::Result<Vec<u8>> {
         let cdk_amount: cdk::Amount = cdk::Amount::from(amount);
         tracing::info!("[NUT-00] Creating Cashu token for {} sat", amount);
+        // include_fee: the mint checks sum(inputs) - fees == sum(outputs)
+        // (NUT-02 input_fee_ppk). Without this, any keyset with a non-zero
+        // fee rejects the transaction. SendOptions::default() sets
+        // include_fee to false — spec-blind spot found in the NUT audit.
+        let opts = SendOptions {
+            include_fee: true,
+            ..SendOptions::default()
+        };
         let prepared = self
             .wallet
-            .prepare_send(cdk_amount, SendOptions::default())
+            .prepare_send(cdk_amount, opts)
             .await
             .map_err(|e| anyhow::anyhow!("prepare_send: {e}"))?;
         let token = prepared
