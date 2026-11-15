@@ -683,14 +683,35 @@ fn load_or_generate_v1_seed(path: &str) -> anyhow::Result<[u8; 64]> {
         std::fs::create_dir_all(parent)
             .map_err(|e| anyhow::anyhow!("create {}: {e}", parent.display()))?;
     }
-    let tmp = format!("{path}.tmp");
-    std::fs::write(&tmp, seed).map_err(|e| anyhow::anyhow!("write seed: {e}"))?;
+
+    // O_EXCL create: if another concurrent process already created the
+    // file between our exists() check and this write, we LOSE the race
+    // — read their seed instead of silently overwriting with ours.
+    // (Found by 20-concurrent-client load test, 2026-11-15.)
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let mut file = match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| anyhow::anyhow!("chmod seed: {e}"))?;
-    }
-    std::fs::rename(&tmp, path).map_err(|e| anyhow::anyhow!("finalize seed: {e}"))?;
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Another process won the race — read their seed.
+            tracing::info!(path, "seed file created concurrently, reading existing");
+            let raw = std::fs::read(path).map_err(|e| anyhow::anyhow!("read seed {path}: {e}"))?;
+            return raw.try_into().map_err(|v: Vec<u8>| {
+                anyhow::anyhow!("seed file {path} must be exactly 64 bytes, got {}", v.len())
+            });
+        }
+        Err(e) => return Err(anyhow::anyhow!("create seed {path}: {e}")),
+    };
+    file.write_all(&seed)
+        .map_err(|e| anyhow::anyhow!("write seed: {e}"))?;
+    drop(file);
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| anyhow::anyhow!("chmod seed: {e}"))?;
+
     tracing::info!(path, "generated new v1 client wallet seed");
     Ok(seed)
 }
