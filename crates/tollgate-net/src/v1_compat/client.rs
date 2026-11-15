@@ -279,7 +279,13 @@ impl V1Client {
 
         if max_affordable == 0 || balance_sats == 0 {
             tracing::info!("No Cashu balance, attempting Lightning payment");
-            return self.connect_via_lightning(&ad, pricing, steps).await;
+            // The wall-clock steps clamp (min(max_affordable)=0 -> .max(1))
+            // would bill exactly ONE step via Lightning regardless of the
+            // requested amount — affordability does not apply when the
+            // invoice is paid with external sats. Bill the preferred
+            // purchase, floored at the advertised minimum.
+            let ln_steps = Self::ln_purchase_steps(preferred_steps, pricing.min_steps);
+            return self.connect_via_lightning(&ad, pricing, ln_steps).await;
         }
 
         // A partial balance below the minimum would buy an undersized
@@ -331,6 +337,14 @@ impl V1Client {
         });
 
         Ok(())
+    }
+
+    /// Steps to bill when the payment rides a Lightning invoice: the
+    /// client's preferred purchase, floored at the gateway's minimum.
+    /// (Wallet affordability is irrelevant — the invoice is paid with
+    /// external sats.)
+    fn ln_purchase_steps(preferred_steps: u64, min_steps: u64) -> u64 {
+        preferred_steps.max(min_steps).max(1)
     }
 
     async fn connect_via_lightning(
@@ -782,6 +796,19 @@ mod guard_tests {
 
     fn test_client(base_url: &str) -> V1Client {
         V1Client::new_with_base_url(make_config(), base_url)
+    }
+
+    #[test]
+    fn ln_purchase_steps_bills_preferred_not_affordability_clamp() {
+        // --amount 10 at 60_000 ms steps => preferred 10 steps; the old
+        // wall-clock clamp produced 1 (VM-observed: 1-sat invoices for a
+        // 10-sat request).
+        assert_eq!(V1Client::ln_purchase_steps(10, 1), 10);
+    }
+
+    #[test]
+    fn ln_purchase_steps_respects_minimum() {
+        assert_eq!(V1Client::ln_purchase_steps(3, 10), 10);
     }
 
     #[tokio::test]
