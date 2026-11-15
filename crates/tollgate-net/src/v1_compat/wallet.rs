@@ -338,6 +338,31 @@ impl CdkWallet {
     ///
     /// Returns an error if token creation fails.
     #[allow(clippy::missing_errors_doc)]
+    /// Create a token for the LN grant flow's self-referential swap.
+    ///
+    /// Uses `include_fee: false` because the Driver's receive path charges
+    /// the keyset input fee — using `include_fee: true` here would require
+    /// `amount + fee` in proofs, but we only minted `amount` from the
+    /// paid quote. The fee is the server's cost, not the customer's.
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn create_token_grant(&self, amount: u64) -> anyhow::Result<Vec<u8>> {
+        let cdk_amount = cdk::Amount::from(amount);
+        let opts = cdk::wallet::SendOptions {
+            include_fee: false,
+            ..cdk::wallet::SendOptions::default()
+        };
+        let prepared = self
+            .wallet
+            .prepare_send(cdk_amount, opts)
+            .await
+            .map_err(|e| anyhow::anyhow!("grant prepare_send: {e}"))?;
+        let token = prepared
+            .confirm(None)
+            .await
+            .map_err(|e| anyhow::anyhow!("grant confirm: {e}"))?;
+        Ok(token.to_string().into_bytes())
+    }
+
     pub async fn create_token_with_overpayment(
         &self,
         amount: u64,

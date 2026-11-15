@@ -93,8 +93,24 @@ impl LnMinter for CdkWallet {
     }
 
     fn create_token(&self, amount: u64) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send {
-        let mint = self.mint_url().to_owned();
-        async move { CdkWallet::create_token(self, amount, &mint).await }
+        // Self-referential swap: we mint proofs from a paid quote, then
+        // immediately re-serialize them as a token for our own Driver to
+        // verify and receive. The Driver's receive path charges the keyset
+        // input fee — using include_fee=true HERE would require
+        // amount+fee in proofs (which we don't have; we only minted
+        // `amount` from the paid quote).
+        //
+        // SendKind::OfflineExact + include_fee=false produces a token
+        // whose outputs sum to exactly `amount` from the proofs we hold.
+        // The Driver's receive will deduct the fee, and the customer's
+        // allotment is calculated from the nominal amount (the fee is
+        // the server's cost of doing business, not the customer's).
+        //
+        // Found against testnut.cashu.space input_fee_ppk=100
+        // (2026-11-15): 10-sat quote → 10 sats minted →
+        // create_token(10, include_fee=true) failed with
+        // "Insufficient funds".
+        async move { CdkWallet::create_token_grant(self, amount).await }
     }
 }
 
