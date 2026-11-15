@@ -263,8 +263,10 @@ impl CdkWallet {
     }
 
     /// NUT-07: POST `/v1/checkstate` and require every returned state to be UNSPENT.
+    /// SSRF-validated: the mint URL comes from the token (attacker-controllable).
     async fn check_proofs_unspent(&self, mint_base_url: &str, ys: &[String]) -> anyhow::Result<()> {
         let url = format!("{mint_base_url}/v1/checkstate");
+        super::ssrf::validate_url_no_ssrf(&url)?;
         let body = serde_json::json!({ "Ys": ys });
 
         let resp: serde_json::Value = self
