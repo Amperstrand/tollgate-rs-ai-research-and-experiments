@@ -11,6 +11,7 @@
 
 pub mod pricing;
 pub mod reconcile;
+pub mod ssrf;
 
 pub mod mac_resolver;
 

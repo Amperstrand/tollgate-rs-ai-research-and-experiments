@@ -121,9 +121,11 @@ pub async fn check_token_consumed(
         return Ok(ReconcileOutcome::NotConsumed);
     }
 
+    let url = format!("{mint_base}/v1/checkstate");
+    super::ssrf::validate_url_no_ssrf(&url).map_err(|e| e.to_string())?;
     let client = reqwest::Client::new();
     let resp: serde_json::Value = client
-        .post(format!("{mint_base}/v1/checkstate"))
+        .post(&url)
         .json(&serde_json::json!({ "Ys": ys }))
         .send()
         .await
