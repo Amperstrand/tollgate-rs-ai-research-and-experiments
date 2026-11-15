@@ -210,40 +210,43 @@ async fn handle_usage(
         Some(&ConnectInfo(addr)),
         config.trust_proxy_headers,
     );
+    // Go v1 parity: unresolved MAC and missing session both answer
+    // 200 "-1/-1" — clients parse "no session" from it, not an error.
     let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
         Some(h) => h,
         None => {
-            let json = serde_json::json!({"error": "unknown client"});
             return (
-                StatusCode::BAD_REQUEST,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
+                StatusCode::OK,
+                [("content-type", "text/plain")],
+                "-1/-1".to_owned(),
             )
                 .into_response();
         }
     };
     match adapter::get_usage_json(&driver, &peer_hex).await {
         Some(usage) => {
-            let json = serde_json::json!({
-                "remaining": usage.balance,
-                "allotment": usage.allotment,
-                "step_size": config.step_size,
-                "metric": config.metric,
-                "delivered": usage.delivered,
-            });
+            // Go v1 contract: plain text "usage/allotment" — the v1 client
+            // (and Go clients) parse exactly this shape (VM E2E 2026-11-15:
+            // the JSON body broke the client's poll loop). The driver
+            // reports allotment == balance == remaining while metering, so
+            // usage = consumed = allotment - balance.
+            let consumed = usage.allotment.saturating_sub(usage.balance);
             (
                 StatusCode::OK,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
+                [("content-type", "text/plain")],
+                format!("{consumed}/{}", usage.balance),
             )
                 .into_response()
         }
         None => {
-            let json = serde_json::json!({"error": "no active session"});
+            // Go v1 contract: /usage without a session answers 200 "-1/-1"
+            // plain text — the v1 client (and Go clients) parse this as
+            // "no session", not as an error. Found via VM E2E 2026-11-14:
+            // the 404 JSON broke the client at its very first step.
             (
-                StatusCode::NOT_FOUND,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
+                StatusCode::OK,
+                [("content-type", "text/plain")],
+                "-1/-1".to_owned(),
             )
                 .into_response()
         }
@@ -334,12 +337,18 @@ async fn handle_post_ln_invoice(
 
     match wallet.request_mint_quote(amount, mint_url).await {
         Ok(info) => {
+            // Go v1 contract: the client's LnInvoiceResponse requires
+            // state + access_granted on this arm too (found via VM E2E
+            // 2026-11-14 — the parse failed on the missing field).
             let json = serde_json::json!({
-                "status": 0,
+                "status": 1,
                 "quote": info.quote_id,
                 "invoice": info.invoice,
+                "mint_url": mint_url,
                 "amount": info.amount,
                 "expiry": info.expiry,
+                "state": "UNPAID",
+                "access_granted": false,
             });
             (
                 StatusCode::OK,
@@ -632,11 +641,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(
-            resp.status().is_client_error(),
-            "expected 4xx, got {}",
-            resp.status()
-        );
+        // Go v1 parity: no session answers 200 "-1/-1" plain text
+        // (contract change 2026-11-15, VM E2E — clients parse this as
+        // "no session", not an error).
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        assert_eq!(&body[..], b"-1/-1");
     }
 
     #[tokio::test]
@@ -899,7 +909,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        // Go v1 parity: unresolved MAC answers 200 "-1/-1" as well.
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        assert_eq!(&body[..], b"-1/-1");
     }
 
     #[tokio::test]

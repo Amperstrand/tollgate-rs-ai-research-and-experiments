@@ -623,7 +623,8 @@ async fn v1_consume(gateway: &str, mint: &str, amount: u64, interval: u64) -> an
     let base_url = if gateway.starts_with("http") {
         gateway.to_string()
     } else {
-        format!("http://{gateway}")
+        // Bare gateway implies the Go v1 default port 2121.
+        format!("http://{gateway}:2121")
     };
 
     let config = V1ClientConfig {
@@ -641,7 +642,11 @@ async fn v1_consume(gateway: &str, mint: &str, amount: u64, interval: u64) -> an
 
     tracing::info!(gateway = %base_url, "v1 client configured; starting consume loop");
 
-    let mut client = v1_compat::client::V1Client::new(config);
+    // new_with_base_url: gateway_ip in the config is a host[:port] for
+    // display, but v1_consume computed a full base URL above — passing it
+    // through V1Client::new double-prefixes http:// and the client 404s on
+    // every request (found via VM E2E, 2026-11-14).
+    let mut client = v1_compat::client::V1Client::new_with_base_url(config, &base_url);
     client
         .run(std::sync::Arc::new(wallet))
         .await
@@ -668,7 +673,8 @@ async fn v1_consume_spilman(
     let base_url = if gateway.starts_with("http") {
         gateway.to_string()
     } else {
-        format!("http://{gateway}")
+        // Bare gateway implies the Go v1 default port 2121.
+        format!("http://{gateway}:2121")
     };
 
     tracing::info!("Fetching advertisement from gateway...");
