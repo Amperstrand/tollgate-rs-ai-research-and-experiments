@@ -1,3 +1,12 @@
+//! v1_compat HTTP handlers — the Go-v1 wire-protocol surface.
+//!
+//! DUAL RESPONSE FORMATS BY DESIGN: the Go v1 client contract requires
+//! plain-text responses on some endpoints (`GET /usage` → `"u/a"`,
+//! `"-1/-1"` when absent) while the rest of this server answers JSON.
+//! Do NOT "unify" these — the text arms are load-bearing protocol
+//! compatibility (verified end-to-end against the v1 client, 2026-11-15;
+//! breaking them breaks every Go-lineage client at its first poll).
+
 use super::ln_grant;
 use std::sync::Arc;
 

@@ -370,7 +370,14 @@ impl V1Client {
             "\nPlease pay this invoice using your Lightning wallet and wait for the server to grant access."
         );
         println!("Quote ID: {quote}");
-        println!("Expires in: {} seconds", resp.expiry.unwrap_or(0));
+        // `expiry` is an absolute unix timestamp; display the remaining
+        // window, not the epoch (was printing e.g. "1794716382 seconds").
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let remaining = resp.expiry.unwrap_or(0).saturating_sub(now);
+        println!("Expires in: {remaining} seconds");
 
         let timeout = tokio::time::Duration::from_secs(300); // 5 minutes
         let poll_interval = tokio::time::Duration::from_secs(3);

@@ -44,6 +44,10 @@ apk_sanitize_version() {
     local v="$1" base rel
     base="${v%%-*}"
     rel="${v#*-}"
+    case "$base" in
+        *[0-9]*) ;;  # base looks like a version; keep it
+        *) base="1.0.0" ;;  # no digits at all — fallback
+    esac
     if [ "$rel" = "$v" ] || [ -z "$rel" ]; then
         printf '%s-r1' "$base"
     else
