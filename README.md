@@ -24,8 +24,11 @@ project and consumes the same `tollgate-core`.
 
 → **Start here:** [tollgate-intro.md](docs/design/core/tollgate-intro.md) — goals, architecture, payment model, security.
 
-> tollgate-rs is in the design phase. The protocol and design documents
-> are being finalized before implementation begins.
+> Implementation is well underway: the v1 compat layer (Go v1 TollGate
+> protocol on OpenWrt), Cashu wallet with NUT-02/04/05/07/09/13/23
+> compliance, Lightning payments, and OpenWrt packaging (.apk for 25.12+,
+> .ipk legacy for 24.10) are all working and CI-tested. The Spilman
+> channel design docs below describe the next phase.
 
 ## Overview
 
@@ -75,6 +78,27 @@ delta moves.
   survive connectivity loss
 - **Operator sovereignty** — the operator controls pricing, accepted mints,
   and peering policy
+
+## Implementation Status
+
+The `v1_compat` layer implements the Go v1 TollGate wire protocol (HTTP
+on port 2121, Nostr event advertisements, Cashu token payments, Lightning
+invoices) and runs on OpenWrt routers:
+
+- **Cashu wallet** — CDK-backed, NUT-02 (keysets + fees), NUT-04 (mint
+  quotes), NUT-05 (melt), NUT-07 (checkstate with SSRF validation),
+  NUT-09/13 (seed-only wallet restore), NUT-23 (BOLT11)
+- **Lightning payments** — zero-balance clients pay via BOLT11 invoice;
+  the server mints proofs and admits the peer through the Driver
+- **Exactly-once grant registry** — concurrent Lightning polls cannot
+  double-mint or double-grant
+- **Startup reconciliation** — NUT-07 checkstate on ambiguous receives
+  (crash recovery)
+- **Per-deployment wallet seeds** — cryptographically random, persisted
+  0600, survive restarts with NUT-13 derivation counters intact
+- **OpenWrt packaging** — `.apk` (primary, 25.12+) and `.ipk` (legacy,
+  24.10); portal vendored; CI regression-tested
+- **VM E2E harness** — repeatable QEMU-based package + payment testing
 
 ## Project Structure
 
