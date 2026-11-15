@@ -25,6 +25,9 @@ Re-run after changing Rust code. Topologies can then reuse it with
 |------|----------|---------|
 | `detect/` | gateway (parent) ↔ client (child) | the two nodes detect each other (mutual Announce) |
 | `bootstrap/` | fake mint ← gateway ← client | child pays a bootstrap token; gateway verifies it with the mint and grants access |
+| `drift/` | gateway with metering | metering drift between peers is detected and handled |
+| `exhaust/` | gateway ← client | session exhaustion and renewal behavior |
+| `metering/` | gateway with counters | per-unit metering reports are correct |
 | `protocol-disconnect/` | gateway ← python-client | client sends Disconnect; gateway handles teardown without crashing |
 | `protocol-reject/` | gateway ← python-client | client sends Reject; gateway handles rejection without crashing |
 
@@ -43,6 +46,18 @@ Run one:
 testing/detect/test.sh          # builds, runs, asserts, cleans up
 SKIP_BUILD=1 testing/detect/test.sh   # reuse an existing image
 ```
+
+## Packaging tests (`packaging/openwrt-ipk/tests/`)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test-build-apk.sh` | .apk package builds with v3 magic, parses (CI lane: Packaging) |
+| `test-build-ipk.sh` | .ipk container has the three standard members (legacy 24.10) |
+| `test-portal-staged.sh` | portal vendored in the package; no upstream fetches at build time |
+| `vm-e2e.sh` | boots OpenWrt 25.12 in QEMU, installs the package, verifies binary + portal |
+
+The VM E2E harness is a LOCAL BENCH tool (requires KVM); it skips
+gracefully when QEMU is absent. See the script header for setup.
 
 ## Adding a test
 
