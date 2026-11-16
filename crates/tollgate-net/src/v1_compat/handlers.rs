@@ -139,6 +139,27 @@ fn extract_mint_from_token(_token: &str) -> Option<String> {
     None
 }
 
+/// The pending-receive journal entry for a portal payment. Delegated
+/// (header-identified) payments carry the colon-form MAC so startup
+/// reconciliation (`grant_owed_receive`) credits the session-API store
+/// the delegated consumer reads, not just the driver; IP-resolved
+/// (portal) payments leave it unset.
+fn payment_journal_entry(
+    token: &str,
+    peer_hex: &str,
+    hdr_mac: Option<&str>,
+) -> reconcile::PendingReceive {
+    reconcile::PendingReceive {
+        token: token.to_owned(),
+        peer_hex: peer_hex.to_owned(),
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64,
+        mac: hdr_mac.map(str::to_owned),
+    }
+}
+
 async fn handle_get_details(
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
 ) -> Response {
@@ -197,25 +218,15 @@ async fn handle_post_payment(
     // Journal the intent BEFORE the receive — if the process dies between
     // the receive and the response, startup reconciliation checks NUT-07
     // and grants the owed session (Go v1 ambiguous-outcome pattern).
+    // Delegated (header-identified) payments carry the MAC so recovery
+    // also credits the session store; IP-resolved payments leave it unset.
     let journal_path = std::path::Path::new(PENDING_RECEIVES_FILE);
     let _ = reconcile::journal_pending_receive(
         journal_path,
-        &reconcile::PendingReceive {
-            token: token.clone(),
-            peer_hex: peer_hex.clone(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64,
-            mac: None,
-        },
+        &payment_journal_entry(&token, &peer_hex, hdr_mac.as_deref()),
     );
 
     let result = adapter::admit_peer_with_token(&driver, &peer_hex, peer_ip, &token).await;
-
-    // Journal cleanup: remove the entry on a definitive outcome
-    // (accepted or rejected — either way the token's fate is known).
-    let _ = reconcile::complete_pending_receive(journal_path, &token);
 
     if result.accepted {
         let (amount_sat, allotment) = extract_token_amount_and_allotment(&token, &config);
@@ -223,10 +234,34 @@ async fn handle_post_payment(
         // session-API store — the surface tollgate-auth reads via
         // GetSession/ReportUsage. m2 had one session system; this
         // keeps both ledgers consistent for delegated callers.
+        // The credit lands BEFORE the journal entry is completed (the
+        // #129 ordering): a crash between the receive and the credit is
+        // re-derived at startup from the journaled mac, and the
+        // token-keyed credit absorbs the re-derivation. Completing
+        // first would make that window unrecoverable; a raw
+        // add_allotment would double-credit on re-derivation.
         if let (Some(mac), Some(store)) = (&hdr_mac, &sessions) {
-            let _ = store
-                .add_allotment(mac, &config.metric, allotment, now_secs())
-                .await;
+            match store
+                .credit_for_token(mac, &config.metric, allotment, &token, now_secs())
+                .await
+            {
+                Ok(_) => {
+                    let _ = reconcile::complete_pending_receive(journal_path, &token);
+                }
+                Err(e) => {
+                    // Credit failed: keep the entry journaled so startup
+                    // recovery re-derives the owed store credit.
+                    tracing::warn!(
+                        mac,
+                        error = %e,
+                        "delegated store credit failed — journal entry kept for recovery"
+                    );
+                }
+            }
+        } else {
+            // Journal cleanup: remove the entry on a definitive outcome
+            // (accepted or rejected — either way the token's fate is known).
+            let _ = reconcile::complete_pending_receive(journal_path, &token);
         }
 
         let session = merchant::CustomerSession {
@@ -252,6 +287,9 @@ async fn handle_post_payment(
             ),
         }
     } else {
+        // Journal cleanup: a rejection is a definitive outcome (nothing
+        // was consumed by this payment), so nothing can be owed.
+        let _ = reconcile::complete_pending_receive(journal_path, &token);
         if let Some(tracker) = &config.mint_health {
             let reason = result.reason.as_deref().unwrap_or("");
             if !reason.contains("spent") && !reason.contains("Spent") {
@@ -892,6 +930,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn header_payment_journal_entry_carries_mac() {
+        // Regression (money-invariant audit 2026-11-16): the portal
+        // payment path journaled mac: None even for delegated
+        // (X-TollGate-MAC) payments, so crash recovery granted driver
+        // credit only — the session store never saw the owed session.
+        let entry = payment_journal_entry("cashuBhdr", "aabb", Some("02:50:00:00:00:42"));
+        assert_eq!(entry.mac.as_deref(), Some("02:50:00:00:00:42"));
+        assert_eq!(entry.token, "cashuBhdr");
+        assert_eq!(entry.peer_hex, "aabb");
+    }
+
+    #[test]
+    fn portal_payment_journal_entry_has_no_mac() {
+        let entry = payment_journal_entry("cashuBportal", "aabb", None);
+        assert_eq!(entry.mac, None);
+    }
+
+    #[test]
+    fn header_payment_journal_entry_keeps_mac_on_disk() {
+        // Inspect the journal FILE the way startup reconcile parses it:
+        // the serialized entry a header payment writes must keep the mac.
+        let dir = std::env::temp_dir().join(format!("tg-hdr-journal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pending.jsonl");
+        let entry = payment_journal_entry("cashuBhdr2", "aabb", Some("02:50:00:00:00:43"));
+        reconcile::journal_pending_receive(&path, &entry).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(text.trim()).expect("journal line is valid JSON");
+        assert_eq!(parsed["mac"], "02:50:00:00:00:43");
+        assert_eq!(parsed["token"], "cashuBhdr2");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
