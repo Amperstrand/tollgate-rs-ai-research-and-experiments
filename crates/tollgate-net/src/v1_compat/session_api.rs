@@ -282,11 +282,11 @@ fn build_session_response(session: &CustomerSession) -> SessionResponse {
 }
 
 fn store_error(e: impl std::fmt::Display) -> Response {
-    (
+    error_json(
         StatusCode::INTERNAL_SERVER_ERROR,
-        format!("{{\"error\":\"session store error: {e}\"}}"),
+        &format!("session store error: {e}"),
+        None,
     )
-        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -373,11 +373,7 @@ async fn handle_delete_session(
     let mac = normalize_mac(&mac);
 
     match state.sessions.remove(&mac).await {
-        Ok(Some(_)) => (
-            StatusCode::OK,
-            format!("{{\"deleted\":true,\"session_id\":\"{mac}\"}}"),
-        )
-            .into_response(),
+        Ok(Some(_)) => json_ok(&serde_json::json!({"deleted": true, "session_id": mac})),
         Ok(None) => error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac)),
         Err(e) => store_error(e),
     }
@@ -739,6 +735,244 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    async fn body_json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).expect("response body is valid JSON")
+    }
+
+    fn delete(mac: &str) -> Request<Body> {
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/sessions/{mac}"))
+            .header("x-api-key", "test-key")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    fn usage(mac: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/sessions/{mac}/usage"))
+            .header("content-type", "application/json")
+            .header("x-api-key", "test-key")
+            .body(Body::from(
+                r#"{"input_octets":100,"output_octets":200,"session_time":5}"#,
+            ))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn delete_session_happy_path() {
+        let state = test_state();
+        state
+            .sessions
+            .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 60_000, now_secs())
+            .await
+            .unwrap();
+        let app = build_session_router(state.clone());
+
+        let resp = app
+            .clone()
+            .oneshot(delete("aa:bb:cc:dd:ee:ff"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+        let body = body_json(resp).await;
+        assert_eq!(
+            body,
+            serde_json::json!({"deleted": true, "session_id": "aa:bb:cc:dd:ee:ff"})
+        );
+
+        assert!(
+            state
+                .sessions
+                .get("aa:bb:cc:dd:ee:ff")
+                .await
+                .unwrap()
+                .is_none(),
+            "session must be gone from the store"
+        );
+        let resp = app.oneshot(delete("aa:bb:cc:dd:ee:ff")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_session_not_found() {
+        let app = build_session_router(test_state());
+        let resp = app.oneshot(delete("aa:bb:cc:dd:ee:ff")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = body_json(resp).await;
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "session not found", "session_id": "aa:bb:cc:dd:ee:ff"})
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_session_requires_api_key() {
+        let state = test_state();
+        state
+            .sessions
+            .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 60_000, now_secs())
+            .await
+            .unwrap();
+        let app = build_session_router(state.clone());
+
+        for req in [
+            Request::builder()
+                .method("DELETE")
+                .uri("/sessions/aa:bb:cc:dd:ee:ff")
+                .body(Body::empty())
+                .unwrap(),
+            Request::builder()
+                .method("DELETE")
+                .uri("/sessions/aa:bb:cc:dd:ee:ff")
+                .header("x-api-key", "wrong-key")
+                .body(Body::empty())
+                .unwrap(),
+        ] {
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        assert!(
+            state
+                .sessions
+                .get("aa:bb:cc:dd:ee:ff")
+                .await
+                .unwrap()
+                .is_some(),
+            "unauthorized delete must not remove the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_session_escapes_quote_in_mac() {
+        // Regression (audit 2026-11-16): the delete response was built with
+        // format! — a path MAC carrying a quote produced invalid JSON /
+        // injected fields. axum percent-decodes the path segment, so %22
+        // arrives as a literal `"` in the MAC.
+        let state = test_state();
+        state
+            .sessions
+            .add_allotment("aa:bb:cc:dd:ee:\"ff", "milliseconds", 60_000, now_secs())
+            .await
+            .unwrap();
+        let app = build_session_router(state);
+
+        let resp = app.oneshot(delete("aa:bb:cc:dd:ee:%22ff")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(body["deleted"], serde_json::json!(true));
+        assert_eq!(
+            body["session_id"],
+            serde_json::json!("aa:bb:cc:dd:ee:\"ff"),
+            "decoded quote must round-trip escaped, not break the JSON"
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_happy_path() {
+        let state = test_state();
+        state
+            .sessions
+            .add_allotment("aa:bb:cc:dd:ee:ff", "bytes", 5_000, now_secs())
+            .await
+            .unwrap();
+        let app = build_session_router(state.clone());
+
+        let resp = app.oneshot(usage("aa:bb:cc:dd:ee:ff")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+        let body = body_json(resp).await;
+        assert_eq!(body["session_id"], serde_json::json!("aa:bb:cc:dd:ee:ff"));
+        assert_eq!(body["access_level"], serde_json::json!("active"));
+        assert_eq!(body["allotment"], serde_json::json!(5_000));
+        assert_eq!(body["remaining_quota"], serde_json::json!(5_000 - 300));
+        assert_eq!(body["metric"], serde_json::json!("bytes"));
+        assert_eq!(body["is_final"], serde_json::json!(false));
+        assert!(
+            body["last_usage_update"].is_string(),
+            "usage report must set last_usage_update: {}",
+            body["last_usage_update"]
+        );
+
+        let session = state
+            .sessions
+            .get("aa:bb:cc:dd:ee:ff")
+            .await
+            .unwrap()
+            .expect("session still exists");
+        let snap = session.last_external_usage.expect("usage recorded");
+        assert_eq!(snap.input_octets, 100);
+        assert_eq!(snap.output_octets, 200);
+    }
+
+    #[tokio::test]
+    async fn usage_missing_session_is_not_found() {
+        let app = build_session_router(test_state());
+        let resp = app.oneshot(usage("aa:bb:cc:dd:ee:ff")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = body_json(resp).await;
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "session not found", "session_id": "aa:bb:cc:dd:ee:ff"})
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_requires_api_key() {
+        let state = test_state();
+        state
+            .sessions
+            .add_allotment("aa:bb:cc:dd:ee:ff", "bytes", 5_000, now_secs())
+            .await
+            .unwrap();
+        let app = build_session_router(state.clone());
+
+        for key in [None, Some("wrong-key")] {
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri("/sessions/aa:bb:cc:dd:ee:ff/usage")
+                .header("content-type", "application/json");
+            if let Some(k) = key {
+                builder = builder.header("x-api-key", k);
+            }
+            let resp = app
+                .clone()
+                .oneshot(
+                    builder
+                        .body(Body::from(
+                            r#"{"input_octets":100,"output_octets":200,"session_time":5}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let session = state
+            .sessions
+            .get("aa:bb:cc:dd:ee:ff")
+            .await
+            .unwrap()
+            .expect("session still exists");
+        assert!(
+            session.last_external_usage.is_none(),
+            "unauthorized usage must not be recorded"
+        );
     }
 
     #[test]

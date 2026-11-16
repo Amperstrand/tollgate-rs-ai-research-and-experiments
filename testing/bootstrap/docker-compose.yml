@@ -37,6 +37,9 @@ services:
     command: ["--config", "/etc/tollgate/tollgate.yaml", "serve"]
     environment:
       RUST_LOG: info
+      # The fake mint runs on the compose private network; the SSRF guard
+      # blocks private ranges by default. Test-harness-only opt-in.
+      TOLLGATE_SSRF_ALLOW_PRIVATE_MINTS: "1"
     networks:
       tollnet:
         aliases:

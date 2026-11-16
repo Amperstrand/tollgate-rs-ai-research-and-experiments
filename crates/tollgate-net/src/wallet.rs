@@ -173,6 +173,12 @@ impl BootstrapWallet {
     /// NUT-07: check that all of `ys` are UNSPENT at the mint.
     async fn check_proofs_unspent(&self, mint_base_url: &str, ys: &[String]) -> anyhow::Result<()> {
         let url = format!("{mint_base_url}/v1/checkstate");
+        // The mint URL comes from the token. With a non-empty
+        // accepted_mints list the allowlist already constrains it, but an
+        // empty list accepts ANY mint — so the SSRF check is what keeps a
+        // crafted token from turning the tollgate into a proxy for
+        // internal services (metadata endpoints, localhost admin panels).
+        super::ssrf::validate_url_no_ssrf(&url)?;
         let body = serde_json::json!({ "Ys": ys });
 
         let resp: serde_json::Value = self
@@ -299,6 +305,53 @@ mod tests {
         let result = rt().block_on(wallet.verify(SAMPLE_TOKEN));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not accepted"));
+    }
+
+    fn token_with_mint(mint_url: &str) -> String {
+        use std::str::FromStr;
+
+        use cashu::Amount;
+        use cashu::nuts::{CurrencyUnit, Id, Proof, PublicKey, Token, TokenV3};
+
+        let proof = Proof::new(
+            Amount::from(1),
+            "00d5535745b46336".parse::<Id>().expect("valid keyset id"),
+            "ssrf-test-secret".parse().expect("secret"),
+            PublicKey::from_str(
+                "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            )
+            .expect("valid compressed pubkey"),
+        );
+        Token::TokenV3(
+            TokenV3::new(
+                mint_url.parse().expect("mint url"),
+                vec![proof],
+                None,
+                Some(CurrencyUnit::Sat),
+            )
+            .expect("token"),
+        )
+        .to_string()
+    }
+
+    #[test]
+    fn rejects_internal_mint_url_before_any_http_call() {
+        // Empty accepted_mints skips the allowlist entirely, so the SSRF
+        // validator is the only guard: a token whose mint points at the
+        // cloud metadata service or a localhost service port must be
+        // rejected by the validator — not by a failed connection attempt.
+        for mint in ["http://169.254.169.254", "http://127.0.0.1:22"] {
+            let wallet = BootstrapWallet::new(vec![]);
+            let token = token_with_mint(mint);
+            let err = rt()
+                .block_on(wallet.verify(&token))
+                .expect_err("internal mint URL must be rejected")
+                .to_string();
+            assert!(
+                err.contains("SSRF"),
+                "expected SSRF rejection for {mint}, got: {err}"
+            );
+        }
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod control_server;
 mod driver;
 mod server;
 mod ssl;
+mod ssrf;
 mod wallet;
 
 #[cfg(feature = "v1-compat")]

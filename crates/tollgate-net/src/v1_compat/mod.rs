@@ -11,7 +11,9 @@
 
 pub mod pricing;
 pub mod reconcile;
-pub mod ssrf;
+// Root re-export: the mainline bootstrap wallet validates checkstate URLs
+// through this and compiles without `v1-compat` (where the module used to live).
+pub(crate) use crate::ssrf;
 
 pub mod mac_resolver;
 
