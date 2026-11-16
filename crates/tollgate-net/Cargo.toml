@@ -52,6 +52,8 @@ netlink-packet-core = { version = "0.8", optional = true }
 cdk-spilman = { git = "https://github.com/SatsAndSports/cashu_spilman_channels", branch = "main", optional = true }
 # ssl: parse PEM cert expiry for `tollgate ssl status`
 x509-parser = "0.17"
+# v1-compat session persistence; =0.31 keeps libsqlite3-sys on 0.28 alongside cdk-sqlite
+rusqlite = { version = "=0.31", optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
@@ -63,7 +65,7 @@ workspace = true
 
 [features]
 default = []
-v1-compat = ["dep:nostr", "dep:cdk", "dep:cdk-sqlite", "dep:base64", "dep:async-trait"]
+v1-compat = ["dep:nostr", "dep:cdk", "dep:cdk-sqlite", "dep:base64", "dep:async-trait", "dep:rusqlite"]
 openwrt = [
     "tokio/process",
     "dep:async-trait",

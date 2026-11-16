@@ -482,7 +482,9 @@ async fn serve(
     let session_state = {
         let v1_config = server::build_v1_config(&cfg.v1_compat, v1_wallet.clone());
         std::sync::Arc::new(v1_compat::session_api::SessionApiState {
-            sessions: std::sync::Arc::new(v1_compat::session_store::InMemorySessionStore::new()),
+            sessions: v1_compat::session_store::session_store_from_config(
+                cfg.v1_compat.session_store_path.as_deref(),
+            ),
             config: v1_config,
             driver: driver.clone(),
             api_key: std::env::var("TOLLGATE_API_KEY").ok(),

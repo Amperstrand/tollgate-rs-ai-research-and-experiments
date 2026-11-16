@@ -165,6 +165,10 @@ pub struct V1CompatConfig {
     /// Profit-share recipients for the background payout task. Each entry
     /// gets a proportional share of the wallet balance above min_payout.
     pub profit_share: Vec<ProfitShareEntry>,
+    /// SQLite file for persistent v1-compat session storage. Unset = sessions
+    /// live in memory only and are lost on restart.
+    #[serde(default)]
+    pub session_store_path: Option<String>,
 }
 
 /// A profit-share payout recipient.

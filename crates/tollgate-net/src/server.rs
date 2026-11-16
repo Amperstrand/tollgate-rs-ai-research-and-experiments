@@ -158,8 +158,8 @@ pub fn router(
         // same store the serving router reads.
         let session_state = session_state.unwrap_or_else(|| {
             std::sync::Arc::new(crate::v1_compat::session_api::SessionApiState {
-                sessions: std::sync::Arc::new(
-                    crate::v1_compat::session_store::InMemorySessionStore::new(),
+                sessions: crate::v1_compat::session_store::session_store_from_config(
+                    cfg.v1_compat.session_store_path.as_deref(),
                 ),
                 config: v1_config.clone(),
                 driver: v1_driver.clone(),
