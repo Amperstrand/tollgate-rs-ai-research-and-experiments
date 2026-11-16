@@ -7,10 +7,14 @@
 //!
 //! This module closes that gap:
 //! 1. BEFORE the receive, journal the token + peer to a pending file.
-//! 2. AFTER successful admission, remove the entry.
+//! 2. AFTER the credit lands (session store + journal-completion
+//!    bracketing), remove the entry.
 //! 3. On startup, read pending entries and check NUT-07 for each token:
 //!    - SPENT → the receive succeeded but the session wasn't granted →
-//!      grant it now (the customer is owed access).
+//!      return it as owed; the caller grants it (idempotently — the
+//!      session store dedupes by token) and only then removes the
+//!      entry. A crash between grant and removal is re-derived next
+//!      boot and absorbed by the dedupe.
 //!    - UNSPENT → the receive never completed → remove the entry (the
 //!      customer keeps their token; nothing was consumed).
 //!
@@ -216,7 +220,11 @@ pub struct OwedReceive {
 }
 
 /// Reconcile all pending receives on startup. Returns the entries that are
-/// owed sessions (the caller grants them) and removes resolved entries.
+/// owed sessions for the caller to grant; entries that resolve as owed or
+/// indeterminate STAY in the journal — the caller removes an owed entry
+/// with [`complete_pending_receive`] only after its grant lands, so a
+/// crash between grant and completion re-derives the grant next boot
+/// (safe: crediting is token-idempotent) instead of losing it.
 pub async fn reconcile_pending_receives(journal_path: &Path) -> std::io::Result<Vec<OwedReceive>> {
     let entries = read_journal(journal_path)?;
     if entries.is_empty() {
@@ -243,6 +251,8 @@ pub async fn reconcile_pending_receives(journal_path: &Path) -> std::io::Result<
                     entry: entry.clone(),
                     amount_sat,
                 });
+                // Kept journaled: the caller completes it after granting.
+                unresolved.push(entry);
             }
             Ok(ReconcileOutcome::NotConsumed) => {
                 tracing::info!(

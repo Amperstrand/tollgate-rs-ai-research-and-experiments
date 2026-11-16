@@ -199,33 +199,46 @@ journal at `/var/lib/tollgate/pending-receives.jsonl`):
    touching the mint. Delegated receives set `mac` (the colon-form
    store key needed to credit the owed session later); portal
    receives leave it unset.
-2. **Complete after a definitive outcome.** Accepted or rejected, the
-   token's fate is known and the entry is removed from the journal.
+2. **Complete after the credit lands.** A rejected token's fate is
+   known (nothing consumed by us) and its entry is removed at once. An
+   accepted session-API receive keeps its entry until the session store
+   is credited — only then is it removed. Completing before the credit
+   would make a crash between the two unrecoverable: token spent,
+   journal empty, no session (the chaos-reproduced lost-credit window).
 3. **Reconcile at startup** (`main.rs`, gated on the `v1-compat`
    feature): each surviving journaled token is checked at its mint
    via NUT-07 `POST {mint}/v1/checkstate`, keying state by
    `Y = hash_to_curve(secret)` — the C value never matches mint
    state, so any other derivation silently reads spent tokens as
    unspent. Outcomes:
-   - **All proofs SPENT** → the receive succeeded but the session was
-     never granted → `grant_owed_receive`: the driver credits the
-     peer (amount × 1000, millisat balance), and — for delegated
-     entries (`mac` set) — the session store is credited with the
-     allotment the mint pricing implies. A zero owed amount is
-     refused outright.
-   - **UNSPENT** → the receive never completed; the customer keeps
-     the token. Entry dropped.
-   - **Partially spent / mint unreachable / parse error** →
-     indeterminate; the entry stays journaled for the next boot.
+    - **All proofs SPENT** → the receive succeeded but the session was
+      never granted → `grant_owed_receive`: the driver credits the
+      peer (amount × 1000, millisat balance), and — for delegated
+      entries (`mac` set) — the session store is credited with the
+      allotment the mint pricing implies. A zero owed amount is
+      refused outright. The grant is **token-idempotent** (see
+      below), and the entry is removed only after the grant lands.
+    - **UNSPENT** → the receive never completed; the customer keeps
+      the token. Entry dropped.
+    - **Partially spent / mint unreachable / parse error** →
+      indeterminate; the entry stays journaled for the next boot.
 
 Safety properties:
 
 - The whole startup pass runs under a **30-second timeout**; on
   timeout the journal is left intact and retried at the next boot
   (non-fatal).
-- **A grant failure re-journals the entry** — the debt record is
-  never lost, so a transient store/mint error cannot silently
+- **Owed and indeterminate entries stay journaled until their grant
+  lands** — the debt record is never lost, so a transient store/mint
+  error or a crash between grant and completion cannot silently
   swallow an owed session.
+- **Recovery crediting is idempotent per token**: the session store's
+  `credit_for_token` claims the token and adds the allotment in one
+  atomic step (the SQLite backend records claimed tokens in a
+  `credited_tokens` table). A journal entry re-derived after a crash
+  between grant and completion is therefore a no-op, not a double
+  credit — the property that makes "keep the entry until granted"
+  safe with a persistent store.
 - Journal robustness: garbage lines are skipped on read, and rewrites
   go through a temp file + rename.
 
@@ -289,10 +302,11 @@ knob:
   one exception: owed delegated receives recovered by the startup
   journal (section 3) re-credit the store.
 - **Set to a file path** — persistent SQLite (`SqliteSessionStore`,
-  `sessions(mac TEXT PRIMARY KEY, session_json TEXT)` rows). Sessions
-  survive restarts. If the configured database cannot be opened the
-  server logs an error and degrades to the in-memory store rather
-  than failing to start.
+  `sessions(mac TEXT PRIMARY KEY, session_json TEXT)` rows plus a
+  `credited_tokens` dedupe table backing idempotent recovery, section
+  3). Sessions survive restarts. If the configured database cannot be
+  opened the server logs an error and degrades to the in-memory store
+  rather than failing to start.
 
 The SQLite backend links `libsqlite3-sys 0.28`, unified with
 cdk-sqlite via a `rusqlite =0.31` pin in `crates/tollgate-net` —
