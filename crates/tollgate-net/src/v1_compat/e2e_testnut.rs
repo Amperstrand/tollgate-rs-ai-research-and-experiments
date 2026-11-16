@@ -154,4 +154,14 @@ async fn e2e_bootstrap_and_topup_with_real_tokens() {
     println!("phase2 -> {status} {body}");
     assert_eq!(status, reqwest::StatusCode::OK);
     assert_eq!(body["kind"], serde_json::json!(1022));
+
+    // The delegated consumer's GetSession must see portal-bootstrapped
+    // sessions (store credit on header-identified payments).
+    let resp = client
+        .get("http://127.0.0.1:4799/v1/sessions/02:00:00:00:00:02")
+        .header("x-api-key", "testkey123")
+        .send()
+        .await
+        .expect("phase-2 get");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
 }
