@@ -190,6 +190,7 @@ async fn handle_post_payment(
                 .as_secs() as i64,
             metric: config.metric.clone(),
             allotment,
+            last_external_usage: None,
         };
         match merchant::build_session_event(&session, &config, &peer_hex, amount_sat, "cashu") {
             Ok(event_json) => (

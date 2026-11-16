@@ -63,7 +63,7 @@ workspace = true
 
 [features]
 default = []
-v1-compat = ["dep:nostr", "dep:cdk", "dep:cdk-sqlite", "dep:base64"]
+v1-compat = ["dep:nostr", "dep:cdk", "dep:cdk-sqlite", "dep:base64", "dep:async-trait"]
 openwrt = [
     "tokio/process",
     "dep:async-trait",

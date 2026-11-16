@@ -60,10 +60,19 @@ pub struct V1ServerConfig {
     pub mint_health: Option<Arc<super::mint_health::MintHealthTracker>>,
 }
 
+/// External usage snapshot from RADIUS accounting or similar sources.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExternalUsageSnapshot {
+    pub input_octets: u64,
+    pub output_octets: u64,
+    pub session_time: u64,
+    pub reported_at: i64,
+}
+
 /// A customer session record.
 ///
 /// Tracks the allotment granted to a customer after a successful payment.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CustomerSession {
     /// Customer MAC address.
     pub mac_address: String,
@@ -73,6 +82,10 @@ pub struct CustomerSession {
     pub metric: String,
     /// Allotment remaining in metric units.
     pub allotment: u64,
+    /// Last usage report from an external system (RADIUS, session API).
+    /// `#[serde(default)]` preserves backward compat with existing data.
+    #[serde(default)]
+    pub last_external_usage: Option<ExternalUsageSnapshot>,
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +376,7 @@ pub async fn add_allotment(
             start_time: now,
             metric: metric.to_owned(),
             allotment,
+            last_external_usage: None,
         };
         let cloned = s.clone();
         sessions.insert(s).await?;
