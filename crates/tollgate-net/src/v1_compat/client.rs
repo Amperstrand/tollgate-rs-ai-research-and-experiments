@@ -295,7 +295,7 @@ impl V1Client {
         if max_affordable < pricing.min_steps {
             return Err(V1ClientError::Pricing(
                 pricing::PricingError::InsufficientFunds {
-                    required: pricing.min_steps * pricing.price_per_step,
+                    required: pricing.min_steps.saturating_mul(pricing.price_per_step),
                     available: balance_sats,
                 },
             ));
@@ -353,7 +353,9 @@ impl V1Client {
         pricing: &PricingOption,
         steps: u64,
     ) -> Result<(), V1ClientError> {
-        let amount = steps * pricing.price_per_step;
+        // saturating: a hostile gateway can advertise price_per_step at
+        // u64::MAX — the LN amount must not overflow-panic the client.
+        let amount = steps.saturating_mul(pricing.price_per_step);
         let mint_url = pricing.mint_url.clone();
 
         tracing::info!(steps, amount, "Requesting Lightning invoice");
@@ -505,7 +507,7 @@ impl V1Client {
         if max_affordable < pricing.min_steps {
             return Err(V1ClientError::Pricing(
                 pricing::PricingError::InsufficientFunds {
-                    required: pricing.min_steps * pricing.price_per_step,
+                    required: pricing.min_steps.saturating_mul(pricing.price_per_step),
                     available: balance,
                 },
             ));
@@ -676,9 +678,9 @@ mod guard_tests {
     }
 
     async fn ad_event(State(state): State<Arc<Mutex<TestServer>>>) -> impl IntoResponse {
-        let (keys, min_steps) = {
+        let (keys, min_steps, price) = {
             let s = state.lock().unwrap();
-            (s.keys.clone(), s.min_steps)
+            (s.keys.clone(), s.min_steps, s.price_per_step)
         };
         let tags = Tags::from_list(vec![
             Tag::custom(
@@ -690,7 +692,7 @@ mod guard_tests {
                 TagKind::Custom("price_per_step".into()),
                 [
                     "cashu".to_owned(),
-                    "1".to_owned(),
+                    price.to_string(),
                     "sat".to_owned(),
                     "https://testnut.cashu.exchange".to_owned(),
                     min_steps.to_string(),
@@ -743,6 +745,7 @@ mod guard_tests {
     struct TestServer {
         keys: Keys,
         min_steps: u64,
+        price_per_step: u64,
         payments_received: u64,
         allotment: i64,
     }
@@ -781,6 +784,7 @@ mod guard_tests {
         Arc::new(Mutex::new(TestServer {
             keys: Keys::generate(),
             min_steps,
+            price_per_step: 1,
             payments_received: 0,
             allotment: 0,
         }))
@@ -961,6 +965,31 @@ mod guard_tests {
         );
         let err = result.expect_err("checked is_err above").to_string();
         assert!(err.contains("insufficient funds"), "{err}");
+
+        server.abort();
+        let _ = server.await;
+    }
+    #[tokio::test]
+    async fn hostile_price_per_step_does_not_overflow_amount() {
+        // A hostile gateway advertises price_per_step = u64::MAX with
+        // min_steps = 2; a zero-balance wallet routes the purchase through
+        // Lightning, where the old `steps * price_per_step` panicked with
+        // an add/mul overflow in debug builds. The purchase must fail as
+        // an HTTP error instead (the mock has no /ln-invoice route).
+        let state = test_state(2);
+        state.lock().unwrap().price_per_step = u64::MAX;
+        let (base_url, server) = start_server(state, false, false).await;
+
+        let wallet = Arc::new(MockWallet::new(0));
+        let mut config = make_config();
+        config.max_price_per_ms = 0.0; // no cap: let the hostile price through
+        let mut client = V1Client::new_with_base_url(config, &base_url);
+        let result = client.connect(&wallet).await;
+        assert!(
+            result.is_err(),
+            "LN invoice request against a routeless mock must fail: {result:?}"
+        );
+        assert!(client.session().is_none());
 
         server.abort();
         let _ = server.await;
