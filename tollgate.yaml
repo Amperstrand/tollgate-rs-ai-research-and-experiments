@@ -1,0 +1,12 @@
+listen: 127.0.0.1:4799
+mints:
+  - https://testnut.cashu.space
+v1_compat:
+  metric: milliseconds
+  step_size: 60000
+  accepted_mints:
+    - url: https://testnut.cashu.space
+      price_per_step: 1
+      unit: sat
+      min_steps: 1
+  wallet_seed: "1ed9226901d81c1758034bdbad81303a5974ccc9531f01c16efda8f023ad8606285ca96bf6f21852a77567935372e6c867763b18dd13d88bd1a560df60aaba92"

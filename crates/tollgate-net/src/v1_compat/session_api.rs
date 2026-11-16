@@ -54,14 +54,21 @@ impl SessionApiState {
     /// survives for startup reconciliation (NUT-07 ambiguous-outcome
     /// pattern, same as the portal payment handler).
     async fn redeem(&self, token: &str, mac: &str) -> Result<(), String> {
+        // Driver peers are keyed by mac_to_peer_hex (the portal
+        // convention: a 66-char pubkey hex). A raw colon-MAC fails
+        // parse_peer's hex::decode, and the core's ack then enqueues
+        // under peer_to_hex(zeroed PeerId) — a different outbox key
+        // than the caller drains — so even a verified token answers
+        // "no response from gateway".
+        let peer_hex = adapter::mac_to_peer_hex(mac);
         let entry = reconcile::PendingReceive {
             token: token.to_owned(),
-            peer_hex: mac.to_owned(),
+            peer_hex: peer_hex.clone(),
             timestamp: now_secs(),
         };
         let _ = reconcile::journal_pending_receive(&self.journal_path, &entry);
 
-        let result = adapter::admit_peer_with_token(&self.driver, mac, None, token).await;
+        let result = adapter::admit_peer_with_token(&self.driver, &peer_hex, None, token).await;
 
         let _ = reconcile::complete_pending_receive(&self.journal_path, token);
 

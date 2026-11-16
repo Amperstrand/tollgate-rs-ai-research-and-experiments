@@ -50,6 +50,13 @@ pub(crate) fn extract_token_amount_and_allotment(
 }
 
 fn decode_cashu_amount(token: &str) -> Option<u64> {
+    // cashu::Token parses both V3 (cashuA JSON) and V4 (cashuB binary);
+    // cdk 0.18 wallets emit V4, which the legacy path below cannot read.
+    if let Ok(parsed) = token.parse::<cashu::nuts::Token>() {
+        if let Ok(amount) = parsed.value() {
+            return Some(amount.into());
+        }
+    }
     let payload = token
         .strip_prefix("cashuA")
         .or_else(|| token.strip_prefix("cashua"))?;

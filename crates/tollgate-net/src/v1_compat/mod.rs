@@ -53,3 +53,6 @@ pub fn build_v1_router(
 ) -> axum::Router {
     handlers::build_router(driver, config)
 }
+
+#[cfg(test)]
+mod e2e_testnut;
