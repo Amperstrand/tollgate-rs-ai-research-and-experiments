@@ -5,7 +5,8 @@
 //! that tollgate-auth's Delegated Mode uses.
 //!
 //! Authentication: `X-API-Key` header checked against the
-//! `TOLLGATE_API_KEY` environment variable.
+//! `TOLLGATE_API_KEY` environment variable (read once at router
+//! construction; fail-closed when unset).
 
 use std::sync::Arc;
 
@@ -16,8 +17,12 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::merchant::{CustomerSession, ExternalUsageSnapshot};
+use super::adapter;
+use super::handlers::extract_token_amount_and_allotment;
+use super::merchant::{CustomerSession, ExternalUsageSnapshot, V1ServerConfig};
+use super::reconcile;
 use super::session_store::{SessionStore, now_secs};
+use crate::driver::Driver;
 
 // ---------------------------------------------------------------------------
 // State
@@ -25,7 +30,47 @@ use super::session_store::{SessionStore, now_secs};
 
 pub struct SessionApiState {
     pub sessions: Arc<dyn SessionStore>,
-    pub metric: String,
+    pub config: Arc<V1ServerConfig>,
+    pub driver: Driver,
+    pub api_key: Option<String>,
+    pub journal_path: std::path::PathBuf,
+}
+
+impl SessionApiState {
+    fn is_authorized(&self, headers: &HeaderMap) -> bool {
+        let Some(key) = &self.api_key else {
+            return false;
+        };
+        headers
+            .get("x-api-key")
+            .and_then(|v| v.to_str().ok())
+            .map(|k| k == key)
+            .unwrap_or(false)
+    }
+
+    /// Redeem a Cashu token through the mainline driver (the money
+    /// authority) with the pending-receive journal bracketing the
+    /// receive: if the process dies mid-redeem, the journal entry
+    /// survives for startup reconciliation (NUT-07 ambiguous-outcome
+    /// pattern, same as the portal payment handler).
+    async fn redeem(&self, token: &str, mac: &str) -> Result<(), String> {
+        let entry = reconcile::PendingReceive {
+            token: token.to_owned(),
+            peer_hex: mac.to_owned(),
+            timestamp: now_secs(),
+        };
+        let _ = reconcile::journal_pending_receive(&self.journal_path, &entry);
+
+        let result = adapter::admit_peer_with_token(&self.driver, mac, None, token).await;
+
+        let _ = reconcile::complete_pending_receive(&self.journal_path, token);
+
+        if result.accepted {
+            Ok(())
+        } else {
+            Err(result.reason.unwrap_or_else(|| "rejected".to_owned()))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -72,17 +117,6 @@ pub struct TopupRequest {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn check_api_key(headers: &HeaderMap) -> bool {
-    match std::env::var("TOLLGATE_API_KEY") {
-        Ok(key) => headers
-            .get("x-api-key")
-            .and_then(|v| v.to_str().ok())
-            .map(|k| k == key)
-            .unwrap_or(false),
-        Err(_) => false,
-    }
-}
-
 fn error_json(status: StatusCode, error: &str, session_id: Option<&str>) -> Response {
     let mut body = serde_json::json!({"error": error});
     if let Some(id) = session_id {
@@ -128,6 +162,14 @@ fn build_session_response(session: &CustomerSession) -> SessionResponse {
     }
 }
 
+fn store_error(e: impl std::fmt::Display) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("{{\"error\":\"session store error: {e}\"}}"),
+    )
+        .into_response()
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -137,22 +179,15 @@ async fn handle_get_session(
     headers: HeaderMap,
     Path(mac): Path<String>,
 ) -> Response {
-    if !check_api_key(&headers) {
+    if !state.is_authorized(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
     let mac = normalize_mac(&mac);
 
     match state.sessions.get(&mac).await {
-        Ok(Some(session)) => {
-            let resp = build_session_response(&session);
-            json_ok(&resp)
-        }
+        Ok(Some(session)) => json_ok(&build_session_response(&session)),
         Ok(None) => error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac)),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("{{\"error\":\"session store error: {e}\"}}"),
-        )
-            .into_response(),
+        Err(e) => store_error(e),
     }
 }
 
@@ -162,7 +197,7 @@ async fn handle_post_usage(
     Path(mac): Path<String>,
     Json(report): Json<UsageReport>,
 ) -> Response {
-    if !check_api_key(&headers) {
+    if !state.is_authorized(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
     let mac = normalize_mac(&mac);
@@ -175,16 +210,9 @@ async fn handle_post_usage(
     };
 
     match state.sessions.record_external_usage(&mac, snapshot).await {
-        Ok(Some(updated)) => {
-            let resp = build_session_response(&updated);
-            json_ok(&resp)
-        }
+        Ok(Some(updated)) => json_ok(&build_session_response(&updated)),
         Ok(None) => error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac)),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("{{\"error\":\"session store error: {e}\"}}"),
-        )
-            .into_response(),
+        Err(e) => store_error(e),
     }
 }
 
@@ -192,21 +220,30 @@ async fn handle_post_topup(
     State(state): State<Arc<SessionApiState>>,
     headers: HeaderMap,
     Path(mac): Path<String>,
-    Json(_req): Json<TopupRequest>,
+    Json(req): Json<TopupRequest>,
 ) -> Response {
-    if !check_api_key(&headers) {
+    if !state.is_authorized(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
     let mac = normalize_mac(&mac);
 
-    // Token redemption for top-up requires the wallet — deferred to
-    // integration with the payment path. For now, return a clear error.
-    let _ = &state;
-    error_json(
-        StatusCode::NOT_IMPLEMENTED,
-        "topup via session API requires wallet integration (not yet wired)",
-        Some(&mac),
-    )
+    if let Err(reason) = state.redeem(&req.token, &mac).await {
+        return error_json(
+            StatusCode::PAYMENT_REQUIRED,
+            &format!("payment rejected: {reason}"),
+            Some(&mac),
+        );
+    }
+
+    let (_, allotment) = extract_token_amount_and_allotment(&req.token, &state.config);
+    match state
+        .sessions
+        .add_allotment(&mac, &state.config.metric, allotment, now_secs())
+        .await
+    {
+        Ok(session) => json_ok(&build_session_response(&session)),
+        Err(e) => store_error(e),
+    }
 }
 
 async fn handle_delete_session(
@@ -214,7 +251,7 @@ async fn handle_delete_session(
     headers: HeaderMap,
     Path(mac): Path<String>,
 ) -> Response {
-    if !check_api_key(&headers) {
+    if !state.is_authorized(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
     let mac = normalize_mac(&mac);
@@ -226,11 +263,7 @@ async fn handle_delete_session(
         )
             .into_response(),
         Ok(None) => error_json(StatusCode::NOT_FOUND, "session not found", Some(&mac)),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("{{\"error\":\"session store error: {e}\"}}"),
-        )
-            .into_response(),
+        Err(e) => store_error(e),
     }
 }
 
@@ -239,19 +272,46 @@ async fn handle_post_bootstrap(
     headers: HeaderMap,
     Json(req): Json<BootstrapRequest>,
 ) -> Response {
-    if !check_api_key(&headers) {
+    if !state.is_authorized(&headers) {
         return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
     }
     let mac = normalize_mac(&req.mac);
 
-    // Token redemption requires the wallet — deferred to integration
-    // with the payment path. For now, return a clear error.
-    let _ = (&req, &state);
-    error_json(
-        StatusCode::NOT_IMPLEMENTED,
-        "bootstrap via session API requires wallet integration (not yet wired)",
-        Some(&mac),
-    )
+    // The server meters and prices in ONE configured metric; a caller-
+    // selected metric would buy allotment at the configured step size but
+    // be metered in the requested units. Reject the mismatch before
+    // redeeming.
+    let metric = match req.metric {
+        Some(ref m) if *m != state.config.metric => {
+            return error_json(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "unsupported metric '{m}': this TollGate meters in '{}'",
+                    state.config.metric
+                ),
+                Some(&mac),
+            );
+        }
+        _ => state.config.metric.clone(),
+    };
+
+    if let Err(reason) = state.redeem(&req.token, &mac).await {
+        return error_json(
+            StatusCode::PAYMENT_REQUIRED,
+            &format!("payment rejected: {reason}"),
+            Some(&mac),
+        );
+    }
+
+    let (_, allotment) = extract_token_amount_and_allotment(&req.token, &state.config);
+    match state
+        .sessions
+        .add_allotment(&mac, &metric, allotment, now_secs())
+        .await
+    {
+        Ok(session) => json_ok(&build_session_response(&session)),
+        Err(e) => store_error(e),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -274,12 +334,34 @@ pub fn build_session_router(state: Arc<SessionApiState>) -> axum::Router {
 mod tests {
     use super::*;
     use crate::v1_compat::session_store::InMemorySessionStore;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     fn test_state() -> Arc<SessionApiState> {
+        let identity = Arc::new(
+            crate::config::Identity::load_or_generate(&crate::config::Config::default()).unwrap(),
+        );
+        let driver = crate::driver::Driver::new(
+            crate::wallet::BootstrapWallet::new(vec![]),
+            crate::adapter::IpAdapter::new(),
+            identity,
+            tollgate_core::Price::default(),
+            "bytes",
+            Vec::new(),
+        );
         Arc::new(SessionApiState {
             sessions: Arc::new(InMemorySessionStore::new()),
-            metric: "milliseconds".to_owned(),
+            config: crate::server::build_v1_config(&crate::config::V1CompatConfig::default(), None),
+            driver,
+            api_key: Some("test-key".to_owned()),
+            journal_path: std::env::temp_dir()
+                .join(format!("tg-sessapi-test-{}.jsonl", std::process::id())),
         })
+    }
+
+    fn bootstrap_body() -> &'static str {
+        r#"{"access_method":"wifi","token":"cashuAgarbage","mac":"AA-BB-CC-DD-EE-FF"}"#
     }
 
     #[tokio::test]
@@ -322,5 +404,90 @@ mod tests {
     fn mac_normalization() {
         assert_eq!(normalize_mac("AA-BB-CC-DD-EE-FF"), "aa:bb:cc:dd:ee:ff");
         assert_eq!(normalize_mac("AABB.CCDD.EEFF"), "aabb:ccdd:eeff");
+    }
+
+    #[tokio::test]
+    async fn bootstrap_rejects_missing_key() {
+        let app = build_session_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions/bootstrap")
+                    .header("content-type", "application/json")
+                    .body(Body::from(bootstrap_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_rejects_metric_mismatch() {
+        let app = build_session_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions/bootstrap")
+                    .header("content-type", "application/json")
+                    .header("x-api-key", "test-key")
+                    .body(Body::from(
+                        r#"{"access_method":"wifi","token":"cashuAgarbage","mac":"AA-BB-CC-DD-EE-FF","metric":"bytes"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // config defaults to milliseconds; requesting bytes pricing must
+        // fail BEFORE any redemption attempt.
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_rejects_invalid_token() {
+        let state = test_state();
+        let app = build_session_router(state.clone());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions/bootstrap")
+                    .header("content-type", "application/json")
+                    .header("x-api-key", "test-key")
+                    .body(Body::from(bootstrap_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Empty wallet rejects every token; no session may be created.
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+        assert!(
+            state
+                .sessions
+                .get("aa:bb:cc:dd:ee:ff")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn topup_rejects_invalid_token() {
+        let app = build_session_router(test_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions/aa:bb:cc:dd:ee:ff/topups")
+                    .header("content-type", "application/json")
+                    .header("x-api-key", "test-key")
+                    .body(Body::from(r#"{"token":"cashuAgarbage"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
     }
 }

@@ -149,7 +149,12 @@ pub fn router(
             sessions: std::sync::Arc::new(
                 crate::v1_compat::session_store::InMemorySessionStore::new(),
             ),
-            metric: v1_config.metric.clone(),
+            config: v1_config.clone(),
+            driver: v1_driver.clone(),
+            api_key: std::env::var("TOLLGATE_API_KEY").ok(),
+            journal_path: std::path::PathBuf::from(
+                crate::v1_compat::reconcile::DEFAULT_PENDING_RECEIVES_FILE,
+            ),
         });
         base.merge(crate::v1_compat::build_v1_router(v1_driver, v1_config))
             .merge(crate::v1_compat::session_api::build_session_router(

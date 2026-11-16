@@ -32,7 +32,10 @@ fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
         .into_response()
 }
 
-fn extract_token_amount_and_allotment(token: &str, config: &V1ServerConfig) -> (u64, u64) {
+pub(crate) fn extract_token_amount_and_allotment(
+    token: &str,
+    config: &V1ServerConfig,
+) -> (u64, u64) {
     let amount = decode_cashu_amount(token).unwrap_or(0);
     if amount == 0 {
         return (0, 0);
