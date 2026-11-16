@@ -465,30 +465,71 @@ async fn serve(
         std::time::Duration::from_secs(30),
     );
 
-    // NUT-07 startup reconciliation: check for tokens that were received
-    // (spent at the mint) but whose session wasn't granted before a crash.
-    // Grants sessions for owed access; removes unconsumed entries.
+    // NUT-07 startup reconciliation: tokens received (spent at the mint)
+    // whose session was never granted (crash between receive and grant)
+    // are detected here and actually credited — driver balance for the
+    // peer, plus the session-API store for delegated entries. Unconsumed
+    // entries are dropped; indeterminate ones stay journaled.
+    #[cfg(feature = "v1-compat")]
+    let v1_wallet = match build_v1_wallet(&cfg.v1_compat).await {
+        Ok(w) => Some(w),
+        Err(e) => {
+            tracing::error!(err = %e, "v1 wallet construction failed; LN invoice endpoints will return 503");
+            None
+        }
+    };
+    #[cfg(feature = "v1-compat")]
+    let session_state = {
+        let v1_config = server::build_v1_config(&cfg.v1_compat, v1_wallet.clone());
+        std::sync::Arc::new(v1_compat::session_api::SessionApiState {
+            sessions: std::sync::Arc::new(v1_compat::session_store::InMemorySessionStore::new()),
+            config: v1_config,
+            driver: driver.clone(),
+            api_key: std::env::var("TOLLGATE_API_KEY").ok(),
+            journal_path: std::path::PathBuf::from(
+                v1_compat::reconcile::DEFAULT_PENDING_RECEIVES_FILE,
+            ),
+        })
+    };
     #[cfg(feature = "v1-compat")]
     {
         let journal = std::path::PathBuf::from(v1_compat::reconcile::DEFAULT_PENDING_RECEIVES_FILE);
-        match v1_compat::reconcile::reconcile_pending_receives(&journal).await {
-            Ok(owed) if owed.is_empty() => {
-                tracing::debug!("reconcile: no pending receives");
-            }
-            Ok(owed) => {
-                tracing::warn!(
-                    count = owed.len(),
-                    "reconcile: granted sessions for tokens consumed before a crash"
-                );
-                for entry in owed {
-                    tracing::info!(
-                        peer = %entry.peer_hex,
-                        "reconcile: owed session for peer (amount recovered from mint)"
-                    );
-                }
-            }
-            Err(e) => {
+        let owed = match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            v1_compat::reconcile::reconcile_pending_receives(&journal),
+        )
+        .await
+        {
+            Ok(Ok(owed)) => owed,
+            Ok(Err(e)) => {
                 tracing::warn!("reconcile: journal read failed (non-fatal): {e}");
+                Vec::new()
+            }
+            Err(_) => {
+                tracing::warn!("reconcile: timed out — entries stay journaled for the next boot");
+                Vec::new()
+            }
+        };
+        for owed_rx in owed {
+            let peer = owed_rx.entry.peer_hex.as_str();
+            match session_state
+                .grant_owed_receive(&owed_rx.entry, owed_rx.amount_sat)
+                .await
+            {
+                Ok(()) => tracing::warn!(
+                    peer,
+                    amount_sat = owed_rx.amount_sat,
+                    mac = ?owed_rx.entry.mac,
+                    "reconcile: granted owed session for token consumed before a crash"
+                ),
+                Err(e) => {
+                    tracing::error!(
+                        peer,
+                        err = %e,
+                        "reconcile: owed-session grant failed — re-journaled for the next boot"
+                    );
+                    let _ = v1_compat::reconcile::journal_pending_receive(&journal, &owed_rx.entry);
+                }
             }
         }
     }
@@ -505,15 +546,6 @@ async fn serve(
             }
         });
     }
-
-    #[cfg(feature = "v1-compat")]
-    let v1_wallet = match build_v1_wallet(&cfg.v1_compat).await {
-        Ok(w) => Some(w),
-        Err(e) => {
-            tracing::error!(err = %e, "v1 wallet construction failed; LN invoice endpoints will return 503");
-            None
-        }
-    };
 
     // Background payout task: distributes wallet profits to Lightning
     // addresses when balance exceeds the configured minimum.
@@ -535,7 +567,7 @@ async fn serve(
 
     #[cfg(feature = "v1-compat")]
     {
-        server::serve(&cfg.listen, driver, &cfg, v1_wallet).await
+        server::serve(&cfg.listen, driver, &cfg, v1_wallet, Some(session_state)).await
     }
     #[cfg(not(feature = "v1-compat"))]
     {

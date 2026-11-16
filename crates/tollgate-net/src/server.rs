@@ -24,12 +24,17 @@ pub async fn serve(
     #[cfg(feature = "v1-compat")] wallet: Option<
         std::sync::Arc<crate::v1_compat::wallet::CdkWallet>,
     >,
+    #[cfg(feature = "v1-compat")] session_state: Option<
+        std::sync::Arc<crate::v1_compat::session_api::SessionApiState>,
+    >,
 ) -> anyhow::Result<()> {
     let app = router(
         driver,
         cfg,
         #[cfg(feature = "v1-compat")]
         wallet,
+        #[cfg(feature = "v1-compat")]
+        session_state,
     );
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
@@ -127,6 +132,9 @@ pub fn router(
     #[cfg(feature = "v1-compat")] wallet: Option<
         std::sync::Arc<crate::v1_compat::wallet::CdkWallet>,
     >,
+    #[cfg(feature = "v1-compat")] session_state: Option<
+        std::sync::Arc<crate::v1_compat::session_api::SessionApiState>,
+    >,
 ) -> Router {
     #[cfg(feature = "v1-compat")]
     let v1_driver = driver.clone();
@@ -145,16 +153,21 @@ pub fn router(
     #[cfg(feature = "v1-compat")]
     {
         let v1_config = build_v1_config(&cfg.v1_compat, wallet);
-        let session_state = std::sync::Arc::new(crate::v1_compat::session_api::SessionApiState {
-            sessions: std::sync::Arc::new(
-                crate::v1_compat::session_store::InMemorySessionStore::new(),
-            ),
-            config: v1_config.clone(),
-            driver: v1_driver.clone(),
-            api_key: std::env::var("TOLLGATE_API_KEY").ok(),
-            journal_path: std::path::PathBuf::from(
-                crate::v1_compat::reconcile::DEFAULT_PENDING_RECEIVES_FILE,
-            ),
+        // A state built by the caller (main: shared with startup
+        // reconciliation) is reused so owed-session credits land in the
+        // same store the serving router reads.
+        let session_state = session_state.unwrap_or_else(|| {
+            std::sync::Arc::new(crate::v1_compat::session_api::SessionApiState {
+                sessions: std::sync::Arc::new(
+                    crate::v1_compat::session_store::InMemorySessionStore::new(),
+                ),
+                config: v1_config.clone(),
+                driver: v1_driver.clone(),
+                api_key: std::env::var("TOLLGATE_API_KEY").ok(),
+                journal_path: std::path::PathBuf::from(
+                    crate::v1_compat::reconcile::DEFAULT_PENDING_RECEIVES_FILE,
+                ),
+            })
         });
         base.merge(crate::v1_compat::build_v1_router(v1_driver, v1_config))
             .merge(crate::v1_compat::session_api::build_session_router(
@@ -281,6 +294,8 @@ mod tests {
             &crate::config::Config::default(),
             #[cfg(feature = "v1-compat")]
             None,
+            #[cfg(feature = "v1-compat")]
+            None,
         );
 
         let pk = tollgate_protocol::PublicKey::from_bytes([2u8; 33]);
@@ -308,6 +323,8 @@ mod tests {
             &crate::config::Config::default(),
             #[cfg(feature = "v1-compat")]
             None,
+            #[cfg(feature = "v1-compat")]
+            None,
         );
 
         // A length prefix claiming 9 bytes but with no body.
@@ -328,7 +345,14 @@ mod tests {
     #[cfg(feature = "v1-compat")]
     #[tokio::test]
     async fn session_api_routes_are_live_and_gated() {
-        let app = router(test_driver(), &crate::config::Config::default(), None);
+        let app = router(
+            test_driver(),
+            &crate::config::Config::default(),
+            #[cfg(feature = "v1-compat")]
+            None,
+            #[cfg(feature = "v1-compat")]
+            None,
+        );
 
         let resp = app
             .oneshot(

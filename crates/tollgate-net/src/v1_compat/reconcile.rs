@@ -33,6 +33,11 @@ pub struct PendingReceive {
     pub peer_hex: String,
     /// Unix timestamp when the intent was journaled.
     pub timestamp: i64,
+    /// Colon-form MAC for delegated (session-API) receives — the session
+    /// store key needed to credit owed sessions at startup. Portal
+    /// receives leave this unset.
+    #[serde(default)]
+    pub mac: Option<String>,
 }
 
 /// Append a pending-receive intent to the journal (BEFORE the receive).
@@ -176,11 +181,17 @@ fn extract_proof_ys(token: &cashu::nuts::Token) -> Vec<String> {
     }
 }
 
+/// An owed session recovered from the journal: the token was consumed at
+/// the mint (NUT-07 SPENT) but no session was granted before the crash.
+#[derive(Debug, Clone)]
+pub struct OwedReceive {
+    pub entry: PendingReceive,
+    pub amount_sat: u64,
+}
+
 /// Reconcile all pending receives on startup. Returns the entries that are
 /// owed sessions (the caller grants them) and removes resolved entries.
-pub async fn reconcile_pending_receives(
-    journal_path: &Path,
-) -> std::io::Result<Vec<PendingReceive>> {
+pub async fn reconcile_pending_receives(journal_path: &Path) -> std::io::Result<Vec<OwedReceive>> {
     let entries = read_journal(journal_path)?;
     if entries.is_empty() {
         return Ok(Vec::new());
@@ -202,7 +213,10 @@ pub async fn reconcile_pending_receives(
                     amount_sat,
                     "pending receive was consumed but session not granted — owed"
                 );
-                owed.push(entry.clone());
+                owed.push(OwedReceive {
+                    entry: entry.clone(),
+                    amount_sat,
+                });
             }
             Ok(ReconcileOutcome::NotConsumed) => {
                 tracing::info!(
@@ -242,6 +256,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_entry_without_mac_parses() {
+        let line = r#"{"token":"cashuAtest","peer_hex":"aabb","timestamp":1}"#;
+        let entry: PendingReceive = serde_json::from_str(line).expect("legacy entry parses");
+        assert_eq!(entry.mac, None);
+    }
+
+    #[test]
     fn journal_roundtrip() {
         let dir = std::env::temp_dir().join(format!("tg-recon-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -251,6 +272,7 @@ mod tests {
             token: "cashuBtest...".to_owned(),
             peer_hex: "aabbcc".to_owned(),
             timestamp: 12345,
+            mac: None,
         };
         journal_pending_receive(&path, &entry).unwrap();
         let read = read_journal(&path).unwrap();
