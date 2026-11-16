@@ -145,7 +145,16 @@ pub fn router(
     #[cfg(feature = "v1-compat")]
     {
         let v1_config = build_v1_config(&cfg.v1_compat, wallet);
+        let session_state = std::sync::Arc::new(crate::v1_compat::session_api::SessionApiState {
+            sessions: std::sync::Arc::new(
+                crate::v1_compat::session_store::InMemorySessionStore::new(),
+            ),
+            metric: v1_config.metric.clone(),
+        });
         base.merge(crate::v1_compat::build_v1_router(v1_driver, v1_config))
+            .merge(crate::v1_compat::session_api::build_session_router(
+                session_state,
+            ))
     }
     #[cfg(not(feature = "v1-compat"))]
     {
@@ -309,5 +318,24 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "v1-compat")]
+    #[tokio::test]
+    async fn session_api_routes_are_live_and_gated() {
+        let app = router(test_driver(), &crate::config::Config::default(), None);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/sessions/aa:bb:cc:dd:ee:ff")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // 401 from the api-key gate — an unwired route would 404.
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
