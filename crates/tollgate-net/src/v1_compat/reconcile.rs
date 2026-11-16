@@ -24,6 +24,16 @@ use std::path::Path;
 /// Default journal location (alongside the wallet DB).
 pub const DEFAULT_PENDING_RECEIVES_FILE: &str = "/var/lib/tollgate/pending-receives.jsonl";
 
+/// Serializes journal mutations within this process. The journal is a
+/// read-filter-rewrite file with a fixed tmp path: unsynchronized
+/// concurrent appends/completes lose entries three ways — a rewrite from
+/// a stale read resurrects an already-completed entry, two rewrites race
+/// on the shared tmp file (second rename fails, completion is lost), and
+/// an append lands on the pre-rename inode. Every outcome leaves the
+/// journal describing receives that already completed, which startup
+/// reconcile then re-grants as phantom owed sessions.
+static JOURNAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A pending receive entry — written before the receive, removed after.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PendingReceive {
@@ -43,6 +53,7 @@ pub struct PendingReceive {
 /// Append a pending-receive intent to the journal (BEFORE the receive).
 pub fn journal_pending_receive(journal_path: &Path, entry: &PendingReceive) -> std::io::Result<()> {
     use std::io::Write;
+    let _guard = lock_journal();
     if let Some(parent) = journal_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -58,9 +69,16 @@ pub fn journal_pending_receive(journal_path: &Path, entry: &PendingReceive) -> s
 /// Remove a completed entry from the journal (AFTER successful admission).
 /// Rewrites the file without the matching token.
 pub fn complete_pending_receive(journal_path: &Path, token: &str) -> std::io::Result<()> {
+    let _guard = lock_journal();
     let entries = read_journal(journal_path)?;
     let remaining: Vec<&PendingReceive> = entries.iter().filter(|e| e.token != token).collect();
     rewrite_journal(journal_path, &remaining)
+}
+
+fn lock_journal() -> std::sync::MutexGuard<'static, ()> {
+    JOURNAL_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Read all pending entries from the journal.
@@ -337,6 +355,51 @@ mod tests {
     fn journal_missing_file_is_empty() {
         let path = Path::new("/nonexistent/no-such-file.jsonl");
         assert!(read_journal(path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn journal_concurrent_complete_leaves_no_entries() {
+        // Regression (load soak 2026-11-16): concurrent bootstraps each
+        // journal a pending receive, then complete it.
+        // complete_pending_receive is read-filter-rewrite; a rewrite that
+        // lands from a stale read resurrects an entry another thread
+        // already completed. The next startup reconcile then sees a
+        // phantom owed session and re-grants allotment the customer
+        // already received (one resurrection observed out of 20
+        // concurrent bootstraps).
+        let dir = std::env::temp_dir().join(format!("tg-recon-race-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pending.jsonl");
+
+        const THREADS: usize = 16;
+        const ROUNDS: usize = 50;
+        let journal = path.clone();
+        let journal = &journal;
+        std::thread::scope(|s| {
+            for t in 0..THREADS {
+                s.spawn(move || {
+                    for r in 0..ROUNDS {
+                        let entry = PendingReceive {
+                            token: format!("cashuBthread{t}round{r}"),
+                            peer_hex: "aabbcc".to_owned(),
+                            timestamp: r as i64,
+                            mac: Some(format!("02:50:00:00:00:{t:02x}")),
+                        };
+                        journal_pending_receive(journal, &entry).unwrap();
+                        complete_pending_receive(journal, &entry.token).unwrap();
+                    }
+                });
+            }
+        });
+
+        let leftover = read_journal(&path).unwrap();
+        assert!(
+            leftover.is_empty(),
+            "every entry was completed; leftover entries would be resurrected \
+             as phantom owed sessions by startup reconcile: {leftover:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
