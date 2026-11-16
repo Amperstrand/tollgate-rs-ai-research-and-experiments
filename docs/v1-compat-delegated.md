@@ -279,13 +279,23 @@ Further `v1_compat` knobs exist (`nostr_secret_key`,
 `trust_proxy_headers`, `profit_share`); the delegated surface itself
 depends only on the keys above plus the `TOLLGATE_API_KEY` env var.
 
-### Session store durability — current limitation
+### Session store durability
 
-The session store is **in-memory** (`InMemorySessionStore`, a tokio
-mutex-guarded HashMap). Sessions do **not** survive restarts, with
-one exception: owed delegated receives recovered by the startup
-journal (section 3) re-credit the store, so payments consumed just
-before a crash are the only restart-surviving credit. There is no
-`session_store_path` knob on this branch; the SQLite-backed store
-from the m2 branch is deferred (libsqlite3-sys version conflict with
-cdk-sqlite — both link the sqlite3 native library).
+Two backends, selected by the `v1_compat.session_store_path` config
+knob:
+
+- **Unset (default)** — in-memory (`InMemorySessionStore`, a tokio
+  mutex-guarded HashMap). Sessions do **not** survive restarts, with
+  one exception: owed delegated receives recovered by the startup
+  journal (section 3) re-credit the store.
+- **Set to a file path** — persistent SQLite (`SqliteSessionStore`,
+  `sessions(mac TEXT PRIMARY KEY, session_json TEXT)` rows). Sessions
+  survive restarts. If the configured database cannot be opened the
+  server logs an error and degrades to the in-memory store rather
+  than failing to start.
+
+The SQLite backend links `libsqlite3-sys 0.28`, unified with
+cdk-sqlite via a `rusqlite =0.31` pin in `crates/tollgate-net` —
+the version conflict that previously deferred this store was
+resolved by that pin (bump it casually and the two sqlite3 native
+links diverge again).
