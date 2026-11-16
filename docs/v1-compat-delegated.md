@@ -32,6 +32,7 @@ these files):
 | Allotment pricing, kind 1022 event | `crates/tollgate-net/src/v1_compat/merchant.rs` |
 | Config parsing | `crates/tollgate-net/src/config.rs` |
 | Session store | `crates/tollgate-net/src/v1_compat/session_store.rs` |
+| SSRF guard for token-supplied mint URLs | `crates/tollgate-net/src/ssrf.rs` (crate root since #130) |
 
 ---
 
@@ -103,10 +104,11 @@ non-time metrics `remaining_quota` is computed from the reported
 `input_octets + output_octets`.
 
 **`POST /v1/sessions/{mac}/topups`** — same redemption path as
-bootstrap (no metric negotiation), then `add_allotment`. Top-ups are
-additive: for `milliseconds` sessions a renewal preserves already
-consumed wall-clock time (`apply_renewal` shifts `start_time` so
-consumed milliseconds are not refunded); for other metrics
+bootstrap (no metric negotiation), then the token-keyed store credit
+(`credit_and_complete`, #129 — credit before journal completion).
+Top-ups are additive: for `milliseconds` sessions a renewal preserves
+already consumed wall-clock time (`apply_renewal` shifts `start_time`
+so consumed milliseconds are not refunded); for other metrics
 `start_time` simply resets.
 
 ### `SessionResponse`
@@ -161,12 +163,21 @@ optionally JSON `{"token": "..."}`).
   resolved to a MAC (DHCP leases) and an unresolvable IP is rejected
   `400 {"error":"could not resolve client identity"}`.
 - The payment is journaled and redeemed through the driver (same
-  ambiguous-outcome bracketing as the session API — portal entries
-  leave the journal's `mac` unset).
+  ambiguous-outcome bracketing as the session API). Since #131 the
+  journal entry carries the header MAC for delegated payments
+  (`handlers.rs: payment_journal_entry`) — only IP-resolved portal
+  payments (no header) leave the journal's `mac` unset.
 - On success, header-identified payments credit **both ledgers**: the
   driver peer balance (the money authority) and the session store
   (the delegated ledger tollgate-auth reads via
-  `GET /v1/sessions/{mac}`) with the same allotment.
+  `GET /v1/sessions/{mac}`) with the same allotment. The store credit
+  is token-keyed (`credit_for_token`) and lands **before** the
+  journal entry is completed — the same ordering as the session API
+  path (#129, applied here by #131) — so a delegated portal payment
+  that crashes anywhere between the receive and the credit is
+  recovered into the session store at startup; previously recovery
+  granted driver credit only. A failed store credit keeps the entry
+  journaled for the next boot.
 - The `200` response body is a signed **Nostr kind 1022 session
   event** (see the tag list in
   [section 4](#4-the-tollgate-auth-consumer-contract-matrix)).
@@ -196,21 +207,29 @@ journal at `/var/lib/tollgate/pending-receives.jsonl`):
    bootstrap/topup (`session_api.rs: redeem`) and portal/delegated
    `POST /` (`handlers.rs: handle_post_payment`) — appends a
    `PendingReceive { token, peer_hex, timestamp, mac? }` line before
-   touching the mint. Delegated receives set `mac` (the colon-form
-   store key needed to credit the owed session later); portal
-   receives leave it unset.
+   touching the mint. Every receive that must credit the session
+   store sets `mac` (the colon-form store key needed to credit the
+   owed session later): session-API receives and delegated
+   header-identified `POST /` payments alike (#131). Only IP-resolved
+   portal payments — no `X-TollGate-MAC` header — leave it unset.
 2. **Complete after the credit lands.** A rejected token's fate is
    known (nothing consumed by us) and its entry is removed at once. An
-   accepted session-API receive keeps its entry until the session store
-   is credited — only then is it removed. Completing before the credit
-   would make a crash between the two unrecoverable: token spent,
-   journal empty, no session (the chaos-reproduced lost-credit window).
+   accepted session-API receive — and an accepted delegated `POST /`
+   payment (#131) — keeps its entry until the session store is
+   credited via the token-keyed `credit_for_token`; only then is it
+   removed, and a failed store credit likewise keeps the entry
+   journaled. Completing before the credit would make a crash between
+   the two unrecoverable: token spent, journal empty, no session (the
+   chaos-reproduced lost-credit window).
 3. **Reconcile at startup** (`main.rs`, gated on the `v1-compat`
    feature): each surviving journaled token is checked at its mint
    via NUT-07 `POST {mint}/v1/checkstate`, keying state by
    `Y = hash_to_curve(secret)` — the C value never matches mint
    state, so any other derivation silently reads spent tokens as
-   unspent. Outcomes:
+   unspent. Every checkstate caller now derives Y this way (#127):
+   this reconciliation pass, the mainline driver verify path
+   (`wallet.rs: check_proofs_unspent`), and the client-reclaim
+   checkstate (`v1_compat/wallet.rs: verify_token`). Outcomes:
     - **All proofs SPENT** → the receive succeeded but the session was
       never granted → `grant_owed_receive`: the driver credits the
       peer (amount × 1000, millisat balance), and — for delegated
@@ -241,6 +260,27 @@ Safety properties:
   safe with a persistent store.
 - Journal robustness: garbage lines are skipped on read, and rewrites
   go through a temp file + rename.
+
+### SSRF guard on checkstate (#130)
+
+The mint URL for every checkstate call comes from the token, so a
+crafted token can aim the gateway's own HTTP client at internal
+services. Every checkstate caller — startup reconciliation, the
+mainline driver verify path, and the client-reclaim checkstate —
+therefore validates the URL with `ssrf.rs: validate_url_no_ssrf`
+before the POST: the URL must parse and resolve, and every resolved
+IP is checked against blocked ranges (loopback, RFC 1918 private,
+link-local, unspecified, broadcast; IPv6 loopback, link-local, and
+unique-local). A hostname resolving to both a public and a private
+address is still blocked (DNS-rebinding mitigation). In the verify
+paths a token whose mint targets a private or loopback host fails
+verification — the token is rejected before any HTTP call; in startup
+reconciliation the entry reads as indeterminate and stays journaled.
+The env var
+`TOLLGATE_SSRF_ALLOW_PRIVATE_MINTS=1` skips the blocked-range check
+(the URL must still parse and resolve); it exists ONLY for test
+harnesses whose fake mints live on private networks (the CI
+integration compose suites) — never set it in production.
 
 ---
 
