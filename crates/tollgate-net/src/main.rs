@@ -515,6 +515,24 @@ async fn serve(
         }
     };
 
+    // Background payout task: distributes wallet profits to Lightning
+    // addresses when balance exceeds the configured minimum.
+    #[cfg(feature = "v1-compat")]
+    if let Some(ref wallet) = v1_wallet {
+        let payout_targets = v1_compat::payout::resolve_targets(&cfg.v1_compat.profit_share);
+        if !payout_targets.is_empty() {
+            let payout_cfg = v1_compat::payout::PayoutConfig {
+                min_balance: 64,
+                min_payout_amount: 128,
+                tolerance_percent: 10,
+                payout_interval: std::time::Duration::from_secs(300),
+                targets: payout_targets,
+            };
+            v1_compat::payout::spawn_payout_task(wallet.clone(), payout_cfg);
+            tracing::info!("[payout] background payout task started");
+        }
+    }
+
     #[cfg(feature = "v1-compat")]
     {
         server::serve(&cfg.listen, driver, &cfg, v1_wallet).await

@@ -16,6 +16,7 @@ pub mod ssrf;
 pub mod mac_resolver;
 
 pub mod nostr;
+pub mod payout;
 
 pub mod wallet;
 

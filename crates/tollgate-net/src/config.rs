@@ -162,6 +162,23 @@ pub struct V1CompatConfig {
     pub nostr_secret_key: Option<String>,
     pub trust_proxy_headers: bool,
     pub wallet_seed: Option<String>,
+    /// Profit-share recipients for the background payout task. Each entry
+    /// gets a proportional share of the wallet balance above min_payout.
+    pub profit_share: Vec<ProfitShareEntry>,
+}
+
+/// A profit-share payout recipient.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitShareEntry {
+    /// Proportional share factor (0.0–1.0; all factors should sum to 1.0).
+    pub factor: f64,
+    /// Human-readable identity (nostr pubkey or name).
+    #[serde(alias = "pubkey")]
+    pub identity: String,
+    /// Lightning address the share is melted to. Empty = skipped (share
+    /// stays in the wallet).
+    #[serde(default)]
+    pub lightning_address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
