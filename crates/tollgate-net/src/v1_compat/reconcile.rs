@@ -167,18 +167,26 @@ pub async fn check_token_consumed(
 /// Extract proof Y-values from a token for NUT-07 checkstate.
 fn extract_proof_ys(token: &cashu::nuts::Token) -> Vec<String> {
     use cashu::nuts::Token;
-    match token {
+    // NUT-07 keys proof state by Y = hash_to_curve(secret). The C
+    // value is the unblinded signature — sending it as a Y never
+    // matches mint state, so every spent token read as unspent.
+    let secrets: Vec<&[u8]> = match token {
         Token::TokenV3(t) => t
             .token
             .iter()
-            .flat_map(|e| e.proofs.iter().map(|p| p.c.to_string()))
+            .flat_map(|e| e.proofs.iter().map(|p| p.secret.as_bytes()))
             .collect(),
         Token::TokenV4(t) => t
             .token
             .iter()
-            .flat_map(|e| e.proofs.iter().map(|p| p.c.to_string()))
+            .flat_map(|e| e.proofs.iter().map(|p| p.secret.as_bytes()))
             .collect(),
-    }
+    };
+    secrets
+        .iter()
+        .filter_map(|s| cashu::dhke::hash_to_curve(s).ok())
+        .map(|y| y.to_string())
+        .collect()
 }
 
 /// An owed session recovered from the journal: the token was consumed at
@@ -260,6 +268,45 @@ mod tests {
         let line = r#"{"token":"cashuAtest","peer_hex":"aabb","timestamp":1}"#;
         let entry: PendingReceive = serde_json::from_str(line).expect("legacy entry parses");
         assert_eq!(entry.mac, None);
+    }
+
+    #[test]
+    fn ys_derive_from_secrets_not_c_values() {
+        // A real V4 token fixture: NUT-07 keys state by
+        // hash_to_curve(secret); extracting the C values instead would
+        // make every spent token read as unspent (the live-verified bug).
+        let token: cashu::nuts::Token = r#"cashuBo2FteBtodHRwczovL3Rlc3RudXQuY2FzaHUuc3BhY2VhdWNzYXRhdIGiYWlIAXvGBKqgjpthcIOkYWECYXN4QDExOGYxZDBhYTFmNGE3N2I3ZTEwOTU4NTgyZDA0ZGJjMmYwZjRlYmQzODQzMzE1ODZlNGQ2NWMxZjJmOGM1ZWFhY1ghAr-JiKoUH_0LUbTLTED3Q3XEwh7k58HIdwik_uJrtqEGYWSjYWVYIH9xweu7AKIacaN1--TwwEbaZN43Z1Y_HV5D93HMJ-pgYXNYIIPOv0xCJl__Wu09EFWGwTm_SxHEz7YwtAyoiUK0dY7JYXJYIC9U3ORWnr8G85YvNVoDQ3YuM22S737_AW1ffSMn0tyfpGFhEGFzeEBjYjljMzg3YTg3MjVkOWQ1YjBhNjhhYzEzYzdmMjM2MjYzYWM1NDY5NWYwYTIwM2VhMmMwYzEwZDA3NTRlZWE4YWNYIQJqzpWXqIDOvEyldRjzR7Y6Rc0nPMEJZG4UexA2r_iukmFko2FlWCDbke1r-0t_v-N8Aj_Vz7Juq0DGzSa8lcFYmikBNsB8zWFzWCDxEmFGmhSjpxlITzLouQbjZO7P37tfQ7U9eiqQA9VlW2FyWCCXJDamu9hdLNCwkChZvMd7F-469zPSYZAZ2XVBlA3OPKRhYQRhc3hAMjNiYTdhM2U2ZTcxMWRhNTAzYTJjNWMzMTY0NTNlMWVkYmVmODE5YzI1NTQ4ZWU4NmY5OGJkNmYxMGQxMzI0M2FjWCED_GAH6U3v0Xf71jwIg2aYD68ap5_H2s94brzjuicBZK1hZKNhZVggsCwoP9muOsDFJ0qQMhifjeNhrDhEtKpAIHKPE3beqVJhc1ggDbq0T8y70d349DE7ws-eH4fEInAmgfEkPqrKCiTxDu5hclggKJJ1BkdRi14hasvJC5vir4LSs_OdexXmMNWGgFgmb-M="#.parse().expect("fixture parses");
+        let ys = extract_proof_ys(&token);
+        let secrets: Vec<&[u8]> = match &token {
+            cashu::nuts::Token::TokenV3(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.secret.as_bytes()))
+                .collect(),
+            cashu::nuts::Token::TokenV4(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.secret.as_bytes()))
+                .collect(),
+        };
+        let c_values: Vec<String> = match &token {
+            cashu::nuts::Token::TokenV3(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.c.to_string()))
+                .collect(),
+            cashu::nuts::Token::TokenV4(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.c.to_string()))
+                .collect(),
+        };
+        let expected: Vec<String> = secrets
+            .iter()
+            .filter_map(|s| cashu::dhke::hash_to_curve(s).ok().map(|y| y.to_string()))
+            .collect();
+        assert_eq!(ys, expected, "checkstate Ys must be hash_to_curve(secret)");
+        assert_ne!(ys, c_values, "regression: extracting C values again");
     }
 
     #[test]
