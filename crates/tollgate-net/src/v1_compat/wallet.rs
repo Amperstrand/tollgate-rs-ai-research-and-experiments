@@ -742,23 +742,31 @@ impl CdkWallet {
     }
 }
 
-/// Extract the `C` (blinded secret pubkey) hex strings from a token's proofs.
-/// These are the Y-values the mint uses for NUT-07 state lookup. Handles both
-/// V3 (`cashuA`) and V4 (`cashuB`) token encodings.
+/// Extract the proof Y-values a mint keys NUT-07 state by:
+/// `Y = hash_to_curve(secret)` per proof (V3 + V4). The `c` field is the
+/// unblinded signature — sending it as a Y never matches mint state, so
+/// a spent token reads as unspent (live-verified in the reconcile module,
+/// whose extraction was fixed first; this copy feeds verify_token's
+/// checkstate).
 fn token_proof_ys(token: &cashu::nuts::Token) -> Vec<String> {
     use cashu::nuts::Token;
-    match token {
+    let secrets: Vec<&[u8]> = match token {
         Token::TokenV3(t) => t
             .token
             .iter()
-            .flat_map(|entry| entry.proofs.iter().map(|p| p.c.to_string()))
+            .flat_map(|entry| entry.proofs.iter().map(|p| p.secret.as_bytes()))
             .collect(),
         Token::TokenV4(t) => t
             .token
             .iter()
-            .flat_map(|entry| entry.proofs.iter().map(|p| p.c.to_string()))
+            .flat_map(|entry| entry.proofs.iter().map(|p| p.secret.as_bytes()))
             .collect(),
-    }
+    };
+    secrets
+        .into_iter()
+        .filter_map(|s| cashu::dhke::hash_to_curve(s).ok())
+        .map(|y| y.to_string())
+        .collect()
 }
 
 /// A real cashuB (V4) token for unit tests — 1 sat from testnut.cashu.space.
@@ -786,6 +794,40 @@ mod tests {
         assert_eq!(ys.len(), 1, "sample token has exactly one proof");
         // Y-values are 33-byte compressed pubkeys in hex (66 chars).
         assert_eq!(ys[0].len(), 66);
+        // NUT-07 keys state by hash_to_curve(secret); sending the C value
+        // (the unblinded signature) never matches mint state, so a spent
+        // token reads as unspent — the live-verified bug fixed in
+        // reconcile.rs; this copy feeds verify_token's checkstate.
+        let secrets: Vec<&[u8]> = match &token {
+            cashu::nuts::Token::TokenV3(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.secret.as_bytes()))
+                .collect(),
+            cashu::nuts::Token::TokenV4(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.secret.as_bytes()))
+                .collect(),
+        };
+        let expected: Vec<String> = secrets
+            .iter()
+            .filter_map(|s| cashu::dhke::hash_to_curve(s).ok().map(|y| y.to_string()))
+            .collect();
+        let c_values: Vec<String> = match &token {
+            cashu::nuts::Token::TokenV3(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.c.to_string()))
+                .collect(),
+            cashu::nuts::Token::TokenV4(t) => t
+                .token
+                .iter()
+                .flat_map(|e| e.proofs.iter().map(|p| p.c.to_string()))
+                .collect(),
+        };
+        assert_eq!(ys, expected, "checkstate Ys must be hash_to_curve(secret)");
+        assert_ne!(ys, c_values, "regression: extracting C values again");
     }
 
     #[test]
