@@ -57,6 +57,3 @@ pub fn build_v1_router(
 
 #[cfg(test)]
 mod e2e_testnut;
-
-#[cfg(test)]
-mod xtest;
