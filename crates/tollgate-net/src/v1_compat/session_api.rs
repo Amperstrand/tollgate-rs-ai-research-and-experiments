@@ -130,12 +130,15 @@ pub struct BootstrapRequest {
 #[derive(Debug, Serialize)]
 pub struct SessionResponse {
     pub session_id: String,
-    pub metric: String,
+    pub access_level: String,
     pub allotment: u64,
-    pub usage: u64,
-    pub active: bool,
+    pub remaining_quota: i64,
+    pub metric: String,
+    pub next_checkin_ms: u64,
+    pub is_final: bool,
+    pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_external_usage: Option<ExternalUsageSnapshot>,
+    pub last_usage_update: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,21 +188,39 @@ fn normalize_mac(mac: &str) -> String {
 }
 
 fn build_session_response(session: &CustomerSession) -> SessionResponse {
-    let elapsed = now_secs() - session.start_time;
-    let usage = if session.metric == "milliseconds" {
-        (elapsed * 1000).min(session.allotment as i64).max(0) as u64
+    let now = now_secs();
+    let (remaining, access_level) = if session.metric == "milliseconds" {
+        let elapsed_ms = (now - session.start_time) * 1000;
+        let rem = session.allotment as i64 - elapsed_ms;
+        let level = if rem <= 0 { "suspended" } else { "active" };
+        (rem, level.to_owned())
     } else {
-        0
+        let usage = session
+            .last_external_usage
+            .as_ref()
+            .map(|u| u.input_octets + u.output_octets)
+            .unwrap_or(0);
+        let rem = session.allotment as i64 - usage as i64;
+        let level = if rem <= 0 { "suspended" } else { "active" };
+        (rem, level.to_owned())
     };
-    let active = usage < session.allotment;
+    // m2 contract: fixed check-in interval the RADIUS side schedules against
+    let next_checkin_ms = 5_000u64;
+    let is_final = remaining <= 0;
 
     SessionResponse {
         session_id: session.mac_address.clone(),
-        metric: session.metric.clone(),
+        access_level,
         allotment: session.allotment,
-        usage,
-        active,
-        last_external_usage: session.last_external_usage.clone(),
+        remaining_quota: remaining,
+        metric: session.metric.clone(),
+        next_checkin_ms,
+        is_final,
+        created_at: session.start_time,
+        last_usage_update: session
+            .last_external_usage
+            .as_ref()
+            .map(|u| u.reported_at.to_string()),
     }
 }
 
@@ -215,14 +236,12 @@ fn store_error(e: impl std::fmt::Display) -> Response {
 // Handlers
 // ---------------------------------------------------------------------------
 
+/// GET is unauthenticated by contract (m2 + tollgate-auth): the client
+/// identifies the session via the path MAC and sends no API key on reads.
 async fn handle_get_session(
     State(state): State<Arc<SessionApiState>>,
-    headers: HeaderMap,
     Path(mac): Path<String>,
 ) -> Response {
-    if !state.is_authorized(&headers) {
-        return error_json(StatusCode::UNAUTHORIZED, "unauthorized", None);
-    }
     let mac = normalize_mac(&mac);
 
     match state.sessions.get(&mac).await {
@@ -620,6 +639,27 @@ mod tests {
                 Request::builder()
                     .uri("/sessions/aa:bb:cc:dd:ee:ff")
                     .header("x-api-key", "test-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_session_needs_no_api_key() {
+        let state = test_state();
+        state
+            .sessions
+            .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 60_000, now_secs())
+            .await
+            .unwrap();
+        let app = build_session_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/sessions/aa:bb:cc:dd:ee:ff")
                     .body(Body::empty())
                     .unwrap(),
             )

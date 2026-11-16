@@ -170,9 +170,12 @@ pub fn router(
             })
         });
         base.merge(crate::v1_compat::build_v1_router(v1_driver, v1_config))
-            .merge(crate::v1_compat::session_api::build_session_router(
-                session_state,
-            ))
+            // /v1 prefix is the consumer contract (m2 nests here and the
+            // tollgate-auth sessiond client calls /v1/sessions/*).
+            .nest(
+                "/v1",
+                crate::v1_compat::session_api::build_session_router(session_state),
+            )
     }
     #[cfg(not(feature = "v1-compat"))]
     {
@@ -354,17 +357,35 @@ mod tests {
             None,
         );
 
+        // 401 from the api-key gate on a mutating route — an unwired
+        // route would 404.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions/bootstrap")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"access_method":"wifi","token":"x","mac":"aa:bb:cc:dd:ee:ff"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // GET is unauthenticated by contract: 404 (not 401) proves the
+        // /v1 mount is live.
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/sessions/aa:bb:cc:dd:ee:ff")
+                    .uri("/v1/sessions/aa:bb:cc:dd:ee:ff")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-
-        // 401 from the api-key gate — an unwired route would 404.
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

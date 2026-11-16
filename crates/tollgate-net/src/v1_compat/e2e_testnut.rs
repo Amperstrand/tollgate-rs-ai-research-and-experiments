@@ -59,7 +59,7 @@ async fn e2e_bootstrap_and_topup_with_real_tokens() {
     // (add_allotment semantics), so expectations derive from the
     // observed baseline rather than assuming a fresh store.
     let resp = client
-        .get(format!("http://127.0.0.1:4799/sessions/{mac}"))
+        .get(format!("http://127.0.0.1:4799/v1/sessions/{mac}"))
         .header("x-api-key", "testkey123")
         .send()
         .await
@@ -75,7 +75,7 @@ async fn e2e_bootstrap_and_topup_with_real_tokens() {
     };
 
     let resp = client
-        .post("http://127.0.0.1:4799/sessions/bootstrap")
+        .post("http://127.0.0.1:4799/v1/sessions/bootstrap")
         .header("x-api-key", "testkey123")
         .json(&serde_json::json!({"access_method": "e2e", "token": token, "mac": mac}))
         .send()
@@ -91,11 +91,11 @@ async fn e2e_bootstrap_and_topup_with_real_tokens() {
     );
     assert_eq!(body["allotment"], serde_json::json!(baseline + v1 * 60_000));
     assert_eq!(body["metric"], "milliseconds");
-    assert_eq!(body["active"], serde_json::json!(true));
+    assert_eq!(body["access_level"], "active");
     assert_eq!(body["session_id"], serde_json::json!(mac));
 
     let resp = client
-        .get(format!("http://127.0.0.1:4799/sessions/{mac}"))
+        .get(format!("http://127.0.0.1:4799/v1/sessions/{mac}"))
         .header("x-api-key", "testkey123")
         .send()
         .await
@@ -113,7 +113,7 @@ async fn e2e_bootstrap_and_topup_with_real_tokens() {
     .expect("utf8 token");
     let v2 = token_value_sat(&token2);
     let resp = client
-        .post(format!("http://127.0.0.1:4799/sessions/{mac}/topups"))
+        .post(format!("http://127.0.0.1:4799/v1/sessions/{mac}/topups"))
         .header("x-api-key", "testkey123")
         .json(&serde_json::json!({"token": token2}))
         .send()
