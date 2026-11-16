@@ -190,17 +190,22 @@ fn normalize_mac(mac: &str) -> String {
 fn build_session_response(session: &CustomerSession) -> SessionResponse {
     let now = now_secs();
     let (remaining, access_level) = if session.metric == "milliseconds" {
-        let elapsed_ms = (now - session.start_time) * 1000;
-        let rem = session.allotment as i64 - elapsed_ms;
+        // saturating: a start_time ahead of `now` (clock step) must not
+        // panic the unauthenticated GET path with a subtract overflow.
+        let elapsed_ms = now.saturating_sub(session.start_time).saturating_mul(1000);
+        let rem = (session.allotment as i64).saturating_sub(elapsed_ms);
         let level = if rem <= 0 { "suspended" } else { "active" };
         (rem, level.to_owned())
     } else {
+        // saturating: reported octets are external input — u64::MAX values
+        // must not overflow the sum on every subsequent session read.
         let usage = session
             .last_external_usage
             .as_ref()
-            .map(|u| u.input_octets + u.output_octets)
+            .map(|u| u.input_octets.saturating_add(u.output_octets))
             .unwrap_or(0);
-        let rem = session.allotment as i64 - usage as i64;
+        let rem =
+            (session.allotment as i64).saturating_sub(i64::try_from(usage).unwrap_or(i64::MAX));
         let level = if rem <= 0 { "suspended" } else { "active" };
         (rem, level.to_owned())
     };
@@ -684,5 +689,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+    #[test]
+    fn build_session_response_survives_hostile_fields() {
+        // Regression (panic audit 2026-11-16, fuzz-confirmed 9334/25000):
+        // u64::MAX octets overflowed the input+output sum and a future
+        // start_time overflowed the elapsed subtraction — every later GET
+        // /v1/sessions/{mac} panicked.
+        let bytes_session = CustomerSession {
+            mac_address: "aa:bb:cc:dd:ee:ff".to_owned(),
+            start_time: 0,
+            metric: "bytes".to_owned(),
+            allotment: 5_000,
+            last_external_usage: Some(ExternalUsageSnapshot {
+                input_octets: u64::MAX,
+                output_octets: 1,
+                session_time: 0,
+                reported_at: 0,
+            }),
+        };
+        let resp = build_session_response(&bytes_session);
+        assert_eq!(resp.access_level, "suspended", "max usage suspends");
+        assert!(resp.remaining_quota <= 0);
+
+        let future_session = CustomerSession {
+            mac_address: "aa:bb:cc:dd:ee:ff".to_owned(),
+            start_time: now_secs() + 86_400,
+            metric: "milliseconds".to_owned(),
+            allotment: 60_000,
+            last_external_usage: None,
+        };
+        let resp = build_session_response(&future_session);
+        assert_eq!(resp.access_level, "active", "future start is not expired");
+        assert!(resp.remaining_quota > 0);
     }
 }

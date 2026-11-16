@@ -74,14 +74,18 @@ pub trait SessionStore: Send + Sync {
 /// metrics (bytes) are not consumed by wall-clock, so their start_time
 /// resets.
 pub(crate) fn apply_renewal(session: &mut CustomerSession, allotment: u64, now: i64) {
-    let elapsed_secs = (now - session.start_time).max(0);
+    // saturating: start_time ahead of `now` (clock step back) and extreme
+    // allotments must not panic the renewal path with add/sub overflows.
+    let elapsed_secs = now.saturating_sub(session.start_time).max(0);
     let consumed_secs = if session.metric == "milliseconds" {
-        (elapsed_secs * 1000).min(i64::try_from(session.allotment).unwrap_or(i64::MAX)) / 1000
+        (elapsed_secs.saturating_mul(1000))
+            .min(i64::try_from(session.allotment).unwrap_or(i64::MAX))
+            / 1000
     } else {
         0
     };
-    session.allotment += allotment;
-    session.start_time = now - consumed_secs;
+    session.allotment = session.allotment.saturating_add(allotment);
+    session.start_time = now.saturating_sub(consumed_secs);
 }
 
 /// In-memory session store (tokio Mutex<HashMap>).
@@ -97,7 +101,8 @@ impl InMemorySessionStore {
 }
 
 fn is_time_expired(s: &CustomerSession, now_secs: i64) -> bool {
-    s.metric == "milliseconds" && (now_secs - s.start_time) * 1000 >= s.allotment as i64
+    s.metric == "milliseconds"
+        && now_secs.saturating_sub(s.start_time).saturating_mul(1000) >= s.allotment as i64
 }
 
 #[async_trait::async_trait]
@@ -610,5 +615,40 @@ mod tests {
 
         drop(reopened);
         let _ = std::fs::remove_file(&path);
+    }
+    #[test]
+    fn renewal_and_expiry_survive_extreme_values() {
+        // Regression (panic audit 2026-11-16): apply_renewal and
+        // is_time_expired panicked with add/sub overflows on start_time
+        // ahead of `now` (clock step) and extreme allotments.
+        let mut session = CustomerSession {
+            mac_address: "aa:bb:cc:dd:ee:ff".to_owned(),
+            start_time: i64::MAX,
+            metric: "milliseconds".to_owned(),
+            allotment: u64::MAX,
+            last_external_usage: None,
+        };
+        apply_renewal(&mut session, u64::MAX, i64::MIN);
+        assert_eq!(session.start_time, i64::MIN, "consumed_secs clamps to 0");
+        assert_eq!(session.allotment, u64::MAX, "allotment saturates");
+
+        let renewed = CustomerSession {
+            mac_address: String::new(),
+            start_time: i64::MIN,
+            metric: "milliseconds".to_owned(),
+            allotment: i64::MAX as u64,
+            last_external_usage: None,
+        };
+        assert!(!is_time_expired(&renewed, i64::MIN));
+        assert!(is_time_expired(
+            &CustomerSession {
+                mac_address: String::new(),
+                start_time: i64::MIN,
+                metric: "milliseconds".to_owned(),
+                allotment: 1,
+                last_external_usage: None,
+            },
+            i64::MAX
+        ));
     }
 }

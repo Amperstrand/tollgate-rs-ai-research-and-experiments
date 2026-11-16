@@ -211,10 +211,12 @@ impl CdkWallet {
     #[allow(clippy::missing_errors_doc)]
     pub async fn receive_token(&self, token: &[u8]) -> anyhow::Result<u64> {
         let token_str = String::from_utf8_lossy(token).to_string();
+        // chars(), never a byte slice: byte offset 20 can split a multi-byte
+        // char in gateway-supplied tokens and panic on the boundary assert.
+        let prefix: String = token_str.chars().take(20).collect();
         tracing::info!(
-            "[NUT-00] Verifying Cashu token ({} bytes, first 20 chars: {:?})",
-            token_str.len(),
-            &token_str[..token_str.len().min(20)]
+            "[NUT-00] Verifying Cashu token ({} bytes, first 20 chars: {prefix:?})",
+            token_str.len()
         );
 
         let amount = self.verify_token(&token_str).await?;
@@ -834,5 +836,24 @@ mod tests {
     fn rejects_invalid_token_string() {
         let result = cashu::nuts::Token::from_str("not-a-token");
         assert!(result.is_err(), "garbage string must fail to parse");
+    }
+    #[tokio::test]
+    async fn receive_token_multibyte_at_byte_20_does_not_panic() {
+        // Regression (panic audit 2026-11-16): the receive log line sliced
+        // the token at byte offset 20; a multi-byte char spanning that
+        // offset panicked on the char-boundary assert. The token comes
+        // from the (possibly hostile) gateway during payment recovery.
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::INFO)
+            .try_init();
+        let wallet = super::CdkWallet::new("http://127.0.0.1:59999", [7u8; 64])
+            .await
+            .expect("in-memory wallet");
+        // 19 ASCII bytes + 2-byte 'é' at byte 19: the old [..min(len,20)]
+        // slice cut mid-char.
+        let token = format!("{}{}", "a".repeat(19), "\u{00E9}");
+        let result = wallet.receive_token(token.as_bytes()).await;
+        assert!(result.is_err(), "garbage token must fail verification");
     }
 }
