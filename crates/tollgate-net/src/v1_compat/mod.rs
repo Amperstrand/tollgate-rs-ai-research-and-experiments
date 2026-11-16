@@ -50,8 +50,9 @@ use std::sync::Arc;
 pub fn build_v1_router(
     driver: crate::driver::Driver,
     config: Arc<merchant::V1ServerConfig>,
+    sessions: Option<Arc<dyn session_store::SessionStore>>,
 ) -> axum::Router {
-    handlers::build_router(driver, config)
+    handlers::build_router(driver, config, sessions)
 }
 
 #[cfg(test)]

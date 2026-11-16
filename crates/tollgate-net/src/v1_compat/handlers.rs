@@ -9,6 +9,7 @@
 
 use super::ln_grant;
 use super::reconcile;
+use super::session_store::{SessionStore, now_secs};
 use std::sync::Arc;
 
 use axum::Router;
@@ -83,7 +84,11 @@ fn decode_cashu_amount(token: &str) -> Option<u64> {
 /// Journal for ambiguous-receive reconciliation (NUT-07 startup recovery).
 const PENDING_RECEIVES_FILE: &str = "/var/lib/tollgate/pending-receives.jsonl";
 
-pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
+pub fn build_router(
+    driver: Driver,
+    config: Arc<V1ServerConfig>,
+    sessions: Option<Arc<dyn SessionStore>>,
+) -> Router {
     Router::new()
         .route("/", get(handle_get_details).post(handle_post_payment))
         .route("/pay", get(handle_get_details))
@@ -96,6 +101,7 @@ pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
         )
         .route("/log-beacon", axum::routing::post(handle_log_beacon))
         .layer(axum::Extension(config))
+        .layer(axum::Extension(sessions))
         .layer(axum::Extension(Arc::new(ln_grant::LnGrantRegistry::new())))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .with_state(driver)
@@ -148,6 +154,7 @@ async fn handle_get_details(
 async fn handle_post_payment(
     State(driver): State<Driver>,
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
+    axum::Extension(sessions): axum::Extension<Option<Arc<dyn SessionStore>>>,
     headers: HeaderMap,
     body: String,
 ) -> Response {
@@ -170,7 +177,8 @@ async fn handle_post_payment(
     // payment is for, overriding IP-based resolution. The caller's
     // own IP must not be mapped as the device's, so the admission
     // path gets no IP on this route.
-    let (peer_hex, peer_ip) = match header_mac(&headers) {
+    let hdr_mac = header_mac(&headers);
+    let (peer_hex, peer_ip) = match hdr_mac.clone() {
         Some(mac) => (adapter::mac_to_peer_hex(&mac), None),
         None => match adapter::resolve_peer_hex(client_ip).await {
             Some(hex) => (hex, client_ip),
@@ -211,6 +219,15 @@ async fn handle_post_payment(
 
     if result.accepted {
         let (amount_sat, allotment) = extract_token_amount_and_allotment(&token, &config);
+        // Delegated (header-identified) payments also credit the
+        // session-API store — the surface tollgate-auth reads via
+        // GetSession/ReportUsage. m2 had one session system; this
+        // keeps both ledgers consistent for delegated callers.
+        if let (Some(mac), Some(store)) = (&hdr_mac, &sessions) {
+            let _ = store
+                .add_allotment(mac, &config.metric, allotment, now_secs())
+                .await;
+        }
 
         let session = merchant::CustomerSession {
             mac_address: peer_hex.clone(),
@@ -676,7 +693,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_advertisement_returns_nostr_10021() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -696,7 +713,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_payment_header_mac_skips_ip_resolution() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -720,7 +737,7 @@ mod tests {
         let driver = test_driver();
         let peer_hex = adapter::mac_to_peer_hex("aa:bb:cc:dd:ee:ff");
         driver.grant_owed_session(&peer_hex, 60_000).await;
-        let app = build_router(driver, test_config());
+        let app = build_router(driver, test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -744,7 +761,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_usage_returns_4xx_without_session() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -766,7 +783,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_balance_returns_4xx_without_session() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -787,7 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_ln_invoice_attempts_wallet_init() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -808,7 +825,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_ln_invoice_returns_503_with_explicit_message_when_wallet_not_configured() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -835,7 +852,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_ln_invoice_returns_503_with_explicit_message_when_wallet_not_configured() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -863,7 +880,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_payment_rejects_invalid_token() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -879,7 +896,7 @@ mod tests {
 
     #[tokio::test]
     async fn advertisement_has_metric_and_step_size_tags() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -905,7 +922,7 @@ mod tests {
 
     #[tokio::test]
     async fn advertisement_has_price_per_step_tag() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -927,7 +944,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_payment_rejects_empty_body() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -943,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_payment_accepts_json_token_format() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let body = serde_json::json!({"token": "cashuBnotreal"}).to_string();
         let resp = app
             .oneshot(
@@ -965,7 +982,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_pay_alias_returns_advertisement() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -984,7 +1001,7 @@ mod tests {
 
     #[tokio::test]
     async fn whoami_returns_400_when_peer_unknown() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -1012,7 +1029,7 @@ mod tests {
 
     #[tokio::test]
     async fn usage_returns_400_for_unknown_peer() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -1032,7 +1049,7 @@ mod tests {
 
     #[tokio::test]
     async fn balance_returns_400_for_unknown_peer() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
                 Request::builder()
@@ -1049,7 +1066,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_with_large_body_returns_413() {
-        let app = build_router(test_driver(), test_config());
+        let app = build_router(test_driver(), test_config(), None);
         let big_body = vec![b'A'; 70_000]; // 70KB > 64KB limit
         let resp = app
             .oneshot(
@@ -1107,7 +1124,7 @@ mod tests {
             mint_health: Some(tracker),
         });
 
-        let app = build_router(test_driver(), config);
+        let app = build_router(test_driver(), config, None);
         let resp = app
             .oneshot(
                 Request::builder()

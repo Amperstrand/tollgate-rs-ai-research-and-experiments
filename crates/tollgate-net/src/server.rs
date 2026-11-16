@@ -169,13 +169,17 @@ pub fn router(
                 ),
             })
         });
-        base.merge(crate::v1_compat::build_v1_router(v1_driver, v1_config))
-            // /v1 prefix is the consumer contract (m2 nests here and the
-            // tollgate-auth sessiond client calls /v1/sessions/*).
-            .nest(
-                "/v1",
-                crate::v1_compat::session_api::build_session_router(session_state),
-            )
+        base.merge(crate::v1_compat::build_v1_router(
+            v1_driver,
+            v1_config,
+            Some(session_state.sessions.clone()),
+        ))
+        // /v1 prefix is the consumer contract (m2 nests here and the
+        // tollgate-auth sessiond client calls /v1/sessions/*).
+        .nest(
+            "/v1",
+            crate::v1_compat::session_api::build_session_router(session_state),
+        )
     }
     #[cfg(not(feature = "v1-compat"))]
     {
