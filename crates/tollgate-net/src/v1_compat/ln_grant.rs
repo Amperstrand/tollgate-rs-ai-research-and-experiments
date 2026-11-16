@@ -76,6 +76,10 @@ impl LnGrantRegistry {
 
 /// The mint-and-send step of the grant. Seam for offline tests; production
 /// is [`CdkWallet`].
+///
+/// `mint_tokens` must be idempotent: the grant retries quotes the mint
+/// already reports ISSUED (a prior attempt minted but failed downstream),
+/// so it returns the already-minted amount instead of erroring.
 pub trait LnMinter {
     /// Mint the paid quote; returns the minted amount in sats.
     fn mint_tokens(&self, quote_id: &str) -> impl Future<Output = anyhow::Result<u64>> + Send;
@@ -148,6 +152,10 @@ pub enum GrantOutcome {
     /// Another poller is mid-grant; the client should poll again.
     Processing,
     /// The grant attempt failed; the claim was released for a retry.
+    ///
+    /// A failure after minting (token serialization, admission) leaves the
+    /// quote ISSUED at the mint with the proofs in our wallet; later polls
+    /// retry with that state and skip re-minting.
     Failed(String),
 }
 
@@ -164,6 +172,12 @@ pub struct GrantContext<'a, M: LnMinter, A: PeerAdmitter> {
 /// Attempt to grant access for a paid quote. Exactly-once per quote across
 /// concurrent callers: the registry claim decides who mints; everyone else
 /// sees [`GrantOutcome::Processing`] or [`GrantOutcome::AlreadyIssued`].
+///
+/// Both PAID and ISSUED quotes attempt the grant: a prior attempt whose
+/// mint succeeded but later steps failed leaves the quote ISSUED with the
+/// proofs in the wallet, and treating that as "still processing" would
+/// dead-end the quote (found live against testnut 2026-11-16: a failed
+/// admission polled `PAID` forever with the claim released but unreachable).
 pub async fn grant_if_paid<M: LnMinter, A: PeerAdmitter>(
     registry: &LnGrantRegistry,
     ctx: &GrantContext<'_, M, A>,
@@ -173,7 +187,7 @@ pub async fn grant_if_paid<M: LnMinter, A: PeerAdmitter>(
     if let Some(GrantState::Granted(allotment)) = registry.get(quote_id) {
         return GrantOutcome::AlreadyIssued { allotment };
     }
-    if quote_state != QuoteState::Paid {
+    if quote_state != QuoteState::Paid && quote_state != QuoteState::Issued {
         return GrantOutcome::Processing;
     }
     if !registry.claim(quote_id) {
@@ -257,6 +271,9 @@ mod tests {
 
     struct MockAdmitter {
         accept: bool,
+        /// Fail the first N admit calls (simulates a transient post-mint
+        /// failure: token verified later once the fault clears).
+        fail_first: usize,
         admits: AtomicUsize,
     }
 
@@ -267,8 +284,8 @@ mod tests {
             _ip: Option<IpAddr>,
             _token: &str,
         ) -> impl Future<Output = V1PaymentResult> + Send {
-            self.admits.fetch_add(1, Ordering::SeqCst);
-            let accept = self.accept;
+            let attempt = self.admits.fetch_add(1, Ordering::SeqCst);
+            let accept = self.accept && attempt >= self.fail_first;
             let peer_hex = peer_hex.to_owned();
             async move {
                 if accept {
@@ -335,6 +352,7 @@ mod tests {
         };
         let admitter = MockAdmitter {
             accept: true,
+            fail_first: 0,
             admits: AtomicUsize::new(0),
         };
 
@@ -393,6 +411,7 @@ mod tests {
         };
         let admitter = MockAdmitter {
             accept: true,
+            fail_first: 0,
             admits: AtomicUsize::new(0),
         };
 
@@ -424,6 +443,7 @@ mod tests {
         };
         let admitter = MockAdmitter {
             accept: true,
+            fail_first: 0,
             admits: AtomicUsize::new(0),
         };
 
@@ -466,6 +486,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn issued_quote_retries_grant_after_post_mint_failure() {
+        // Live-found dead-end (testnut, 2026-11-16): a grant whose mint
+        // succeeded but admission failed releases the claim "for retry",
+        // yet the mint then reports the quote ISSUED — which the Paid-only
+        // gate turned into an eternal Processing, stranding the quote.
+        let registry = LnGrantRegistry::new();
+        let minter = MockMinter {
+            mint_calls: AtomicUsize::new(0),
+            fail_mint: false,
+        };
+        let admitter = MockAdmitter {
+            accept: true,
+            fail_first: 1,
+            admits: AtomicUsize::new(0),
+        };
+
+        let ctx = GrantContext {
+            minter: &minter,
+            admitter: &admitter,
+            peer_hex: "aabb",
+            ip: None,
+            mint_url: "https://mint.example",
+            config: &test_config(),
+        };
+
+        let first = grant_if_paid(&registry, &ctx, "q1", QuoteState::Paid).await;
+        assert!(matches!(first, GrantOutcome::Failed(_)));
+
+        // The mint now reports ISSUED (tokens were minted by the failed
+        // attempt); the retry must still perform the grant.
+        let second = grant_if_paid(&registry, &ctx, "q1", QuoteState::Issued).await;
+        assert_eq!(
+            second,
+            GrantOutcome::Issued { allotment: 600_000 },
+            "an ISSUED quote must be grantable, not eternally Processing"
+        );
+        assert_eq!(admitter.admits.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            registry.get("q1"),
+            Some(GrantState::Granted(600_000)),
+            "the retry's grant is the terminal registry state"
+        );
+    }
+
+    #[tokio::test]
     async fn concurrent_pollers_grant_exactly_once() {
         let registry = std::sync::Arc::new(LnGrantRegistry::new());
         let minter = std::sync::Arc::new(MockMinter {
@@ -474,6 +539,7 @@ mod tests {
         });
         let admitter = std::sync::Arc::new(MockAdmitter {
             accept: true,
+            fail_first: 0,
             admits: AtomicUsize::new(0),
         });
         let config = std::sync::Arc::new(test_config());
