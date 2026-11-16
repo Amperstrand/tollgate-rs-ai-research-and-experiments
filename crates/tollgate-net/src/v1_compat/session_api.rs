@@ -53,6 +53,14 @@ impl SessionApiState {
     /// receive: if the process dies mid-redeem, the journal entry
     /// survives for startup reconciliation (NUT-07 ambiguous-outcome
     /// pattern, same as the portal payment handler).
+    ///
+    /// On success the journal entry is deliberately LEFT IN PLACE: the
+    /// caller credits the session store and only then completes the
+    /// entry. Completing before the credit would make a crash between
+    /// the two unrecoverable (token spent, journal empty, no session —
+    /// the chaos-reproduced lost-credit window); leaving it means a
+    /// crash anywhere past the receive is re-derived at startup, and
+    /// token-keyed idempotent crediting absorbs the re-derivation.
     async fn redeem(&self, token: &str, mac: &str) -> Result<(), String> {
         // Driver peers are keyed by mac_to_peer_hex (the portal
         // convention: a 66-char pubkey hex). A raw colon-MAC fails
@@ -71,19 +79,49 @@ impl SessionApiState {
 
         let result = adapter::admit_peer_with_token(&self.driver, &peer_hex, None, token).await;
 
-        let _ = reconcile::complete_pending_receive(&self.journal_path, token);
-
         if result.accepted {
             Ok(())
         } else {
+            // Definitive rejection: the token's fate is known (not
+            // consumed by us), so nothing can be owed — complete now.
+            let _ = reconcile::complete_pending_receive(&self.journal_path, token);
             Err(result.reason.unwrap_or_else(|| "rejected".to_owned()))
+        }
+    }
+
+    /// Credit a redeemed token into the session store exactly once and
+    /// complete its journal entry. Split out because bootstrap, topup,
+    /// and crash recovery share the ordering contract: credit first,
+    /// complete after.
+    async fn credit_and_complete(
+        &self,
+        mac: &str,
+        metric: &str,
+        allotment: u64,
+        token: &str,
+    ) -> Result<CustomerSession, String> {
+        let credited = self
+            .sessions
+            .credit_for_token(mac, metric, allotment, token, now_secs())
+            .await
+            .map_err(|e| e.to_string())?;
+        let _ = reconcile::complete_pending_receive(&self.journal_path, token);
+        match credited {
+            Some(session) => Ok(session),
+            None => self
+                .sessions
+                .get(mac)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "token already credited but session missing".to_owned()),
         }
     }
 
     /// Credit an owed receive recovered from the startup journal (crash
     /// between receive and grant). The driver credit always happens;
     /// delegated entries (mac set) additionally credit the session
-    /// store that tollgate-auth reads.
+    /// store that tollgate-auth reads. Idempotent against re-derived
+    /// entries: a token already credited is skipped, not re-added.
     pub async fn grant_owed_receive(
         &self,
         entry: &reconcile::PendingReceive,
@@ -105,10 +143,24 @@ impl SessionApiState {
             let allotment =
                 super::merchant::calculate_allotment(amount_sat, mint_url, &self.config)
                     .map_err(|e| e.to_string())?;
-            self.sessions
-                .add_allotment(mac, &self.config.metric, allotment, now_secs())
+            match self
+                .sessions
+                .credit_for_token(
+                    mac,
+                    &self.config.metric,
+                    allotment,
+                    &entry.token,
+                    now_secs(),
+                )
                 .await
-                .map_err(|e| e.to_string())?;
+            {
+                Ok(Some(_)) => {}
+                Ok(None) => tracing::info!(
+                    mac,
+                    "owed receive already credited — skipping duplicate grant"
+                ),
+                Err(e) => return Err(e.to_string()),
+            }
         }
         Ok(())
     }
@@ -302,8 +354,7 @@ async fn handle_post_topup(
 
     let (_, allotment) = extract_token_amount_and_allotment(&req.token, &state.config);
     match state
-        .sessions
-        .add_allotment(&mac, &state.config.metric, allotment, now_secs())
+        .credit_and_complete(&mac, &state.config.metric, allotment, &req.token)
         .await
     {
         Ok(session) => json_ok(&build_session_response(&session)),
@@ -370,8 +421,7 @@ async fn handle_post_bootstrap(
 
     let (_, allotment) = extract_token_amount_and_allotment(&req.token, &state.config);
     match state
-        .sessions
-        .add_allotment(&mac, &metric, allotment, now_secs())
+        .credit_and_complete(&mac, &metric, allotment, &req.token)
         .await
     {
         Ok(session) => json_ok(&build_session_response(&session)),
@@ -690,6 +740,7 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
     }
+
     #[test]
     fn build_session_response_survives_hostile_fields() {
         // Regression (panic audit 2026-11-16, fuzz-confirmed 9334/25000):
@@ -722,5 +773,75 @@ mod tests {
         let resp = build_session_response(&future_session);
         assert_eq!(resp.access_level, "active", "future start is not expired");
         assert!(resp.remaining_quota > 0);
+    }
+
+    #[tokio::test]
+    async fn grant_owed_recovery_does_not_double_credit_across_restarts() {
+        // Chaos repro (2026-11-16): a crash between the recovery grant and
+        // the journal completion leaves the entry journaled, so the next
+        // boot re-derives the owed session (checkstate SPENT) and grants
+        // again. With a persistent store the second grant must be an
+        // idempotent no-op, not a second add_allotment.
+        let dir = std::env::temp_dir().join(format!("tg-chaos-recovery-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("sessions.sqlite");
+        let mac = "02:b3:a0:00:00:01";
+
+        let mk_state = || {
+            let identity = Arc::new(
+                crate::config::Identity::load_or_generate(&crate::config::Config::default())
+                    .unwrap(),
+            );
+            let driver = crate::driver::Driver::new(
+                crate::wallet::BootstrapWallet::new(vec![]),
+                crate::adapter::IpAdapter::new(),
+                identity,
+                tollgate_core::Price::default(),
+                "bytes",
+                Vec::new(),
+            );
+            Arc::new(SessionApiState {
+                sessions: Arc::new(
+                    crate::v1_compat::session_store::SqliteSessionStore::open(&db).unwrap(),
+                ),
+                config: crate::server::build_v1_config(
+                    &crate::config::V1CompatConfig::default(),
+                    None,
+                ),
+                driver,
+                api_key: Some("test-key".to_owned()),
+                journal_path: dir.join("pending.jsonl"),
+            })
+        };
+
+        let entry = reconcile::PendingReceive {
+            token: "cashuBchaos".to_owned(),
+            peer_hex: adapter::mac_to_peer_hex(mac),
+            timestamp: now_secs(),
+            mac: Some(mac.to_owned()),
+        };
+
+        let state1 = mk_state();
+        state1.grant_owed_receive(&entry, 4).await.unwrap();
+        drop(state1);
+
+        // Restart re-derives the same owed entry from the journal.
+        let state2 = mk_state();
+        state2.grant_owed_receive(&entry, 4).await.unwrap();
+
+        let session = state2
+            .sessions
+            .get(mac)
+            .await
+            .unwrap()
+            .expect("store credited");
+        assert_eq!(
+            session.allotment,
+            4 * 60_000,
+            "recovery must not double-credit a session that already holds the credit"
+        );
+
+        drop(state2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

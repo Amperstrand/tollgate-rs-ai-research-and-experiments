@@ -44,6 +44,23 @@ pub trait SessionStore: Send + Sync {
         now: i64,
     ) -> Result<CustomerSession, SessionStoreError>;
 
+    /// Idempotent variant of [`SessionStore::add_allotment`] keyed by the
+    /// paid token: the first call for a token credits the session and
+    /// durably records the token; later calls for the SAME token are
+    /// no-ops returning `None`. Crash recovery re-derives an owed grant
+    /// from the journal (checkstate SPENT) and must not double-credit a
+    /// session that already holds the credit — the token record and the
+    /// allotment add commit atomically, so exactly one side of a crash
+    /// lands.
+    async fn credit_for_token(
+        &self,
+        mac: &str,
+        metric: &str,
+        amount: u64,
+        token: &str,
+        now: i64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError>;
+
     /// Atomically record an external usage snapshot without overwriting
     /// allotment (a concurrent renewal's write is preserved).
     async fn record_external_usage(
@@ -92,6 +109,7 @@ pub(crate) fn apply_renewal(session: &mut CustomerSession, allotment: u64, now: 
 #[derive(Default)]
 pub struct InMemorySessionStore {
     map: Mutex<HashMap<String, CustomerSession>>,
+    credited: Mutex<std::collections::HashSet<String>>,
 }
 
 impl InMemorySessionStore {
@@ -168,6 +186,23 @@ impl SessionStore for InMemorySessionStore {
                 Ok(session)
             }
         }
+    }
+
+    async fn credit_for_token(
+        &self,
+        mac: &str,
+        metric: &str,
+        amount: u64,
+        token: &str,
+        now: i64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        if !self.credited.lock().await.insert(token.to_owned()) {
+            return Ok(None);
+        }
+        // Process-local like the sessions: a restart loses both the
+        // allotment and the dedupe set together, so recovery from a
+        // journal entry always starts from zero.
+        self.add_allotment(mac, metric, amount, now).await.map(Some)
     }
 
     async fn record_external_usage(
@@ -297,6 +332,12 @@ impl SqliteSessionStore {
             )",
             (),
         )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS credited_tokens (
+                token TEXT PRIMARY KEY
+            )",
+            (),
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -365,6 +406,46 @@ impl SessionStore for SqliteSessionStore {
         };
         save_session(&conn, mac, &session)?;
         Ok(session)
+    }
+
+    async fn credit_for_token(
+        &self,
+        mac: &str,
+        metric: &str,
+        amount: u64,
+        token: &str,
+        now: i64,
+    ) -> Result<Option<CustomerSession>, SessionStoreError> {
+        let mut conn = self.conn.lock().await;
+        // Token claim + session write in ONE transaction: a crash either
+        // lands both (credit owed, entry completable) or neither (entry
+        // stays journaled, recovery re-grants).
+        let tx = conn.transaction().map_err(db_err)?;
+        let claimed = tx
+            .execute(
+                "INSERT OR IGNORE INTO credited_tokens (token) VALUES (?1)",
+                params![token],
+            )
+            .map_err(db_err)?;
+        if claimed == 0 {
+            return Ok(None);
+        }
+        let session = match load_session(&tx, mac)? {
+            Some(mut session) => {
+                apply_renewal(&mut session, amount, now);
+                session
+            }
+            None => CustomerSession {
+                mac_address: mac.to_owned(),
+                start_time: now,
+                metric: metric.to_owned(),
+                allotment: amount,
+                last_external_usage: None,
+            },
+        };
+        save_session(&tx, mac, &session)?;
+        tx.commit().map_err(db_err)?;
+        Ok(Some(session))
     }
 
     async fn record_external_usage(
@@ -532,6 +613,70 @@ mod tests {
             "tg-session-store-{}-{label}.sqlite",
             std::process::id()
         ))
+    }
+
+    #[tokio::test]
+    async fn sqlite_credit_for_token_is_idempotent_and_persists() {
+        let path = temp_db_path("credit-token");
+        let _ = std::fs::remove_file(&path);
+        let store = SqliteSessionStore::open(&path).unwrap();
+        let mac = "02:b3:a0:00:00:01";
+
+        let first = store
+            .credit_for_token(mac, "milliseconds", 240_000, "cashuBt1", 1_000)
+            .await
+            .unwrap()
+            .expect("first credit lands");
+        assert_eq!(first.allotment, 240_000);
+
+        let dup = store
+            .credit_for_token(mac, "milliseconds", 240_000, "cashuBt1", 1_100)
+            .await
+            .unwrap();
+        assert!(dup.is_none(), "same token must not credit twice");
+        assert_eq!(
+            store.get(mac).await.unwrap().unwrap().allotment,
+            240_000,
+            "duplicate credit must leave the allotment untouched"
+        );
+
+        let second = store
+            .credit_for_token(mac, "milliseconds", 60_000, "cashuBt2", 1_200)
+            .await
+            .unwrap()
+            .expect("a different token is a legitimate top-up");
+        assert_eq!(second.allotment, 300_000);
+
+        // The dedupe record is durable: a restart (reopen) still skips a
+        // re-delivery of an already-credited token.
+        drop(store);
+        let reopened = SqliteSessionStore::open(&path).unwrap();
+        let dup = reopened
+            .credit_for_token(mac, "milliseconds", 240_000, "cashuBt1", 2_000)
+            .await
+            .unwrap();
+        assert!(dup.is_none(), "credited-token record must survive reopen");
+        assert_eq!(reopened.get(mac).await.unwrap().unwrap().allotment, 300_000);
+
+        drop(reopened);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn in_memory_credit_for_token_skips_duplicates() {
+        let store = InMemorySessionStore::new();
+        let mac = "02:b3:a0:00:00:02";
+        store
+            .credit_for_token(mac, "milliseconds", 60_000, "cashuBt1", 1_000)
+            .await
+            .unwrap()
+            .expect("first credit lands");
+        let dup = store
+            .credit_for_token(mac, "milliseconds", 60_000, "cashuBt1", 1_100)
+            .await
+            .unwrap();
+        assert!(dup.is_none());
+        assert_eq!(store.get(mac).await.unwrap().unwrap().allotment, 60_000);
     }
 
     #[tokio::test]

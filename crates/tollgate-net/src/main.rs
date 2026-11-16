@@ -469,7 +469,8 @@ async fn serve(
     // whose session was never granted (crash between receive and grant)
     // are detected here and actually credited — driver balance for the
     // peer, plus the session-API store for delegated entries. Unconsumed
-    // entries are dropped; indeterminate ones stay journaled.
+    // entries are dropped; owed and indeterminate ones stay journaled
+    // (owed entries complete only after their grant lands).
     #[cfg(feature = "v1-compat")]
     let v1_wallet = match build_v1_wallet(&cfg.v1_compat).await {
         Ok(w) => Some(w),
@@ -518,19 +519,27 @@ async fn serve(
                 .grant_owed_receive(&owed_rx.entry, owed_rx.amount_sat)
                 .await
             {
-                Ok(()) => tracing::warn!(
-                    peer,
-                    amount_sat = owed_rx.amount_sat,
-                    mac = ?owed_rx.entry.mac,
-                    "reconcile: granted owed session for token consumed before a crash"
-                ),
+                Ok(()) => {
+                    // The entry stays journaled until the grant lands, so a
+                    // crash between grant and completion is re-derived (and
+                    // deduped) on the next boot rather than lost.
+                    let _ = v1_compat::reconcile::complete_pending_receive(
+                        &journal,
+                        &owed_rx.entry.token,
+                    );
+                    tracing::warn!(
+                        peer,
+                        amount_sat = owed_rx.amount_sat,
+                        mac = ?owed_rx.entry.mac,
+                        "reconcile: granted owed session for token consumed before a crash"
+                    );
+                }
                 Err(e) => {
                     tracing::error!(
                         peer,
                         err = %e,
-                        "reconcile: owed-session grant failed — re-journaled for the next boot"
+                        "reconcile: owed-session grant failed — entry stays journaled for the next boot"
                     );
-                    let _ = v1_compat::reconcile::journal_pending_receive(&journal, &owed_rx.entry);
                 }
             }
         }
