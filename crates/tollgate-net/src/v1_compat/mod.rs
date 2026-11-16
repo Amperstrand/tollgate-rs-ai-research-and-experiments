@@ -17,6 +17,8 @@ pub mod mac_resolver;
 
 pub mod nostr;
 pub mod payout;
+pub mod session_api;
+pub mod session_store;
 
 pub mod wallet;
 
