@@ -65,6 +65,7 @@ impl SessionApiState {
             token: token.to_owned(),
             peer_hex: peer_hex.clone(),
             timestamp: now_secs(),
+            mac: Some(mac.to_owned()),
         };
         let _ = reconcile::journal_pending_receive(&self.journal_path, &entry);
 
@@ -77,6 +78,39 @@ impl SessionApiState {
         } else {
             Err(result.reason.unwrap_or_else(|| "rejected".to_owned()))
         }
+    }
+
+    /// Credit an owed receive recovered from the startup journal (crash
+    /// between receive and grant). The driver credit always happens;
+    /// delegated entries (mac set) additionally credit the session
+    /// store that tollgate-auth reads.
+    pub async fn grant_owed_receive(
+        &self,
+        entry: &reconcile::PendingReceive,
+        amount_sat: u64,
+    ) -> Result<(), String> {
+        if amount_sat == 0 {
+            return Err("owed amount is zero — refusing to grant".to_owned());
+        }
+        self.driver
+            .grant_owed_session(&entry.peer_hex, amount_sat * 1000)
+            .await;
+        if let Some(mac) = &entry.mac {
+            let mint_url = self
+                .config
+                .accepted_mints
+                .first()
+                .map(|m| m.url.as_str())
+                .unwrap_or("");
+            let allotment =
+                super::merchant::calculate_allotment(amount_sat, mint_url, &self.config)
+                    .map_err(|e| e.to_string())?;
+            self.sessions
+                .add_allotment(mac, &self.config.metric, allotment, now_secs())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 }
 
@@ -478,6 +512,120 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn grant_owed_credits_driver_and_store_for_delegated() {
+        let state = test_state();
+        let entry = reconcile::PendingReceive {
+            token: "cashuBowed".to_owned(),
+            peer_hex: adapter::mac_to_peer_hex("aa:bb:cc:dd:ee:ff"),
+            timestamp: now_secs(),
+            mac: Some("aa:bb:cc:dd:ee:ff".to_owned()),
+        };
+        state.grant_owed_receive(&entry, 21).await.unwrap();
+
+        let session = state
+            .sessions
+            .get("aa:bb:cc:dd:ee:ff")
+            .await
+            .unwrap()
+            .expect("store credited");
+        assert_eq!(session.allotment, 21 * 60_000);
+
+        let status = state.driver.status().await;
+        let peer = status
+            .peers
+            .into_iter()
+            .find(|p| p.pubkey == entry.peer_hex)
+            .expect("driver peer exists");
+        assert_eq!(peer.their_balance, 21_000);
+    }
+
+    #[tokio::test]
+    async fn grant_owed_portal_entry_credits_driver_only() {
+        let state = test_state();
+        let peer_hex = adapter::mac_to_peer_hex("aa:bb:cc:dd:ee:ff");
+        let entry = reconcile::PendingReceive {
+            token: "cashuBowed".to_owned(),
+            peer_hex: peer_hex.clone(),
+            timestamp: now_secs(),
+            mac: None,
+        };
+        state.grant_owed_receive(&entry, 5).await.unwrap();
+        assert!(
+            state
+                .sessions
+                .get("aa:bb:cc:dd:ee:ff")
+                .await
+                .unwrap()
+                .is_none(),
+            "portal entries must not create store sessions"
+        );
+        let status = state.driver.status().await;
+        let peer = status
+            .peers
+            .into_iter()
+            .find(|p| p.pubkey == peer_hex)
+            .expect("driver peer exists");
+        assert_eq!(peer.their_balance, 5_000);
+    }
+
+    #[tokio::test]
+    async fn grant_owed_zero_amount_is_refused() {
+        let state = test_state();
+        let entry = reconcile::PendingReceive {
+            token: "cashuBowed".to_owned(),
+            peer_hex: adapter::mac_to_peer_hex("aa:bb:cc:dd:ee:ff"),
+            timestamp: now_secs(),
+            mac: Some("aa:bb:cc:dd:ee:ff".to_owned()),
+        };
+        assert!(state.grant_owed_receive(&entry, 0).await.is_err());
+        assert!(
+            state
+                .sessions
+                .get("aa:bb:cc:dd:ee:ff")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn router_serves_the_shared_store() {
+        let state = test_state();
+        let app = build_session_router(state.clone());
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/sessions/aa:bb:cc:dd:ee:ff")
+                    .header("x-api-key", "test-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        state
+            .sessions
+            .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 60_000, now_secs())
+            .await
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/sessions/aa:bb:cc:dd:ee:ff")
+                    .header("x-api-key", "test-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

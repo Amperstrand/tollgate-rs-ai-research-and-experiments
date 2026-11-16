@@ -180,6 +180,7 @@ async fn handle_post_payment(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64,
+            mac: None,
         },
     );
 

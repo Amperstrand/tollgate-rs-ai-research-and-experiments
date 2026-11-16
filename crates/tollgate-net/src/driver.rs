@@ -345,6 +345,24 @@ impl Driver {
     }
 
     /// A decoded protocol frame arrived from a peer.
+    /// Credit a peer for a token already consumed at the mint (crash
+    /// between receive and grant). Registers the peer if needed, then
+    /// feeds the verified-bootstrap event so the standard grant
+    /// machinery (balance, access, metering) runs.
+    #[cfg(feature = "v1-compat")]
+    pub async fn grant_owed_session(&self, peer_hex: &str, amount_milli_sat: u64) {
+        self.peer_connected(peer_hex, None).await;
+        let peer = parse_peer(peer_hex);
+        let actions = self
+            .handle(Event::BootstrapVerified {
+                peer,
+                amount: amount_milli_sat,
+                ok: true,
+            })
+            .await;
+        self.dispatch(actions, peer_hex).await;
+    }
+
     pub async fn message_received(&self, peer_hex: &str, bytes: Vec<u8>) {
         self.touch(peer_hex).await;
         let peer = parse_peer(peer_hex);
