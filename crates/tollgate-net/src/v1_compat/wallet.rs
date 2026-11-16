@@ -582,11 +582,37 @@ impl CdkWallet {
 
     /// Mint tokens from a paid quote (NUT-04).
     ///
+    /// Idempotent: if the quote is already ISSUED (a prior grant attempt
+    /// minted but failed downstream), the mint refuses to re-issue — the
+    /// proofs already sit in this wallet. Returns the already-minted
+    /// amount so the grant retry can continue from the wallet balance
+    /// instead of dead-ending the quote.
+    ///
     /// # Errors
     ///
     /// Returns an error if minting fails.
     #[allow(clippy::missing_errors_doc)]
     pub async fn mint_tokens(&self, quote_id: &str) -> anyhow::Result<MintResult> {
+        let status = self
+            .wallet
+            .check_mint_quote_status(quote_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("check_mint_quote_status: {e}"))?;
+
+        if status.state == MintQuoteState::Issued {
+            // `amount_issued` is what the earlier mint actually produced;
+            // fall back to the requested amount for mints that do not
+            // track issuance per quote.
+            let minted = if u64::from(status.amount_issued) > 0 {
+                status.amount_issued
+            } else {
+                status.amount.unwrap_or_default()
+            };
+            let total = u64::from(minted);
+            tracing::info!("[NUT-04] Quote {quote_id} already issued — reusing minted {total} sat");
+            return Ok(MintResult { amount: total });
+        }
+
         let proofs = self
             .wallet
             .mint(quote_id, cdk::amount::SplitTarget::default(), None)
