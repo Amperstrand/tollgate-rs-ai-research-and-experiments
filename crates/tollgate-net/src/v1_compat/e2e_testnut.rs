@@ -131,4 +131,27 @@ async fn e2e_bootstrap_and_topup_with_real_tokens() {
         body["allotment"],
         serde_json::json!(baseline + (v1 + v2) * 60_000)
     );
+
+    // Phase-2 delegated Bootstrap (tollgate-auth Go client shape): raw
+    // token body + X-TollGate-MAC → Nostr kind 1022 session event.
+    let token3 = String::from_utf8(
+        wallet
+            .create_token(5, "https://testnut.cashu.space")
+            .await
+            .expect("create token 3"),
+    )
+    .expect("utf8 token");
+    let resp = client
+        .post("http://127.0.0.1:4799/")
+        .header("x-tollgate-mac", "02:00:00:00:00:02")
+        .header("content-type", "text/plain")
+        .body(token3)
+        .send()
+        .await
+        .expect("phase-2 bootstrap");
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.expect("phase-2 body");
+    println!("phase2 -> {status} {body}");
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(body["kind"], serde_json::json!(1022));
 }

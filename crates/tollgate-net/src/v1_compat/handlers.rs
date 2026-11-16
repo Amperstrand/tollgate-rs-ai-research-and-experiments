@@ -101,6 +101,18 @@ pub fn build_router(driver: Driver, config: Arc<V1ServerConfig>) -> Router {
         .with_state(driver)
 }
 
+/// X-TollGate-MAC header (delegated callers — tollgate-auth Go
+/// binaries): trimmed, non-empty, normalized to colon-form lowercase
+/// (m2 contract). Overrides IP-based MAC resolution when present.
+fn header_mac(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-tollgate-mac")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase().replace(['-', '.'], ":"))
+}
+
 fn extract_payment_token(body: &str) -> Option<String> {
     let trimmed = body.trim();
     if trimmed.starts_with("cashu")
@@ -154,17 +166,24 @@ async fn handle_post_payment(
 
     let client_ip = extract_ip(&headers, config.trust_proxy_headers);
 
-    let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
-        Some(hex) => hex,
-        None => {
-            let json = serde_json::json!({"error": "could not resolve client identity"});
-            return (
-                StatusCode::BAD_REQUEST,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
-            )
-                .into_response();
-        }
+    // X-TollGate-MAC (delegated callers) states which device the
+    // payment is for, overriding IP-based resolution. The caller's
+    // own IP must not be mapped as the device's, so the admission
+    // path gets no IP on this route.
+    let (peer_hex, peer_ip) = match header_mac(&headers) {
+        Some(mac) => (adapter::mac_to_peer_hex(&mac), None),
+        None => match adapter::resolve_peer_hex(client_ip).await {
+            Some(hex) => (hex, client_ip),
+            None => {
+                let json = serde_json::json!({"error": "could not resolve client identity"});
+                return (
+                    StatusCode::BAD_REQUEST,
+                    [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default(),
+                )
+                    .into_response();
+            }
+        },
     };
 
     // Journal the intent BEFORE the receive — if the process dies between
@@ -184,7 +203,7 @@ async fn handle_post_payment(
         },
     );
 
-    let result = adapter::admit_peer_with_token(&driver, &peer_hex, client_ip, &token).await;
+    let result = adapter::admit_peer_with_token(&driver, &peer_hex, peer_ip, &token).await;
 
     // Journal cleanup: remove the entry on a definitive outcome
     // (accepted or rejected — either way the token's fate is known).
@@ -257,16 +276,19 @@ async fn handle_usage(
     );
     // Go v1 parity: unresolved MAC and missing session both answer
     // 200 "-1/-1" — clients parse "no session" from it, not an error.
-    let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
-        Some(h) => h,
-        None => {
-            return (
-                StatusCode::OK,
-                [("content-type", "text/plain")],
-                "-1/-1".to_owned(),
-            )
-                .into_response();
-        }
+    let peer_hex = match header_mac(&headers) {
+        Some(mac) => adapter::mac_to_peer_hex(&mac),
+        None => match adapter::resolve_peer_hex(client_ip).await {
+            Some(h) => h,
+            None => {
+                return (
+                    StatusCode::OK,
+                    [("content-type", "text/plain")],
+                    "-1/-1".to_owned(),
+                )
+                    .into_response();
+            }
+        },
     };
     match adapter::get_usage_json(&driver, &peer_hex).await {
         Some(usage) => {
@@ -670,6 +692,54 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["kind"], 10021);
         assert!(json["tags"].is_array());
+    }
+
+    #[tokio::test]
+    async fn post_payment_header_mac_skips_ip_resolution() {
+        let app = build_router(test_driver(), test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("content-type", "text/plain")
+                    .header("x-tollgate-mac", "AA-BB-CC-DD-EE-FF")
+                    .body(Body::from("cashuAgarbage"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The header resolves the peer, so the request reaches token
+        // verification (402) instead of failing identity resolution
+        // (400 "could not resolve client identity").
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn usage_header_mac_finds_granted_session() {
+        let driver = test_driver();
+        let peer_hex = adapter::mac_to_peer_hex("aa:bb:cc:dd:ee:ff");
+        driver.grant_owed_session(&peer_hex, 60_000).await;
+        let app = build_router(driver, test_config());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/usage")
+                    .header("x-tollgate-mac", "aa:bb:cc:dd:ee:ff")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        assert_ne!(
+            &body[..],
+            b"-1/-1",
+            "header-identified peer must resolve to the granted session"
+        );
     }
 
     #[tokio::test]
