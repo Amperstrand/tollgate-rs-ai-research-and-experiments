@@ -20,11 +20,21 @@ use std::net::ToSocketAddrs;
 /// resolved IP — a hostname that resolves to both a public and a
 /// private address is still blocked (DNS rebinding mitigation).
 ///
+/// Test harnesses that run their fake mint on a private network (the CI
+/// integration compose suites) may set
+/// `TOLLGATE_SSRF_ALLOW_PRIVATE_MINTS=1` to skip the blocked-range
+/// check; the URL must still parse and resolve. Never set in production.
+///
 /// # Errors
 ///
 /// Returns an error if the URL is malformed, the host doesn't resolve,
 /// or any resolved IP is in a blocked range.
 pub fn validate_url_no_ssrf(url: &str) -> anyhow::Result<()> {
+    let allow_private = std::env::var("TOLLGATE_SSRF_ALLOW_PRIVATE_MINTS").as_deref() == Ok("1");
+    validate_url(url, allow_private)
+}
+
+fn validate_url(url: &str, allow_private: bool) -> anyhow::Result<()> {
     let parsed: url::Url = url
         .parse()
         .map_err(|e| anyhow::anyhow!("SSRF: invalid URL: {e}"))?;
@@ -35,7 +45,7 @@ pub fn validate_url_no_ssrf(url: &str) -> anyhow::Result<()> {
 
     // If the host is already an IP literal, check it directly.
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_blocked(ip) {
+        if is_blocked(ip) && !allow_private {
             anyhow::bail!("SSRF blocked: {host} is a blocked address");
         }
         return Ok(());
@@ -53,7 +63,7 @@ pub fn validate_url_no_ssrf(url: &str) -> anyhow::Result<()> {
     }
 
     for addr in &addrs {
-        if is_blocked(addr.ip()) {
+        if is_blocked(addr.ip()) && !allow_private {
             anyhow::bail!(
                 "SSRF blocked: {host} resolves to blocked address {}",
                 addr.ip()
@@ -162,5 +172,28 @@ mod tests {
     fn accepts_public_ip_literal() {
         // 8.8.8.8 is Google DNS — public
         assert!(validate_url_no_ssrf("https://8.8.8.8/v1/info").is_ok());
+    }
+
+    #[test]
+    fn allow_private_bypass_permits_blocked_ranges() {
+        // The CI integration suites' fake mints live on docker-compose
+        // private networks; the bypass is their explicit opt-in.
+        for url in [
+            "http://172.18.0.2:3338/v1/checkstate",
+            "http://10.0.0.1/v1/info",
+            "http://169.254.169.254/latest/meta-data",
+        ] {
+            assert!(validate_url(url, true).is_ok(), "bypass must allow {url}");
+            assert!(
+                validate_url(url, false).is_err(),
+                "default mode must still block {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn allow_private_bypass_still_requires_valid_url() {
+        assert!(validate_url("not a url", true).is_err());
+        assert!(validate_url("http://", true).is_err());
     }
 }
