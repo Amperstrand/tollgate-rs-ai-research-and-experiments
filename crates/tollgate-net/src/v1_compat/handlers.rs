@@ -176,9 +176,11 @@ async fn handle_post_payment(
     State(driver): State<Driver>,
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
     axum::Extension(sessions): axum::Extension<Option<Arc<dyn SessionStore>>>,
+    connect_info: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
     body: String,
 ) -> Response {
+    let connect_info = connect_info.map(|axum::Extension(info)| info);
     let token = match extract_payment_token(&body) {
         Some(t) => t,
         None => {
@@ -192,7 +194,11 @@ async fn handle_post_payment(
         }
     };
 
-    let client_ip = extract_ip(&headers, config.trust_proxy_headers);
+    // Portal payments resolve the payer like /usage does: trusted
+    // XFF/X-Real-IP, then the TCP connection address. Headers-only
+    // resolution rejected every direct v1-client payment under the
+    // default trust_proxy_headers=false (live-found 2026-11-17).
+    let client_ip = extract_ip_full(&headers, connect_info.as_ref(), config.trust_proxy_headers);
 
     // X-TollGate-MAC (delegated callers) states which device the
     // payment is for, overriding IP-based resolution. The caller's
@@ -718,6 +724,18 @@ mod tests {
         assert!(
             ip.is_none(),
             "extract_ip must ignore XFF when trust=false, got: {ip:?}"
+        );
+    }
+
+    #[test]
+    fn extract_ip_full_falls_back_to_connection_address() {
+        let headers = HeaderMap::new();
+        let conn = ConnectInfo(SocketAddr::from(([10, 1, 2, 3], 9999)));
+        let ip = extract_ip_full(&headers, Some(&conn), false);
+        assert_eq!(
+            ip.map(|i| i.to_string()),
+            Some("10.1.2.3".to_string()),
+            "untrusted requests must resolve from the TCP connection address"
         );
     }
 
