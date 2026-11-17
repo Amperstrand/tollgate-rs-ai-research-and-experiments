@@ -25,10 +25,12 @@
 //! seed-only recovery).
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use cdk::cdk_database::WalletDatabase;
 use cdk::nuts::{CurrencyUnit, MintQuoteState, PaymentMethod};
 use cdk::wallet::{SendKind, SendOptions};
 use cdk_sqlite::wallet::memory;
@@ -149,22 +151,68 @@ impl CdkWallet {
         &self.mint_url
     }
 
-    /// Try each mint URL in order, returning the first that initializes successfully.
+    /// Try each mint URL in order, returning the first that is reachable
+    /// and initializes successfully.
     ///
-    /// Mirrors Go's `TollWallet.New()` — loops through `accepted_mints`, creates a
-    /// wallet for each, breaks on first success, returns error if all fail.
+    /// Mirrors Go's `TollWallet.New()` — loops through `accepted_mints`,
+    /// breaks on first success, returns error if all fail. Reachability
+    /// is a NUT-06 `/v1/info` probe (cdk's `Wallet::new` does no network
+    /// I/O, so construction alone cannot tell a live mint from a dead
+    /// one). When `db_path` is set it is used for the resulting wallet
+    /// (NUT-13 derivation-counter persistence) and a mint the store
+    /// already has state for is tried FIRST — switching derivation mints
+    /// across boots would strand the previous mint's wallet view.
     ///
     /// # Errors
     ///
     /// Returns an error if all mints fail to connect.
-    pub async fn try_mints(mint_urls: &[String], seed: [u8; 64]) -> anyhow::Result<Self> {
+    pub async fn try_mints(
+        mint_urls: &[String],
+        seed: [u8; 64],
+        db_path: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let probe_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self::try_mints_with(mint_urls, seed, db_path, move |mint_url| {
+            let probe_client = probe_client.clone();
+            async move {
+                let url = format!("{}/v1/info", mint_url.trim_end_matches('/'));
+                match probe_client.get(&url).send().await {
+                    Ok(resp) => resp.status().is_success(),
+                    Err(_) => false,
+                }
+            }
+        })
+        .await
+    }
+
+    /// [`Self::try_mints`] with the reachability probe injected — the
+    /// seam the boot-failover unit tests mock.
+    async fn try_mints_with<F, Fut>(
+        mint_urls: &[String],
+        seed: [u8; 64],
+        db_path: Option<&str>,
+        probe: F,
+    ) -> anyhow::Result<Self>
+    where
+        F: Fn(String) -> Fut,
+        Fut: Future<Output = bool>,
+    {
         if mint_urls.is_empty() {
             anyhow::bail!("no mint URLs provided");
         }
+        let ordered = mints_preferred_first(mint_urls, db_path).await;
         let mut last_err = None;
-        for url in mint_urls {
+        for url in ordered {
             tracing::info!("Trying mint: {url}");
-            match Self::new(url, seed).await {
+            if !probe(url.clone()).await {
+                tracing::warn!("Mint {url} unreachable");
+                last_err = Some(anyhow::anyhow!("mint {url} unreachable"));
+                continue;
+            }
+            match Self::with_store(&url, seed, db_path).await {
                 Ok(wallet) => {
                     tracing::info!("Connected to mint: {url}");
                     return Ok(wallet);
@@ -776,6 +824,50 @@ impl CdkWallet {
 /// a spent token reads as unspent (live-verified in the reconcile module,
 /// whose extraction was fixed first; this copy feeds verify_token's
 /// checkstate).
+/// Reorder `mint_urls` so the first one the localstore already has
+/// state for moves to the front; the rest keep their configured order.
+/// A fresh/empty store, an absent `db_path`, or an unreadable store
+/// leaves the order untouched.
+async fn mints_preferred_first(mint_urls: &[String], db_path: Option<&str>) -> Vec<String> {
+    let Some(path) = db_path else {
+        return mint_urls.to_vec();
+    };
+    let store = match cdk_sqlite::wallet::WalletSqliteDatabase::new(path).await {
+        Ok(store) => store,
+        Err(e) => {
+            tracing::warn!(
+                "try_mints: localstore {path} unreadable ({e}); trying configured order"
+            );
+            return mint_urls.to_vec();
+        }
+    };
+    let known = match store.get_mints().await {
+        Ok(mints) => mints
+            .keys()
+            .map(|m| m.to_string().trim_end_matches('/').to_owned())
+            .collect::<std::collections::HashSet<_>>(),
+        Err(e) => {
+            tracing::warn!("try_mints: localstore mint list failed ({e}); trying configured order");
+            return mint_urls.to_vec();
+        }
+    };
+    // Release the connection before with_store re-opens the same file.
+    drop(store);
+    match mint_urls
+        .iter()
+        .position(|u| known.contains(u.trim_end_matches('/')))
+    {
+        Some(idx) => {
+            let mut ordered = mint_urls.to_vec();
+            let preferred = ordered.remove(idx);
+            tracing::info!("try_mints: preferring store-known mint {preferred}");
+            ordered.insert(0, preferred);
+            ordered
+        }
+        None => mint_urls.to_vec(),
+    }
+}
+
 fn token_proof_ys(token: &cashu::nuts::Token) -> Vec<String> {
     use cashu::nuts::Token;
     let secrets: Vec<&[u8]> = match token {
@@ -881,5 +973,92 @@ mod tests {
         let token = format!("{}{}", "a".repeat(19), "\u{00E9}");
         let result = wallet.receive_token(token.as_bytes()).await;
         assert!(result.is_err(), "garbage token must fail verification");
+    }
+
+    #[tokio::test]
+    async fn try_mints_falls_over_to_second_mint_when_first_is_down() {
+        let urls = vec![
+            "http://first.test".to_owned(),
+            "http://second.test".to_owned(),
+        ];
+        let wallet = super::CdkWallet::try_mints_with(&urls, [7u8; 64], None, |url| async move {
+            url == "http://second.test"
+        })
+        .await
+        .expect("healthy second mint binds");
+        assert_eq!(wallet.mint_url(), "http://second.test");
+    }
+
+    #[tokio::test]
+    async fn try_mints_errors_when_every_mint_is_down() {
+        let urls = vec![
+            "http://first.test".to_owned(),
+            "http://second.test".to_owned(),
+        ];
+        assert!(
+            super::CdkWallet::try_mints_with(&urls, [7u8; 64], None, |_| async { false })
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn try_mints_prefers_store_known_mint_over_configured_order() {
+        let path = std::env::temp_dir().join(format!("tg-trymints-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let store = cdk_sqlite::wallet::WalletSqliteDatabase::new(&path)
+                .await
+                .expect("open store");
+            store
+                .add_mint(
+                    cdk::mint_url::MintUrl::from_str("http://mint-a.test").expect("mint url"),
+                    None,
+                )
+                .await
+                .expect("seed mint state");
+        }
+        // Both mints reachable: the store-known mint A must win even
+        // though B is listed first.
+        let urls = vec![
+            "http://mint-b.test".to_owned(),
+            "http://mint-a.test".to_owned(),
+        ];
+        let wallet = super::CdkWallet::try_mints_with(
+            &urls,
+            [7u8; 64],
+            Some(path.to_str().expect("utf8 path")),
+            |_| async { true },
+        )
+        .await
+        .expect("store-known mint preferred");
+        assert_eq!(wallet.mint_url(), "http://mint-a.test");
+
+        drop(wallet);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn try_mints_without_store_state_keeps_configured_order() {
+        // Fresh store, both mints up: first-listed binds.
+        let path =
+            std::env::temp_dir().join(format!("tg-trymints-fresh-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let urls = vec![
+            "http://mint-b.test".to_owned(),
+            "http://mint-a.test".to_owned(),
+        ];
+        let wallet = super::CdkWallet::try_mints_with(
+            &urls,
+            [7u8; 64],
+            Some(path.to_str().expect("utf8 path")),
+            |_| async { true },
+        )
+        .await
+        .expect("first listed mint binds on a fresh store");
+        assert_eq!(wallet.mint_url(), "http://mint-b.test");
+
+        drop(wallet);
+        let _ = std::fs::remove_file(&path);
     }
 }

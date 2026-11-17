@@ -615,16 +615,30 @@ async fn build_v1_wallet(
         )
     })?;
 
-    let mint_url = v1
-        .accepted_mints
-        .first()
-        .map(|m| m.url.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("http://localhost:3338");
+    let mint_urls: Vec<String> = {
+        let configured: Vec<String> = v1
+            .accepted_mints
+            .iter()
+            .map(|m| m.url.clone())
+            .filter(|u| !u.is_empty())
+            .collect();
+        if configured.is_empty() {
+            vec!["http://localhost:3338".to_owned()]
+        } else {
+            configured
+        }
+    };
 
-    let wallet = CdkWallet::with_store(mint_url, seed, Some("/var/lib/tollgate/cdk-wallet.sqlite"))
-        .await
-        .map_err(|e| anyhow::anyhow!("wallet init: {e}"))?;
+    // Multi-mint boot (Go's TollWallet.New parity): first reachable mint
+    // wins, with the store-known mint preferred so reboots keep deriving
+    // against the mint the wallet already holds state for.
+    let wallet = CdkWallet::try_mints(
+        &mint_urls,
+        seed,
+        Some("/var/lib/tollgate/cdk-wallet.sqlite"),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("wallet init: {e}"))?;
     Ok(std::sync::Arc::new(wallet))
 }
 
