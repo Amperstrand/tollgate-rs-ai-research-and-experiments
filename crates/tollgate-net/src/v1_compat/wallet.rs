@@ -415,6 +415,79 @@ impl CdkWallet {
         Ok(token.to_string().into_bytes())
     }
 
+    /// Reuse the serialized token a prior grant attempt left in a cdk
+    /// pending send (`TokenCreated` saga).
+    ///
+    /// `create_token_grant` hands its proofs to a `TokenCreated` saga: if
+    /// the admission after it failed, those proofs stay locked in the
+    /// saga and the wallet's spendable balance no longer includes them —
+    /// a re-create would fail with "insufficient funds" (the exact quote
+    /// dead-end the retry path was meant to fix) or draw unrelated
+    /// balance. cdk persists the serialized token in the saga, so the
+    /// retry admits the SAME token instead of creating a second one.
+    ///
+    /// Returns `None` when no unspent pending send for `amount` exists
+    /// (first attempt, or the prior send was already claimed). Claimed
+    /// sends encountered on the way are finalized (saga deleted), so the
+    /// scan also garbage-collects redeemed grants.
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn reuse_pending_send(&self, amount: u64) -> anyhow::Result<Option<Vec<u8>>> {
+        use cdk::wallet::types::{OperationData, SendSagaState, WalletSagaState};
+
+        for op_id in self
+            .wallet
+            .get_pending_sends()
+            .await
+            .map_err(|e| anyhow::anyhow!("get_pending_sends: {e}"))?
+        {
+            let Some(saga) = self
+                .wallet
+                .localstore
+                .get_saga(&op_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("get_saga {op_id}: {e}"))?
+            else {
+                continue;
+            };
+            if !matches!(
+                saga.state,
+                WalletSagaState::Send(SendSagaState::TokenCreated)
+            ) {
+                continue;
+            }
+            let OperationData::Send(data) = &saga.data else {
+                continue;
+            };
+            if u64::from(saga.amount) != amount {
+                continue;
+            }
+            // The persisted token must still be unspent: a grant the
+            // Driver already redeemed is finalized here (saga deleted)
+            // and skipped — the mint rejects its proofs, so admitting it
+            // again can never land.
+            match self.wallet.check_send_status(op_id).await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(e) => {
+                    // A concurrent grant may have finalized the saga
+                    // between our get and this check; either way this
+                    // candidate is unusable, try the next one.
+                    tracing::warn!("reuse_pending_send: check {op_id} failed: {e}");
+                    continue;
+                }
+            }
+            if let Some(token) = &data.token {
+                tracing::info!(
+                    op = %op_id,
+                    amount,
+                    "[NUT-00] Reusing pending-send token from a prior grant attempt"
+                );
+                return Ok(Some(token.clone().into_bytes()));
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn create_token_with_overpayment(
         &self,
         amount: u64,

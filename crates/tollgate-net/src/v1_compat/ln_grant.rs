@@ -80,9 +80,21 @@ impl LnGrantRegistry {
 /// `mint_tokens` must be idempotent: the grant retries quotes the mint
 /// already reports ISSUED (a prior attempt minted but failed downstream),
 /// so it returns the already-minted amount instead of erroring.
+///
+/// `reuse_pending_send`/`create_token` together must also be
+/// crash-idempotent: a prior attempt that serialized a token but failed
+/// admission left the proofs in a cdk pending send, so the token is
+/// re-used rather than re-created from a balance that no longer holds
+/// those proofs.
 pub trait LnMinter {
     /// Mint the paid quote; returns the minted amount in sats.
     fn mint_tokens(&self, quote_id: &str) -> impl Future<Output = anyhow::Result<u64>> + Send;
+    /// Return the serialized token a prior failed attempt left in a
+    /// pending send for `amount`, if any (`None` on a first attempt).
+    fn reuse_pending_send(
+        &self,
+        amount: u64,
+    ) -> impl Future<Output = anyhow::Result<Option<Vec<u8>>>> + Send;
     /// Serialize `amount` sats from the wallet as a bootstrap token.
     fn create_token(&self, amount: u64) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
 }
@@ -94,6 +106,13 @@ impl LnMinter for CdkWallet {
             let result = CdkWallet::mint_tokens(self, quote_id).await?;
             Ok(result.amount)
         }
+    }
+
+    fn reuse_pending_send(
+        &self,
+        amount: u64,
+    ) -> impl Future<Output = anyhow::Result<Option<Vec<u8>>>> + Send {
+        async move { CdkWallet::reuse_pending_send(self, amount).await }
     }
 
     fn create_token(&self, amount: u64) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send {
@@ -204,11 +223,21 @@ pub async fn grant_if_paid<M: LnMinter, A: PeerAdmitter>(
         let allotment = merchant::calculate_allotment(amount, ctx.mint_url, ctx.config)
             .map_err(|e| format!("allotment calc failed: {e}"))?;
 
-        let token = ctx
-            .minter
-            .create_token(amount)
-            .await
-            .map_err(|e| format!("token serialization failed: {e}"))?;
+        // Reclaim-or-create (review-gate blocker, 2026-11-17): a prior
+        // attempt that serialized a token but failed admission left the
+        // proofs in a cdk pending send — the wallet's spendable balance
+        // no longer includes them, so re-creating would fail with
+        // "insufficient funds" (dead-ending the quote the retry was meant
+        // to save) or draw unrelated balance. Admit the persisted token.
+        let token = match ctx.minter.reuse_pending_send(amount).await {
+            Ok(Some(persisted)) => persisted,
+            Ok(None) => ctx
+                .minter
+                .create_token(amount)
+                .await
+                .map_err(|e| format!("token serialization failed: {e}"))?,
+            Err(e) => return Err(format!("pending send reclaim failed: {e}")),
+        };
         let token_str = String::from_utf8_lossy(&token).to_string();
 
         let result = ctx.admitter.admit(ctx.peer_hex, ctx.ip, &token_str).await;
@@ -245,6 +274,12 @@ mod tests {
     struct MockMinter {
         mint_calls: AtomicUsize,
         fail_mint: bool,
+        create_calls: AtomicUsize,
+        reuse_calls: AtomicUsize,
+        /// Models cdk's `TokenCreated` saga: `create_token` persists its
+        /// token here; `reuse_pending_send` hands it back until the send
+        /// is claimed. `None` = never created (or already reclaimed).
+        pending_token: std::sync::Mutex<Option<Vec<u8>>>,
     }
 
     impl LnMinter for MockMinter {
@@ -260,11 +295,26 @@ mod tests {
             }
         }
 
+        fn reuse_pending_send(
+            &self,
+            _amount: u64,
+        ) -> impl Future<Output = anyhow::Result<Option<Vec<u8>>>> + Send {
+            self.reuse_calls.fetch_add(1, Ordering::SeqCst);
+            let pending = self
+                .pending_token
+                .lock()
+                .expect("lock not poisoned")
+                .clone();
+            async move { Ok(pending) }
+        }
+
         #[allow(clippy::manual_async_fn)]
         fn create_token(
             &self,
             _amount: u64,
         ) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send {
+            self.create_calls.fetch_add(1, Ordering::SeqCst);
+            *self.pending_token.lock().expect("lock not poisoned") = Some(b"cashu-token".to_vec());
             async move { Ok(b"cashu-token".to_vec()) }
         }
     }
@@ -275,6 +325,8 @@ mod tests {
         /// failure: token verified later once the fault clears).
         fail_first: usize,
         admits: AtomicUsize,
+        /// Every token string the admitter was asked to verify.
+        admitted_tokens: std::sync::Mutex<Vec<String>>,
     }
 
     impl PeerAdmitter for MockAdmitter {
@@ -282,11 +334,15 @@ mod tests {
             &self,
             peer_hex: &str,
             _ip: Option<IpAddr>,
-            _token: &str,
+            token: &str,
         ) -> impl Future<Output = V1PaymentResult> + Send {
             let attempt = self.admits.fetch_add(1, Ordering::SeqCst);
             let accept = self.accept && attempt >= self.fail_first;
             let peer_hex = peer_hex.to_owned();
+            self.admitted_tokens
+                .lock()
+                .expect("lock not poisoned")
+                .push(token.to_owned());
             async move {
                 if accept {
                     V1PaymentResult {
@@ -322,6 +378,25 @@ mod tests {
         }
     }
 
+    fn mock_minter(fail_mint: bool) -> MockMinter {
+        MockMinter {
+            mint_calls: AtomicUsize::new(0),
+            fail_mint,
+            create_calls: AtomicUsize::new(0),
+            reuse_calls: AtomicUsize::new(0),
+            pending_token: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn mock_admitter(fail_first: usize) -> MockAdmitter {
+        MockAdmitter {
+            accept: true,
+            fail_first,
+            admits: AtomicUsize::new(0),
+            admitted_tokens: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
     #[test]
     fn registry_claims_exactly_once_until_reset() {
         let registry = LnGrantRegistry::new();
@@ -346,15 +421,8 @@ mod tests {
     #[tokio::test]
     async fn paid_quote_grants_once_and_reports_allotment() {
         let registry = LnGrantRegistry::new();
-        let minter = MockMinter {
-            mint_calls: AtomicUsize::new(0),
-            fail_mint: false,
-        };
-        let admitter = MockAdmitter {
-            accept: true,
-            fail_first: 0,
-            admits: AtomicUsize::new(0),
-        };
+        let minter = mock_minter(false);
+        let admitter = mock_admitter(0);
 
         let outcome = grant_if_paid(
             &registry,
@@ -405,15 +473,8 @@ mod tests {
     #[tokio::test]
     async fn unpaid_quote_does_not_grant() {
         let registry = LnGrantRegistry::new();
-        let minter = MockMinter {
-            mint_calls: AtomicUsize::new(0),
-            fail_mint: false,
-        };
-        let admitter = MockAdmitter {
-            accept: true,
-            fail_first: 0,
-            admits: AtomicUsize::new(0),
-        };
+        let minter = mock_minter(false);
+        let admitter = mock_admitter(0);
 
         let outcome = grant_if_paid(
             &registry,
@@ -437,15 +498,8 @@ mod tests {
     #[tokio::test]
     async fn failed_grant_releases_claim_for_retry() {
         let registry = LnGrantRegistry::new();
-        let minter = MockMinter {
-            mint_calls: AtomicUsize::new(0),
-            fail_mint: true,
-        };
-        let admitter = MockAdmitter {
-            accept: true,
-            fail_first: 0,
-            admits: AtomicUsize::new(0),
-        };
+        let minter = mock_minter(true);
+        let admitter = mock_admitter(0);
 
         let outcome = grant_if_paid(
             &registry,
@@ -464,10 +518,7 @@ mod tests {
         assert!(matches!(outcome, GrantOutcome::Failed(_)));
 
         // After the transient failure, a retry (mint now healthy) succeeds.
-        let minter2 = MockMinter {
-            mint_calls: AtomicUsize::new(0),
-            fail_mint: false,
-        };
+        let minter2 = mock_minter(false);
         let outcome2 = grant_if_paid(
             &registry,
             &GrantContext {
@@ -492,15 +543,8 @@ mod tests {
         // yet the mint then reports the quote ISSUED — which the Paid-only
         // gate turned into an eternal Processing, stranding the quote.
         let registry = LnGrantRegistry::new();
-        let minter = MockMinter {
-            mint_calls: AtomicUsize::new(0),
-            fail_mint: false,
-        };
-        let admitter = MockAdmitter {
-            accept: true,
-            fail_first: 1,
-            admits: AtomicUsize::new(0),
-        };
+        let minter = mock_minter(false);
+        let admitter = mock_admitter(1);
 
         let ctx = GrantContext {
             minter: &minter,
@@ -531,17 +575,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retry_admits_the_persisted_pending_send_token() {
+        // Review-gate blocker (2026-11-17): the #133 retry re-created the
+        // token from wallet balance, but the failed attempt's proofs were
+        // locked in a cdk pending send — re-create dead-ends with
+        // "insufficient funds" (mocks always succeeded, only live testnut
+        // exposed it). The retry must admit the SAME persisted token and
+        // never serialize a second one.
+        let registry = LnGrantRegistry::new();
+        let minter = mock_minter(false);
+        let admitter = mock_admitter(1);
+
+        let ctx = GrantContext {
+            minter: &minter,
+            admitter: &admitter,
+            peer_hex: "aabb",
+            ip: None,
+            mint_url: "https://mint.example",
+            config: &test_config(),
+        };
+
+        let first = grant_if_paid(&registry, &ctx, "q1", QuoteState::Paid).await;
+        assert!(matches!(first, GrantOutcome::Failed(_)));
+        assert_eq!(minter.create_calls.load(Ordering::SeqCst), 1);
+
+        let second = grant_if_paid(&registry, &ctx, "q1", QuoteState::Issued).await;
+        assert_eq!(second, GrantOutcome::Issued { allotment: 600_000 });
+
+        assert_eq!(
+            minter.create_calls.load(Ordering::SeqCst),
+            1,
+            "the retry must reuse the persisted pending send, not re-create"
+        );
+        assert_eq!(minter.reuse_calls.load(Ordering::SeqCst), 2);
+        let tokens = admitter.admitted_tokens.lock().expect("not poisoned");
+        assert_eq!(
+            *tokens,
+            vec!["cashu-token".to_owned(), "cashu-token".to_owned()],
+            "both attempts admit the identical serialized token"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_attempt_creates_when_no_pending_send_exists() {
+        let registry = LnGrantRegistry::new();
+        let minter = mock_minter(false);
+        let admitter = mock_admitter(0);
+
+        let outcome = grant_if_paid(
+            &registry,
+            &GrantContext {
+                minter: &minter,
+                admitter: &admitter,
+                peer_hex: "aabb",
+                ip: None,
+                mint_url: "https://mint.example",
+                config: &test_config(),
+            },
+            "q1",
+            QuoteState::Paid,
+        )
+        .await;
+
+        assert_eq!(outcome, GrantOutcome::Issued { allotment: 600_000 });
+        assert_eq!(
+            minter.create_calls.load(Ordering::SeqCst),
+            1,
+            "no pending send on a first attempt — a fresh token is created"
+        );
+    }
+
+    #[tokio::test]
     async fn concurrent_pollers_grant_exactly_once() {
         let registry = std::sync::Arc::new(LnGrantRegistry::new());
-        let minter = std::sync::Arc::new(MockMinter {
-            mint_calls: AtomicUsize::new(0),
-            fail_mint: false,
-        });
-        let admitter = std::sync::Arc::new(MockAdmitter {
-            accept: true,
-            fail_first: 0,
-            admits: AtomicUsize::new(0),
-        });
+        let minter = std::sync::Arc::new(mock_minter(false));
+        let admitter = std::sync::Arc::new(mock_admitter(0));
         let config = std::sync::Arc::new(test_config());
 
         let mut joins = Vec::new();
