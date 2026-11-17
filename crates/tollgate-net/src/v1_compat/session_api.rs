@@ -239,15 +239,23 @@ fn normalize_mac(mac: &str) -> String {
     mac.to_lowercase().replace(['-', '.'], ":")
 }
 
-fn build_session_response(session: &CustomerSession) -> SessionResponse {
-    let now = now_secs();
-    let (remaining, access_level) = if session.metric == "milliseconds" {
+/// Consumed/remaining metric units for a session — the metering core
+/// shared by [`build_session_response`] and the v1 `/usage` text.
+/// `consumed` is capped at the allotment; `remaining` keeps the
+/// uncapped arithmetic so suspended sessions read ≤ 0 exactly like
+/// `build_session_response` always did.
+pub(crate) fn session_metric_usage(session: &CustomerSession) -> (i64, i64) {
+    let allotment = session.allotment as i64;
+    if session.metric == "milliseconds" {
         // saturating: a start_time ahead of `now` (clock step) must not
         // panic the unauthenticated GET path with a subtract overflow.
-        let elapsed_ms = now.saturating_sub(session.start_time).saturating_mul(1000);
-        let rem = (session.allotment as i64).saturating_sub(elapsed_ms);
-        let level = if rem <= 0 { "suspended" } else { "active" };
-        (rem, level.to_owned())
+        let elapsed_ms = now_secs()
+            .saturating_sub(session.start_time)
+            .saturating_mul(1000);
+        (
+            elapsed_ms.min(allotment),
+            allotment.saturating_sub(elapsed_ms),
+        )
     } else {
         // saturating: reported octets are external input — u64::MAX values
         // must not overflow the sum on every subsequent session read.
@@ -256,10 +264,17 @@ fn build_session_response(session: &CustomerSession) -> SessionResponse {
             .as_ref()
             .map(|u| u.input_octets.saturating_add(u.output_octets))
             .unwrap_or(0);
-        let rem =
-            (session.allotment as i64).saturating_sub(i64::try_from(usage).unwrap_or(i64::MAX));
-        let level = if rem <= 0 { "suspended" } else { "active" };
-        (rem, level.to_owned())
+        let usage = i64::try_from(usage).unwrap_or(i64::MAX);
+        (usage.min(allotment), allotment.saturating_sub(usage))
+    }
+}
+
+fn build_session_response(session: &CustomerSession) -> SessionResponse {
+    let (_, remaining) = session_metric_usage(session);
+    let access_level = if remaining <= 0 {
+        "suspended".to_owned()
+    } else {
+        "active".to_owned()
     };
     // m2 contract: fixed check-in interval the RADIUS side schedules against
     let next_checkin_ms = 5_000u64;
