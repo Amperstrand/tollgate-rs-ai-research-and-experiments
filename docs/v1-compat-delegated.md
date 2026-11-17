@@ -368,7 +368,20 @@ knob:
   rather than failing to start.
 
 The SQLite backend links `libsqlite3-sys 0.28`, unified with
-cdk-sqlite via a `rusqlite =0.31` pin in `crates/tollgate-net` —
-the version conflict that previously deferred this store was
+cdk-sqlite via a `rusqlite =0.31` pin in `crates/tollgate-net` — the
+version conflict that previously deferred this store was
 resolved by that pin (bump it casually and the two sqlite3 native
 links diverge again).
+
+**Retention janitor** — suspended/expired sessions otherwise accumulate
+forever in the persistent store. An hourly background janitor
+(`spawn_session_janitor` in `session_store.rs`, spawned by `main`'s
+serve path; first sweep runs at boot) removes sessions that are BOTH
+non-active (the metering semantics of `session_metric_usage`: remaining
+quota ≤ 0) AND older than `v1_compat.session_retention_secs`
+(default `604800` = 7 days; `0` disables the janitor entirely — the
+legacy keep-forever behavior). Age is measured from creation plus
+allotment for millisecond sessions and from the last external usage
+report for byte sessions. A session with remaining quota is never
+removed, and removals re-check exhaustion under the store lock, so a
+renewal racing the sweep keeps its session.

@@ -153,7 +153,7 @@ pub struct UpstreamConfig {
 }
 
 /// v1 Go-router compatibility server configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct V1CompatConfig {
     pub metric: String,
@@ -169,6 +169,33 @@ pub struct V1CompatConfig {
     /// live in memory only and are lost on restart.
     #[serde(default)]
     pub session_store_path: Option<String>,
+    /// How long a non-active (exhausted/suspended) session is kept before the
+    /// hourly retention janitor removes it. `0` disables the janitor (sessions
+    /// are kept forever, the pre-janitor behavior). Sessions with remaining
+    /// quota are never removed.
+    #[serde(default = "default_session_retention_secs")]
+    pub session_retention_secs: u64,
+}
+
+/// Default session retention: 7 days.
+fn default_session_retention_secs() -> u64 {
+    604_800
+}
+
+impl Default for V1CompatConfig {
+    fn default() -> Self {
+        Self {
+            metric: String::new(),
+            step_size: 0,
+            accepted_mints: Vec::new(),
+            nostr_secret_key: None,
+            trust_proxy_headers: false,
+            wallet_seed: None,
+            profit_share: Vec::new(),
+            session_store_path: None,
+            session_retention_secs: default_session_retention_secs(),
+        }
+    }
 }
 
 /// A profit-share payout recipient.

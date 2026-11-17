@@ -245,13 +245,18 @@ fn normalize_mac(mac: &str) -> String {
 /// uncapped arithmetic so suspended sessions read ≤ 0 exactly like
 /// `build_session_response` always did.
 pub(crate) fn session_metric_usage(session: &CustomerSession) -> (i64, i64) {
+    session_metric_usage_at(session, now_secs())
+}
+
+/// [`session_metric_usage`] at an explicit wall-clock time, so callers
+/// that control time (the retention janitor) share the exact metering
+/// semantics instead of re-deriving them.
+pub(crate) fn session_metric_usage_at(session: &CustomerSession, now: i64) -> (i64, i64) {
     let allotment = session.allotment as i64;
     if session.metric == "milliseconds" {
         // saturating: a start_time ahead of `now` (clock step) must not
         // panic the unauthenticated GET path with a subtract overflow.
-        let elapsed_ms = now_secs()
-            .saturating_sub(session.start_time)
-            .saturating_mul(1000);
+        let elapsed_ms = now.saturating_sub(session.start_time).saturating_mul(1000);
         (
             elapsed_ms.min(allotment),
             allotment.saturating_sub(elapsed_ms),

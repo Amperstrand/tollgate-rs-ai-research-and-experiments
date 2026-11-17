@@ -516,6 +516,106 @@ pub fn session_store_from_config(path: Option<&str>) -> std::sync::Arc<dyn Sessi
     }
 }
 
+/// Whether a session is retired: non-active (metering semantics of
+/// [`super::session_api::session_metric_usage_at`], so a session with
+/// remaining quota is NEVER a candidate) AND past the retention window.
+/// Millisecond sessions age from creation plus their allotment; byte
+/// sessions age from their last external usage report (no wall-clock
+/// expiry of their own), and one without any report has no age anchor
+/// and is kept.
+fn is_retired(session: &CustomerSession, now_secs: i64, retention_secs: u64) -> bool {
+    let (_, remaining) = super::session_api::session_metric_usage_at(session, now_secs);
+    if remaining > 0 {
+        return false;
+    }
+    let retention = i64::try_from(retention_secs).unwrap_or(i64::MAX);
+    if session.metric == "milliseconds" {
+        let allotted_secs = i64::try_from(session.allotment / 1000).unwrap_or(i64::MAX);
+        now_secs
+            > session
+                .start_time
+                .saturating_add(allotted_secs)
+                .saturating_add(retention)
+    } else {
+        session
+            .last_external_usage
+            .as_ref()
+            .is_some_and(|u| now_secs > u.reported_at.saturating_add(retention))
+    }
+}
+
+/// One retention-janitor pass: remove every retired session. Returns the
+/// number removed. `retention_secs == 0` disables retention entirely
+/// (nothing is removed).
+///
+/// Candidates come from [`SessionStore::list_all`], but each removal goes
+/// through [`SessionStore::remove_expired`] /
+/// [`SessionStore::remove_exhausted_bytes`], which re-check exhaustion
+/// under the store lock — a renewal racing between the listing and the
+/// removal keeps its session.
+pub(crate) async fn sweep_retired_sessions(
+    store: &dyn SessionStore,
+    now_secs: i64,
+    retention_secs: u64,
+) -> Result<usize, SessionStoreError> {
+    if retention_secs == 0 {
+        return Ok(0);
+    }
+    let mut removed = 0;
+    for session in store.list_all().await? {
+        if !is_retired(&session, now_secs, retention_secs) {
+            continue;
+        }
+        let gone = if session.metric == "milliseconds" {
+            store.remove_expired(&session.mac_address, now_secs).await?
+        } else {
+            let (consumed, _) = super::session_api::session_metric_usage_at(&session, now_secs);
+            let consumed = u64::try_from(consumed).unwrap_or(u64::MAX);
+            store
+                .remove_exhausted_bytes(&session.mac_address, consumed)
+                .await?
+        };
+        if gone.is_some() {
+            removed += 1;
+            tracing::debug!(
+                mac = %session.mac_address,
+                metric = %session.metric,
+                "[session-janitor] removed retired session"
+            );
+        }
+    }
+    Ok(removed)
+}
+
+/// Spawn the background session retention janitor (the spawn pattern of
+/// [`super::payout::spawn_payout_task`]): sweep once at boot (a store
+/// that accumulated retired sessions while the janitor did not exist is
+/// cleaned on the first start), then hourly. Never crashes; store errors
+/// are logged and retried on the next tick. `retention_secs == 0` does
+/// not spawn at all.
+pub fn spawn_session_janitor(
+    store: std::sync::Arc<dyn SessionStore>,
+    retention_secs: u64,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if retention_secs == 0 {
+        tracing::info!(
+            "[session-janitor] retention disabled (session_retention_secs=0); sessions are kept forever"
+        );
+        return None;
+    }
+    Some(tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            match sweep_retired_sessions(store.as_ref(), now_secs(), retention_secs).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!("[session-janitor] removed {n} retired sessions"),
+                Err(e) => tracing::warn!("[session-janitor] sweep failed: {e}"),
+            }
+        }
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,5 +895,169 @@ mod tests {
             },
             i64::MAX
         ));
+    }
+
+    const RETENTION: u64 = 604_800;
+
+    async fn janitor_fixture() -> InMemorySessionStore {
+        let store = InMemorySessionStore::new();
+        // active ms session (11+ days of quota left)
+        store
+            .add_allotment("02:00:00:00:00:01", "milliseconds", 1_000_000_000, 0)
+            .await
+            .unwrap();
+        // active bytes session with an ANCIENT usage report: remaining
+        // quota must protect it even past the retention window
+        store
+            .add_allotment("02:00:00:00:00:02", "bytes", 5_000, 0)
+            .await
+            .unwrap();
+        store
+            .record_external_usage(
+                "02:00:00:00:00:02",
+                ExternalUsageSnapshot {
+                    input_octets: 100,
+                    output_octets: 200,
+                    session_time: 0,
+                    reported_at: 1_000,
+                },
+            )
+            .await
+            .unwrap();
+        // suspended ms session, expired far past the retention window
+        store
+            .add_allotment("02:00:00:00:00:03", "milliseconds", 60_000, 0)
+            .await
+            .unwrap();
+        // suspended ms session, expired 5s before the sweep at t=700_000
+        // (allotment covers 700_000s from t=0)
+        store
+            .add_allotment("02:00:00:00:00:04", "milliseconds", 700_000_000, 0)
+            .await
+            .unwrap();
+        // exhausted bytes session, last report far past the window
+        store
+            .add_allotment("02:00:00:00:00:05", "bytes", 1_000, 0)
+            .await
+            .unwrap();
+        store
+            .record_external_usage(
+                "02:00:00:00:00:05",
+                ExternalUsageSnapshot {
+                    input_octets: 1_200,
+                    output_octets: 800,
+                    session_time: 0,
+                    reported_at: 1_000,
+                },
+            )
+            .await
+            .unwrap();
+        // exhausted bytes session, last report 5s ago (inside the window)
+        store
+            .add_allotment("02:00:00:00:00:06", "bytes", 1_000, 0)
+            .await
+            .unwrap();
+        store
+            .record_external_usage(
+                "02:00:00:00:00:06",
+                ExternalUsageSnapshot {
+                    input_octets: 1_200,
+                    output_octets: 800,
+                    session_time: 0,
+                    reported_at: 700_000,
+                },
+            )
+            .await
+            .unwrap();
+        store
+    }
+
+    #[tokio::test]
+    async fn janitor_never_evicts_sessions_with_remaining_quota() {
+        let store = janitor_fixture().await;
+        // 700_000: session :03 is 60s-expired + past the 7-day window,
+        // :05's report (1_000 + 604_800 < 700_000) is past it too — but
+        // :01/:02 still hold quota and must survive.
+        let now = 700_000;
+        sweep_retired_sessions(&store, now, RETENTION)
+            .await
+            .unwrap();
+        assert!(store.get("02:00:00:00:00:01").await.unwrap().is_some());
+        assert!(
+            store.get("02:00:00:00:00:02").await.unwrap().is_some(),
+            "active bytes session with an ancient usage report must survive"
+        );
+    }
+
+    #[tokio::test]
+    async fn janitor_evicts_suspended_sessions_past_retention() {
+        let store = janitor_fixture().await;
+        let removed = sweep_retired_sessions(&store, 700_000, RETENTION)
+            .await
+            .unwrap();
+        assert_eq!(removed, 2);
+        assert!(store.get("02:00:00:00:00:03").await.unwrap().is_none());
+        assert!(store.get("02:00:00:00:00:05").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn janitor_keeps_suspended_sessions_within_retention() {
+        let store = janitor_fixture().await;
+        // At now=700_005: :03/:05 are past the window (removed), but :04
+        // expired only 5s ago and :06 last reported 5s ago — both still
+        // inside the 7-day window and must be kept.
+        let removed = sweep_retired_sessions(&store, 700_005, RETENTION)
+            .await
+            .unwrap();
+        assert_eq!(removed, 2);
+        assert!(store.get("02:00:00:00:00:04").await.unwrap().is_some());
+        assert!(store.get("02:00:00:00:00:06").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn janitor_retention_zero_disables_sweep() {
+        let store = janitor_fixture().await;
+        let removed = sweep_retired_sessions(&store, 10_000_000_000, 0)
+            .await
+            .unwrap();
+        assert_eq!(removed, 0);
+        // everything survives, even long-retired sessions
+        for mac in [
+            "02:00:00:00:00:01",
+            "02:00:00:00:00:02",
+            "02:00:00:00:00:03",
+            "02:00:00:00:00:04",
+            "02:00:00:00:00:05",
+            "02:00:00:00:00:06",
+        ] {
+            assert!(store.get(mac).await.unwrap().is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn janitor_spares_session_renewed_during_sweep() {
+        // The conditional removes re-check exhaustion under the lock: a
+        // top-up landing between list_all and the removal keeps the
+        // session (remove_expired on a renewed record is a no-op).
+        let store = InMemorySessionStore::new();
+        store
+            .add_allotment("02:00:00:00:00:07", "milliseconds", 60_000, 0)
+            .await
+            .unwrap();
+        let now = 700_000;
+        assert!(is_retired(
+            &store.get("02:00:00:00:00:07").await.unwrap().unwrap(),
+            now,
+            RETENTION
+        ));
+        store
+            .add_allotment("02:00:00:00:00:07", "milliseconds", 1_000_000_000, now)
+            .await
+            .unwrap();
+        let removed = sweep_retired_sessions(&store, now, RETENTION)
+            .await
+            .unwrap();
+        assert_eq!(removed, 0);
+        assert!(store.get("02:00:00:00:00:07").await.unwrap().is_some());
     }
 }
