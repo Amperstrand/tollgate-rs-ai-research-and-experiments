@@ -681,6 +681,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn strict_no_repo_wallet_rejects_payment_end_to_end() {
+        // Fail-closed integration: a strict wallet (swap verification
+        // required, no CDK repo) must refuse a forged-C token through the
+        // full driver path — the peer gets a REJECTED BootstrapAck and is
+        // never granted access, while the node itself keeps running.
+        use tollgate_protocol::{BootstrapAck, BootstrapToken, MessageType, peek_type};
+
+        let identity = Arc::new(Identity::load_or_generate(&Config::default()).unwrap());
+        let wallet = BootstrapWallet::with_spent_file(vec![], None).require_swap_verification();
+        let driver = Driver::new(
+            wallet,
+            IpAdapter::new(),
+            identity,
+            Price::default(),
+            "bytes",
+            Vec::new(),
+        );
+
+        let peer = PeerId(PublicKey::from_bytes([7u8; 33]));
+        let hex = peer_to_hex(peer);
+        driver.peer_connected(&hex, None).await;
+        driver.drain_outbox(&hex).await; // drop the announce
+
+        let forged = crate::wallet::token_with_mint("https://forged-mint.example");
+        driver
+            .message_received(&hex, BootstrapToken::new(forged.into_bytes()).encode())
+            .await;
+
+        let outbox = driver.drain_outbox(&hex).await;
+        let ack_frame = outbox
+            .iter()
+            .find(|m| matches!(peek_type(m), Some(MessageType::BootstrapAck)))
+            .expect("peer must receive a BootstrapAck");
+        let ack = BootstrapAck::decode(ack_frame).expect("decode BootstrapAck");
+        assert!(
+            !ack.is_accepted(),
+            "strict wallet must reject the forged payment: {ack:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn connect_queues_our_announce_for_mutual_detection() {
         let driver = test_driver();
         let peer = PeerId(PublicKey::from_bytes([4u8; 33]));
