@@ -223,4 +223,16 @@ for path in manifest.json splash.html; do
     [ "$code" = "200" ] || fail "uhttpd portal $path -> $code"
 done
 
+# apk post-install must consume the uci-defaults (self-delete) and enable
+# the service. Regression guard (2026-11-17, verified on 25.12.6): set -e +
+# absent uci options/network.wan aborted 99-tollgate-setup mid-run.
+if [ "$FORMAT" = apk ]; then
+    ssh "${SSH_OPTS[@]}" root@127.0.0.1 \
+        "ls /etc/rc.d/S95tollgate >/dev/null 2>&1 || exit 20; \
+         ls /etc/uci-defaults/9*-tollgate-* >/dev/null 2>&1 && exit 21 || true; \
+         test -f /etc/tollgate/tollgate.yaml || exit 22" \
+        >/dev/null 2>&1 \
+        || fail "post-install incomplete (service not enabled / uci-defaults not consumed / no live config)"
+fi
+
 echo "PASS: .$FORMAT installs on OpenWrt ($(basename "$IMAGE")); binary runs; portal served"

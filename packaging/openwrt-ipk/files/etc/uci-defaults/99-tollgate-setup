@@ -73,7 +73,11 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Hostname — set to TollGate only if it is still the OpenWrt default
 # ---------------------------------------------------------------------------
-cur_hostname="$(uci -q get system.@system[0].hostname 2>/dev/null)"
+# set -e + $(uci -q get ...): the assignment inherits uci's exit code, so an
+# absent option kills the whole script before the final `uci commit` (seen on
+# a fresh 25.12.6: hostname staged but never committed, script left behind in
+# /etc/uci-defaults). `|| true` inside the substitution keeps set -e honest.
+cur_hostname="$(uci -q get system.@system[0].hostname 2>/dev/null || true)"
 case "$cur_hostname" in
 	""|OpenWrt|openwrt)
 		uci set system.@system[0].hostname='TollGate'
@@ -86,16 +90,23 @@ esac
 # ---------------------------------------------------------------------------
 # 4. DNS fallback — set Cloudflare 1.1.1.1 if DNS is unset or localhost
 # ---------------------------------------------------------------------------
-cur_dns="$(uci -q get network.wan.dns 2>/dev/null)"
-case "$cur_dns" in
-	""|127.0.0.1|localhost)
-		uci set network.wan.peerdns='0'
-		uci -q del network.wan.dns 2>/dev/null || true
-		uci add_list network.wan.dns='1.1.1.1'
-		uci add_list network.wan.dns='1.0.0.1'
-		logger -t tollgate-setup "Set DNS to Cloudflare 1.1.1.1 / 1.0.0.1"
-		;;
-esac
+# Only touch an existing 'wan' interface: some default configs (e.g. the
+# 25.12 x86-64 image) ship no network.wan section at all, and `uci set
+# network.wan.peerdns=...` aborts with "Invalid argument" — under set -e
+# that killed this script before the final uci commit (hostname changes
+# left uncommitted, script never self-deleted).
+if uci -q get network.wan >/dev/null 2>&1; then
+	cur_dns="$(uci -q get network.wan.dns 2>/dev/null || true)"
+	case "$cur_dns" in
+		""|127.0.0.1|localhost)
+			uci set network.wan.peerdns='0'
+			uci -q del network.wan.dns 2>/dev/null || true
+			uci add_list network.wan.dns='1.1.1.1'
+			uci add_list network.wan.dns='1.0.0.1'
+			logger -t tollgate-setup "Set DNS to Cloudflare 1.1.1.1 / 1.0.0.1"
+			;;
+	esac
+fi
 
 uci commit
 logger -t tollgate-setup "First-boot setup complete"
