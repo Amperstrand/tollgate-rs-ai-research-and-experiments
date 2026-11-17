@@ -118,10 +118,14 @@ impl SessionApiState {
     }
 
     /// Credit an owed receive recovered from the startup journal (crash
-    /// between receive and grant). The driver credit always happens;
-    /// delegated entries (mac set) additionally credit the session
-    /// store that tollgate-auth reads. Idempotent against re-derived
-    /// entries: a token already credited is skipped, not re-added.
+    /// between receive and grant). Delegated entries (mac set) credit
+    /// the session store that tollgate-auth reads — CLAIMING the
+    /// token-keyed dedupe BEFORE the driver credit, so a token already
+    /// credited skips the driver too; portal entries credit the driver
+    /// only (no session-store record exists to dedupe on). Idempotent
+    /// against re-derived entries: a token already credited is skipped
+    /// whole, not re-added — the driver ledger was credited exactly
+    /// once with the first claim.
     pub async fn grant_owed_receive(
         &self,
         entry: &reconcile::PendingReceive,
@@ -130,9 +134,6 @@ impl SessionApiState {
         if amount_sat == 0 {
             return Err("owed amount is zero — refusing to grant".to_owned());
         }
-        self.driver
-            .grant_owed_session(&entry.peer_hex, amount_sat * 1000)
-            .await;
         if let Some(mac) = &entry.mac {
             let mint_url = self
                 .config
@@ -155,13 +156,19 @@ impl SessionApiState {
                 .await
             {
                 Ok(Some(_)) => {}
-                Ok(None) => tracing::info!(
-                    mac,
-                    "owed receive already credited — skipping duplicate grant"
-                ),
+                Ok(None) => {
+                    tracing::info!(
+                        mac,
+                        "owed receive already credited — skipping duplicate grant"
+                    );
+                    return Ok(());
+                }
                 Err(e) => return Err(e.to_string()),
             }
         }
+        self.driver
+            .grant_owed_session(&entry.peer_hex, amount_sat * 1000)
+            .await;
         Ok(())
     }
 }
@@ -630,6 +637,47 @@ mod tests {
             .find(|p| p.pubkey == entry.peer_hex)
             .expect("driver peer exists");
         assert_eq!(peer.their_balance, 21_000);
+    }
+
+    #[tokio::test]
+    async fn grant_owed_same_token_twice_credits_driver_exactly_once() {
+        // Review-gate blocker 2 (2026-11-17): two journal entries with
+        // the same token (the journal is per-submission) credited the
+        // DRIVER once per entry — credit_for_token's dedupe guarded
+        // only the session store and ran AFTER the driver credit.
+        // Claim-first: an already-credited token skips the driver too.
+        let state = test_state();
+        let entry = reconcile::PendingReceive {
+            token: "cashuBowed".to_owned(),
+            peer_hex: adapter::mac_to_peer_hex("aa:bb:cc:dd:ee:ff"),
+            timestamp: now_secs(),
+            mac: Some("aa:bb:cc:dd:ee:ff".to_owned()),
+        };
+        state.grant_owed_receive(&entry, 21).await.unwrap();
+        state.grant_owed_receive(&entry, 21).await.unwrap();
+
+        let session = state
+            .sessions
+            .get("aa:bb:cc:dd:ee:ff")
+            .await
+            .unwrap()
+            .expect("store credited");
+        assert_eq!(
+            session.allotment,
+            21 * 60_000,
+            "allotment credited exactly once"
+        );
+
+        let status = state.driver.status().await;
+        let peer = status
+            .peers
+            .into_iter()
+            .find(|p| p.pubkey == entry.peer_hex)
+            .expect("driver peer exists");
+        assert_eq!(
+            peer.their_balance, 21_000,
+            "driver credited exactly once — the duplicate grant must not re-credit"
+        );
     }
 
     #[tokio::test]

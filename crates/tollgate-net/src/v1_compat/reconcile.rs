@@ -219,6 +219,32 @@ pub struct OwedReceive {
     pub amount_sat: u64,
 }
 
+/// Collapse owed entries to one grant per unique token.
+///
+/// Journal entries are per-submission, not per-token: concurrent
+/// submissions of the same token that both crashed before completion
+/// reconcile as two owed entries for one consumed payment. Granting
+/// per-entry would credit the DRIVER ledger once per entry (the
+/// credit_for_token dedupe inside the grant only guards the session
+/// store, and portal entries have no session-store record at all).
+/// The first entry per token wins; duplicates are logged and skipped.
+pub fn dedupe_owed_by_token(owed: Vec<OwedReceive>) -> Vec<OwedReceive> {
+    let mut seen = std::collections::HashSet::new();
+    let mut unique = Vec::with_capacity(owed.len());
+    for entry in owed {
+        if seen.insert(entry.entry.token.clone()) {
+            unique.push(entry);
+        } else {
+            tracing::info!(
+                peer = %entry.entry.peer_hex,
+                amount_sat = entry.amount_sat,
+                "reconcile: duplicate journal entry for an already-granted token — skipping"
+            );
+        }
+    }
+    unique
+}
+
 /// Reconcile all pending receives on startup. Returns the entries that are
 /// owed sessions for the caller to grant; entries that resolve as owed or
 /// indeterminate STAY in the journal — the caller removes an owed entry
@@ -428,5 +454,61 @@ mod tests {
         assert_eq!(read[0].token, "ok");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn owed(token: &str, peer_hex: &str, mac: Option<&str>) -> OwedReceive {
+        OwedReceive {
+            entry: PendingReceive {
+                token: token.to_owned(),
+                peer_hex: peer_hex.to_owned(),
+                timestamp: 1,
+                mac: mac.map(str::to_owned),
+            },
+            amount_sat: 21,
+        }
+    }
+
+    #[test]
+    fn dedupe_owed_by_token_grants_once_per_token() {
+        // Review-gate blocker 2 (2026-11-17): journal entries are
+        // per-submission — concurrent same-token submissions that
+        // crashed both reconcile as owed, and granting per-entry
+        // credited the driver twice for one consumed payment.
+        let deduped = dedupe_owed_by_token(vec![
+            owed("cashuBsame", "aa", Some("02:50:00:00:00:01")),
+            owed("cashuBsame", "aa", Some("02:50:00:00:00:01")),
+        ]);
+        assert_eq!(deduped.len(), 1, "same token grants once");
+        assert_eq!(deduped[0].entry.token, "cashuBsame");
+    }
+
+    #[test]
+    fn dedupe_owed_by_token_keeps_distinct_tokens() {
+        let deduped = dedupe_owed_by_token(vec![
+            owed("cashuBa", "aa", None),
+            owed("cashuBb", "bb", None),
+            owed("cashuBc", "cc", Some("02:50:00:00:00:02")),
+        ]);
+        assert_eq!(deduped.len(), 3, "distinct tokens all grant");
+        assert_eq!(
+            deduped
+                .iter()
+                .map(|o| o.entry.token.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cashuBa", "cashuBb", "cashuBc"],
+            "original order preserved"
+        );
+    }
+
+    #[test]
+    fn dedupe_owed_by_token_covers_portal_duplicates() {
+        // Portal entries (no mac) have no session-store dedupe to lean
+        // on inside the grant — the pre-grant collapse is their only
+        // double-credit guard.
+        let deduped = dedupe_owed_by_token(vec![
+            owed("cashuBportal", "aa", None),
+            owed("cashuBportal", "aa", None),
+        ]);
+        assert_eq!(deduped.len(), 1, "portal duplicates grant exactly once");
     }
 }

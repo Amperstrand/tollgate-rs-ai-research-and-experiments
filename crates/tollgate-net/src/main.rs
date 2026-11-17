@@ -528,6 +528,9 @@ async fn serve(
                 Vec::new()
             }
         };
+        // One grant per unique token: duplicate journal entries (the
+        // journal is per-submission) must not credit the driver twice.
+        let owed = v1_compat::reconcile::dedupe_owed_by_token(owed);
         for owed_rx in owed {
             let peer = owed_rx.entry.peer_hex.as_str();
             match session_state
