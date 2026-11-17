@@ -37,7 +37,9 @@ fi
 # can reach the TollGate HTTP/WS transport. The lan-side rule ships in
 # /etc/config/firewall-tollgate; this adds the optional WAN rule for routers
 # that sell access to the public internet side.
-TOLLGATE_PORT="$(uci -q get tollgate.@server[0].port 2>/dev/null)"
+# `|| true`: an absent option would otherwise abort the script via set -e
+# (assignment inherits uci's exit status) before the WAN rule is created.
+TOLLGATE_PORT="$(uci -q get tollgate.@server[0].port 2>/dev/null || true)"
 [ -n "$TOLLGATE_PORT" ] || TOLLGATE_PORT="4747"
 
 FOUND=0

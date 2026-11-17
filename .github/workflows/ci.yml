@@ -88,7 +88,7 @@ jobs:
       - name: Install apk-tools 3 (mkpkg)
         run: |
           set -eu
-          sudo apt-get install -y -q meson ninja-build
+          sudo apt-get install -y -q meson ninja-build fakeroot
           # apk-tools v3.0.9 source, mirrored in this repo's releases
           # (GitLab blocks GitHub-runner IPs with 418/HTML). sha-pinned.
           curl -sSL -o /tmp/apk-tools.tar.gz \
