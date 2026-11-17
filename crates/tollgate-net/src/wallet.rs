@@ -37,6 +37,7 @@ pub struct BootstrapWallet {
     wallet_repo: Option<Arc<cdk::wallet::WalletRepository>>,
     spent_yvalues: Arc<RwLock<HashSet<String>>>,
     spent_file: Option<PathBuf>,
+    require_swap_verification: bool,
 }
 
 impl BootstrapWallet {
@@ -58,6 +59,7 @@ impl BootstrapWallet {
             wallet_repo: None,
             spent_yvalues: Arc::new(RwLock::new(yvalues)),
             spent_file,
+            require_swap_verification: false,
         }
     }
 
@@ -90,6 +92,18 @@ impl BootstrapWallet {
     #[cfg(feature = "v1-compat")]
     pub fn with_wallet_repo(mut self, repo: Arc<cdk::wallet::WalletRepository>) -> Self {
         self.wallet_repo = Some(repo);
+        self
+    }
+
+    /// Fail-closed mode: refuse to credit tokens unless the CDK
+    /// swap-verified receive path is available. NUT-07 checkstate reads
+    /// unknown Ys as UNSPENT, so a token with forged C values (random
+    /// secret + any valid curve point) passes checkstate-only
+    /// verification — crediting it is free-access forgery. Nodes that
+    /// configured mints must not silently degrade to that path.
+    #[allow(dead_code)] // wired only in main.rs under v1-compat
+    pub fn require_swap_verification(mut self) -> Self {
+        self.require_swap_verification = true;
         self
     }
 
@@ -141,6 +155,14 @@ impl BootstrapWallet {
                     bail!("token rejected by mint: {e}");
                 }
             }
+        }
+
+        // Fail-closed: when swap verification is required, refuse the
+        // checkstate-only fallback instead of crediting. Checkstate reads
+        // unknown Ys as UNSPENT, so forged-C tokens pass it (live-proven);
+        // only the CDK NUT-03 swap proves the proofs are real.
+        if self.require_swap_verification {
+            bail!("swap verification unavailable — refusing unverified payment (fail-closed)");
         }
 
         let mint_url = token.mint_url().context("token has no mint URL")?;
@@ -237,6 +259,37 @@ fn token_proof_ys(token: &Token) -> Vec<String> {
 #[cfg(test)]
 const SAMPLE_TOKEN: &str = "cashuBo2FteBtodHRwczovL3Rlc3RudXQuY2FzaHUuc3BhY2VhdWNzYXRhdIGiYWlIAYhKdLsvxe5hcIGkYWEBYXN4QDk1NTM1NzQ1YjQ2MzM2OGQ1OTVkMGVhMmQ1M2NmMDU0YjZkY2ZhZTY0NjhlOWU0N2U1MDc1YWU3OWRmNmUyODdhY1ghA03QgEalpQeCViTFYVixs-4tTxGmV0Dl-hKTQ8jLyG1ZYWSjYWVYIKlCWsnyOJRBHT_0xffz67uTQUWhk336QvZbnEQW6OUZYXNYIA88wEUIkwoL1RKs6j41AgtMZLp2e3JrlpZyU1o2M3TJYXJYILoalwd76VtIosztMCjHmQzbNUVKCM4VjvV02fSkG19-";
 
+/// Build a token whose proof pairs an arbitrary secret with an arbitrary
+/// valid curve point as `c` — the forged-C shape that passes NUT-07
+/// checkstate (unknown Ys read UNSPENT) but fails CDK swap verification.
+/// Shared by the wallet tests and the driver's fail-closed integration
+/// test.
+#[cfg(test)]
+pub(crate) fn token_with_mint(mint_url: &str) -> String {
+    use std::str::FromStr;
+
+    use cashu::Amount;
+    use cashu::nuts::{CurrencyUnit, Id, Proof, PublicKey, Token, TokenV3};
+
+    let proof = Proof::new(
+        Amount::from(1),
+        "00d5535745b46336".parse::<Id>().expect("valid keyset id"),
+        "ssrf-test-secret".parse().expect("secret"),
+        PublicKey::from_str("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+            .expect("valid compressed pubkey"),
+    );
+    Token::TokenV3(
+        TokenV3::new(
+            mint_url.parse().expect("mint url"),
+            vec![proof],
+            None,
+            Some(CurrencyUnit::Sat),
+        )
+        .expect("token"),
+    )
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,33 +360,6 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("not accepted"));
     }
 
-    fn token_with_mint(mint_url: &str) -> String {
-        use std::str::FromStr;
-
-        use cashu::Amount;
-        use cashu::nuts::{CurrencyUnit, Id, Proof, PublicKey, Token, TokenV3};
-
-        let proof = Proof::new(
-            Amount::from(1),
-            "00d5535745b46336".parse::<Id>().expect("valid keyset id"),
-            "ssrf-test-secret".parse().expect("secret"),
-            PublicKey::from_str(
-                "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-            )
-            .expect("valid compressed pubkey"),
-        );
-        Token::TokenV3(
-            TokenV3::new(
-                mint_url.parse().expect("mint url"),
-                vec![proof],
-                None,
-                Some(CurrencyUnit::Sat),
-            )
-            .expect("token"),
-        )
-        .to_string()
-    }
-
     #[test]
     fn rejects_internal_mint_url_before_any_http_call() {
         // Empty accepted_mints skips the allowlist entirely, so the SSRF
@@ -361,6 +387,45 @@ mod tests {
         assert!(wallet.accepted_mints.is_empty());
         let token: Token = SAMPLE_TOKEN.parse().expect("valid token");
         let _amount_sat: u64 = token.value().expect("has value").into();
+    }
+
+    #[test]
+    fn strict_mode_refuses_forged_token_without_crediting() {
+        // Fail-closed: a strict wallet with no CDK repo must refuse the
+        // checkstate-only fallback. The token is the forged-C shape (random
+        // secret + arbitrary curve point) that checkstate would read as
+        // UNSPENT and credit. Mint allowlisting must not rescue it — the
+        // refusal happens before the allowlist.
+        let wallet =
+            BootstrapWallet::with_spent_file(vec!["https://forged-mint.example".to_string()], None)
+                .require_swap_verification();
+        let token = token_with_mint("https://forged-mint.example");
+        let err = rt()
+            .block_on(wallet.verify(&token))
+            .expect_err("strict wallet must refuse unverified payment");
+        assert!(
+            err.to_string().contains("fail-closed"),
+            "expected fail-closed refusal, got: {err}"
+        );
+        // Nothing credited: no Y-values tracked, and a retry fails the
+        // same way (no panic, no state change).
+        assert!(wallet.spent_yvalues.try_read().unwrap().is_empty());
+        let again = rt().block_on(wallet.verify(&token));
+        assert!(again.is_err());
+    }
+
+    #[test]
+    fn default_construction_keeps_checkstate_path_reachable() {
+        // Non-strict default: the lightweight branch is still taken. A
+        // non-allowlisted mint is rejected BY THE ALLOWLIST ("not
+        // accepted"), proving the fail-closed gate did not fire.
+        let wallet = BootstrapWallet::new(vec!["https://allowed-mint.example".to_string()]);
+        let token = token_with_mint("https://other-mint.example");
+        let err = rt()
+            .block_on(wallet.verify(&token))
+            .expect_err("allowlist must reject this token")
+            .to_string();
+        assert!(err.contains("not accepted"), "got: {err}");
     }
 
     #[test]

@@ -334,6 +334,14 @@ async fn serve(
 
     #[cfg(feature = "v1-compat")]
     if !cfg.mints.is_empty() {
+        // Mints are configured: swap-verified NUT-03 receive is the expected
+        // payment verification path. Fail closed if the CDK repo below cannot
+        // serve it — checkstate-only reads forged-C tokens as UNSPENT
+        // (live-proven), so a degraded boot must REJECT payments, not serve
+        // them unverified. The node still boots (admin/status unchanged);
+        // only payment verification refuses.
+        bootstrap = bootstrap.require_swap_verification();
+
         let seed_bytes = cfg
             .v1_compat
             .wallet_seed
@@ -408,17 +416,23 @@ async fn serve(
                                 "CDK WalletRepository enabled ({added} mints) — multi-mint double-spend prevention via NUT-03 swap"
                             );
                             bootstrap = bootstrap.with_wallet_repo(repo);
+                        } else {
+                            tracing::error!(
+                                "CDK WalletRepository built but zero mint wallets added — payment verification FAIL-CLOSED: all payments will be rejected"
+                            );
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "CDK WalletRepository build failed, using checkstate-only: {e}"
+                        tracing::error!(
+                            "CDK WalletRepository build failed — payment verification FAIL-CLOSED: all payments will be rejected: {e}"
                         );
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("CDK localstore init failed, using checkstate-only: {e}");
+                tracing::error!(
+                    "CDK localstore init failed — payment verification FAIL-CLOSED: all payments will be rejected: {e}"
+                );
             }
         }
     }
