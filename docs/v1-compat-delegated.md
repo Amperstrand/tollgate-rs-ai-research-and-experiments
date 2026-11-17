@@ -186,11 +186,30 @@ optionally JSON `{"token": "..."}`).
 
 ### `GET /usage`
 
-Plain-text Go-v1 contract, not JSON: `"<consumed>/<remaining>"`, or
-`"-1/-1"` (HTTP 200) when the MAC cannot be resolved or no session
-exists — clients parse "no session" from `-1/-1`, not an error. With
-the header set, the queried peer is the header MAC instead of the
-IP-resolved one.
+Plain-text Go-v1 contract, not JSON, or `"-1/-1"` (HTTP 200) when the
+MAC cannot be resolved or no session exists — clients parse "no
+session" from `-1/-1`, not an error. Two views by caller identity:
+
+- **Header-identified (`X-TollGate-MAC`) with a session-store
+  session**: `"<consumed>/<allotment>"` in the session's METRIC
+  units, computed exactly like `build_session_response` — for
+  `milliseconds`, consumed is the wall-clock elapsed since
+  `start_time` (capped at the allotment); for `bytes`, the last
+  external usage input+output sum. This matches Go v1 `GetUsage`
+  (`tollgate-module-basic-go/src/merchant/merchant.go`:
+  `fmt.Sprintf("%d/%d", elapsedMs, session.Allotment)`), which is
+  what tollgate-auth's delegated reconnect parses — `main.go`
+  reads `parts[1]` as the allotment and derives
+  `remaining = allotment - used` for `Session-Timeout`. The store
+  view wins even when the driver peer is gone (e.g. after a
+  restart): the store is the persistent ledger. Before 2026-11-17
+  these callers received the driver's **msat** balance as if it
+  were metric ms — an 8-sat session (480000 ms allotment) answered
+  `"0/7000"` and the reconnect parsed 7 s of remaining time
+  (live-proven in the RADIUS delegated E2E).
+- **IP-resolved (portal) callers, or header callers with no store
+  session** (LN grants never credit the store): the driver peer
+  view `"consumed/balance"` in msat, unchanged.
 
 ---
 

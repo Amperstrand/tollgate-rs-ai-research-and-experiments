@@ -327,6 +327,7 @@ async fn handle_post_payment(
 async fn handle_usage(
     State(driver): State<Driver>,
     axum::Extension(config): axum::Extension<Arc<V1ServerConfig>>,
+    axum::Extension(sessions): axum::Extension<Option<Arc<dyn SessionStore>>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
@@ -337,21 +338,54 @@ async fn handle_usage(
     );
     // Go v1 parity: unresolved MAC and missing session both answer
     // 200 "-1/-1" — clients parse "no session" from it, not an error.
-    let peer_hex = match header_mac(&headers) {
-        Some(mac) => adapter::mac_to_peer_hex(&mac),
-        None => match adapter::resolve_peer_hex(client_ip).await {
-            Some(h) => h,
-            None => {
-                return (
-                    StatusCode::OK,
-                    [("content-type", "text/plain")],
-                    "-1/-1".to_owned(),
-                )
-                    .into_response();
+    //
+    // Delegated (header-identified) callers with a store session read
+    // METRIC units derived from the session store — the persistent
+    // ledger — in the Go v1 GetUsage shape "consumed/allotment"
+    // (tollgate-module-basic-go merchant.go). The driver's msat
+    // balance must never leak into these numbers: live 2026-11-17
+    // (RADIUS delegated E2E) an 8-sat session (480000 ms allotment)
+    // answered "0/7000" and tollgate-auth's reconnect parsed 7 s of
+    // remaining time. A store session wins even when the driver peer
+    // is gone (e.g. after a restart) — the store is the ledger.
+    if let Some(mac) = header_mac(&headers) {
+        if let Some(store) = &sessions {
+            match store.get(&mac).await {
+                Ok(Some(session)) => {
+                    let (consumed, _) = super::session_api::session_metric_usage(&session);
+                    return (
+                        StatusCode::OK,
+                        [("content-type", "text/plain")],
+                        format!("{consumed}/{}", session.allotment),
+                    )
+                        .into_response();
+                }
+                // No store session (LN grants never credit it, portal
+                // payments leave mac unset) — fall through to the
+                // driver view below.
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        mac,
+                        error = %e,
+                        "session store read failed; falling back to driver view"
+                    );
+                }
             }
-        },
-    };
-    match adapter::get_usage_json(&driver, &peer_hex).await {
+        }
+        return driver_usage_response(&driver, &adapter::mac_to_peer_hex(&mac)).await;
+    }
+    match adapter::resolve_peer_hex(client_ip).await {
+        Some(peer_hex) => driver_usage_response(&driver, &peer_hex).await,
+        None => usage_no_session(),
+    }
+}
+
+/// The pre-store /usage view: the DRIVER peer's balance (msat) as
+/// "consumed/balance". Kept unchanged for IP-resolved (portal) callers
+/// and for header callers with no store session.
+async fn driver_usage_response(driver: &Driver, peer_hex: &str) -> Response {
+    match adapter::get_usage_json(driver, peer_hex).await {
         Some(usage) => {
             // Go v1 contract: plain text "usage/allotment" — the v1 client
             // (and Go clients) parse exactly this shape (VM E2E 2026-11-15:
@@ -366,19 +400,21 @@ async fn handle_usage(
             )
                 .into_response()
         }
-        None => {
-            // Go v1 contract: /usage without a session answers 200 "-1/-1"
-            // plain text — the v1 client (and Go clients) parse this as
-            // "no session", not as an error. Found via VM E2E 2026-11-14:
-            // the 404 JSON broke the client at its very first step.
-            (
-                StatusCode::OK,
-                [("content-type", "text/plain")],
-                "-1/-1".to_owned(),
-            )
-                .into_response()
-        }
+        None => usage_no_session(),
     }
+}
+
+fn usage_no_session() -> Response {
+    // Go v1 contract: /usage without a session answers 200 "-1/-1"
+    // plain text — the v1 client (and Go clients) parse this as
+    // "no session", not as an error. Found via VM E2E 2026-11-14:
+    // the 404 JSON broke the client at its very first step.
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain")],
+        "-1/-1".to_owned(),
+    )
+        .into_response()
 }
 
 async fn handle_whoami(
@@ -813,6 +849,170 @@ mod tests {
             b"-1/-1",
             "header-identified peer must resolve to the granted session"
         );
+    }
+
+    #[tokio::test]
+    async fn usage_header_mac_with_store_session_reports_metric_ms() {
+        // Live-proven 2026-11-17 (RADIUS delegated E2E): the driver's
+        // msat balance leaked into /usage as if it were metric ms — an
+        // 8-sat session (480000 ms allotment) answered "0/7000" and
+        // tollgate-auth's reconnect parsed 7 s of remaining time.
+        // Header-identified callers with a store session must read
+        // metric units from the session, Go v1 GetUsage shape
+        // "elapsed/allotment" (tollgate-module-basic-go merchant.go).
+        let store = Arc::new(crate::v1_compat::session_store::InMemorySessionStore::new());
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "milliseconds", 60_000, now_secs() - 10)
+            .await
+            .unwrap();
+        let app = build_router(test_driver(), test_config(), Some(store));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/usage")
+                    .header("x-tollgate-mac", "aa:bb:cc:dd:ee:ff")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), 65536)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let (consumed, allotment) = body
+            .split_once('/')
+            .unwrap_or_else(|| panic!("usage must be 'consumed/allotment', got {body}"));
+        let consumed: i64 = consumed.parse().unwrap();
+        let allotment: i64 = allotment.parse().unwrap();
+        assert_eq!(
+            allotment, 60_000,
+            "second number is the allotment, got {body}"
+        );
+        // 10 s have elapsed; elapsed is measured at whole-second
+        // granularity, so a second boundary during the test may read
+        // as 11 s.
+        assert!(
+            (9_900..=11_500).contains(&consumed),
+            "consumed must track elapsed wall-clock ms, got {body}"
+        );
+        assert!(
+            allotment - consumed >= 60_000 - 11_500,
+            "remaining derived as allotment - consumed must stay ms-scale, got {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_header_mac_with_bytes_session_reports_byte_units() {
+        let store = Arc::new(crate::v1_compat::session_store::InMemorySessionStore::new());
+        store
+            .add_allotment("aa:bb:cc:dd:ee:ff", "bytes", 5_000, now_secs())
+            .await
+            .unwrap();
+        store
+            .record_external_usage(
+                "aa:bb:cc:dd:ee:ff",
+                merchant::ExternalUsageSnapshot {
+                    input_octets: 100,
+                    output_octets: 200,
+                    session_time: 0,
+                    reported_at: now_secs(),
+                },
+            )
+            .await
+            .unwrap();
+        let app = build_router(test_driver(), test_config(), Some(store));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/usage")
+                    .header("x-tollgate-mac", "aa:bb:cc:dd:ee:ff")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), 65536)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(body, "300/5000", "bytes sessions report consumed/allotment");
+    }
+
+    #[tokio::test]
+    async fn usage_header_mac_without_store_session_keeps_driver_view() {
+        // Header callers whose session is NOT in the store (LN grants
+        // never credit it) keep today's driver view.
+        let driver = test_driver();
+        let peer_hex = adapter::mac_to_peer_hex("aa:bb:cc:dd:ee:ff");
+        driver.grant_owed_session(&peer_hex, 60_000).await;
+        let app = build_router(
+            driver,
+            test_config(),
+            Some(Arc::new(
+                crate::v1_compat::session_store::InMemorySessionStore::new(),
+            )),
+        );
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/usage")
+                    .header("x-tollgate-mac", "aa:bb:cc:dd:ee:ff")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), 65536)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // Driver view: consumed = allotment - balance = 0, balance in msat.
+        assert_eq!(body, "0/60000");
+    }
+
+    #[tokio::test]
+    async fn usage_header_mac_no_session_no_peer_answers_minus_one() {
+        let app = build_router(
+            test_driver(),
+            test_config(),
+            Some(Arc::new(
+                crate::v1_compat::session_store::InMemorySessionStore::new(),
+            )),
+        );
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/usage")
+                    .header("x-tollgate-mac", "aa:bb:cc:dd:ee:ff")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        assert_eq!(&body[..], b"-1/-1");
     }
 
     #[tokio::test]
