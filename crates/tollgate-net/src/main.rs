@@ -577,6 +577,15 @@ async fn serve(
         }
     }
 
+    // Session retention janitor: without it, suspended/expired sessions
+    // accumulate forever in the persistent store (session_retention_secs=0
+    // keeps that legacy behavior).
+    #[cfg(feature = "v1-compat")]
+    v1_compat::session_store::spawn_session_janitor(
+        session_state.sessions.clone(),
+        cfg.v1_compat.session_retention_secs,
+    );
+
     #[cfg(feature = "v1-compat")]
     {
         server::serve(&cfg.listen, driver, &cfg, v1_wallet, Some(session_state)).await
