@@ -23,6 +23,7 @@
 //! full-durability version (fsync'd appends); this is the lightweight
 //! compat-layer version.
 
+use std::future::Future;
 use std::path::Path;
 
 /// Default journal location (alongside the wallet DB).
@@ -252,6 +253,26 @@ pub fn dedupe_owed_by_token(owed: Vec<OwedReceive>) -> Vec<OwedReceive> {
 /// crash between grant and completion re-derives the grant next boot
 /// (safe: crediting is token-idempotent) instead of losing it.
 pub async fn reconcile_pending_receives(journal_path: &Path) -> std::io::Result<Vec<OwedReceive>> {
+    reconcile_pending_receives_with(journal_path, |token: String| async move {
+        check_token_consumed("", &token).await
+    })
+    .await
+}
+
+/// [`reconcile_pending_receives`] with the NUT-07 consumed-check
+/// injected (PR #145 gap 2, #118): `check` receives the token string
+/// and returns the same shape as [`check_token_consumed`]. Production
+/// callers use [`reconcile_pending_receives`], which passes the HTTP
+/// path; tests drive SPENT/UNSPENT/error outcomes deterministically
+/// without a mint.
+pub async fn reconcile_pending_receives_with<C, F>(
+    journal_path: &Path,
+    check: C,
+) -> std::io::Result<Vec<OwedReceive>>
+where
+    C: Fn(String) -> F,
+    F: Future<Output = Result<ReconcileOutcome, String>>,
+{
     let entries = read_journal(journal_path)?;
     if entries.is_empty() {
         return Ok(Vec::new());
@@ -266,7 +287,7 @@ pub async fn reconcile_pending_receives(journal_path: &Path) -> std::io::Result<
     let mut unresolved = Vec::new();
 
     for entry in &entries {
-        match check_token_consumed("", &entry.token).await {
+        match check(entry.token.clone()).await {
             Ok(ReconcileOutcome::OwedSession { amount_sat, .. }) => {
                 tracing::warn!(
                     peer = %entry.peer_hex,
@@ -510,5 +531,85 @@ mod tests {
             owed("cashuBportal", "aa", None),
         ]);
         assert_eq!(deduped.len(), 1, "portal duplicates grant exactly once");
+    }
+
+    async fn spent_check(token: String) -> Result<ReconcileOutcome, String> {
+        assert_eq!(token, "cashuBspent", "check receives the journaled token");
+        Ok(ReconcileOutcome::OwedSession {
+            peer_hex: String::new(),
+            amount_sat: 8,
+        })
+    }
+
+    #[tokio::test]
+    async fn regression_pr118_owed_entry_survives_reconcile_until_grant_lands() {
+        // PR #145's audit gap 2 (#118): the owed arm of reconcile must
+        // KEEP the journal entry (the debt record) until the caller's
+        // grant lands and calls complete_pending_receive. The pre-#118
+        // shape (c9f8b87^) detected the owed token and then DELETED it
+        // in the journal rewrite — payment consumed, debt destroyed,
+        // nothing credited. The consumed-check is injected through the
+        // reconcile_pending_receives_with seam so the SPENT verdict is
+        // deterministic (no mint HTTP).
+        let dir = std::env::temp_dir().join(format!("tg-recon-owed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pending.jsonl");
+
+        let entry = PendingReceive {
+            token: "cashuBspent".to_owned(),
+            peer_hex: "aabbcc".to_owned(),
+            timestamp: 1,
+            mac: Some("02:50:00:00:00:42".to_owned()),
+        };
+        journal_pending_receive(&path, &entry).unwrap();
+
+        // SPENT at the mint: reconcile returns it as owed AND the
+        // journal still contains it (the debt record survives).
+        let owed = reconcile_pending_receives_with(&path, spent_check)
+            .await
+            .unwrap();
+        assert_eq!(owed.len(), 1, "one owed session is returned");
+        assert_eq!(owed[0].entry.token, "cashuBspent");
+        assert_eq!(owed[0].amount_sat, 8);
+        let journaled = read_journal(&path).unwrap();
+        assert_eq!(
+            journaled
+                .iter()
+                .filter(|e| e.token == "cashuBspent")
+                .count(),
+            1,
+            "owed entry must STAY journaled until the grant lands: {journaled:?}"
+        );
+
+        // Grant fails (e.g. zero/allotment refusal, mint still down):
+        // the caller never completes — the entry survives a full
+        // reconcile round again (crash-retry keeps the debt).
+        let owed_again = reconcile_pending_receives_with(&path, spent_check)
+            .await
+            .unwrap();
+        assert_eq!(
+            owed_again.len(),
+            1,
+            "a not-yet-granted owed entry re-derives on the next boot"
+        );
+        assert!(
+            read_journal(&path)
+                .unwrap()
+                .iter()
+                .any(|e| e.token == "cashuBspent"),
+            "grant-failed entry stays journaled for the next boot"
+        );
+
+        // Grant lands: only now does complete_pending_receive remove it.
+        complete_pending_receive(&path, "cashuBspent").unwrap();
+        assert!(
+            !read_journal(&path)
+                .unwrap()
+                .iter()
+                .any(|e| e.token == "cashuBspent"),
+            "a completed grant removes its journal entry"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

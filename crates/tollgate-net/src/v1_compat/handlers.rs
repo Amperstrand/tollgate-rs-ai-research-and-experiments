@@ -1570,14 +1570,20 @@ mod tests {
         )
         .expect("test writes the dnsmasq lease fixture");
 
-        // The portal handler journals to the real pending-receives path
-        // (hardcoded); restore the journal's exact prior state so the
-        // test leaves no residue there.
-        let journal_path = std::path::Path::new(PENDING_RECEIVES_FILE);
-        let original_journal = std::fs::read_to_string(journal_path).ok();
-        let journal_existed = journal_path.exists();
+        // Hermetic journal: the handler journals the payment intent
+        // before verification, so the test config points the journal at
+        // a temp dir (the pre-journal_path fallback wrote the real
+        // /var/lib/tollgate path — and referenced a const that no
+        // longer exists, breaking the test build at 5efcb99).
+        let journal_dir =
+            std::env::temp_dir().join(format!("tg-pr134-journal-{}", std::process::id()));
+        std::fs::create_dir_all(&journal_dir).unwrap();
 
-        let app = build_router(test_driver(), test_config(), None);
+        let app = build_router(
+            test_driver(),
+            test_config_with_journal(Some(journal_dir.join("pending.jsonl"))),
+            None,
+        );
         let resp = app
             .oneshot(
                 Request::builder()
@@ -1597,13 +1603,7 @@ mod tests {
             Some(contents) => std::fs::write(lease_path, contents).unwrap(),
             None => std::fs::remove_file(lease_path).unwrap(),
         }
-        match (&original_journal, journal_existed) {
-            (Some(contents), _) => std::fs::write(journal_path, contents).unwrap(),
-            (None, false) => {
-                std::fs::remove_file(journal_path).ok();
-            }
-            (None, true) => std::fs::write(journal_path, "").unwrap(),
-        }
+        std::fs::remove_dir_all(&journal_dir).ok();
 
         assert_eq!(
             resp.status(),
@@ -1621,5 +1621,301 @@ mod tests {
             !body.contains("could not resolve client identity"),
             "identity must be resolved from the connection address, got: {body}"
         );
+    }
+
+    /// Delegated-payment probe: an [`SessionStore`] wrapper that records
+    /// every credit_for_token call and whether the pending-receive
+    /// journal STILL contained the token at credit time — the observable
+    /// for the #129/#131 ordering contract (credit lands before journal
+    /// completion; completing first would make the credit's crash window
+    /// unrecoverable).
+    struct CreditOrderingProbe {
+        inner: crate::v1_compat::session_store::InMemorySessionStore,
+        journal_path: std::path::PathBuf,
+        credits: std::sync::Mutex<Vec<(String, String, u64, String)>>,
+        journal_held_token_at_credit: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl CreditOrderingProbe {
+        fn new(journal_path: &std::path::Path) -> Self {
+            Self {
+                inner: crate::v1_compat::session_store::InMemorySessionStore::new(),
+                journal_path: journal_path.to_owned(),
+                credits: std::sync::Mutex::new(Vec::new()),
+                journal_held_token_at_credit: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SessionStore for CreditOrderingProbe {
+        async fn credit_for_token(
+            &self,
+            mac: &str,
+            metric: &str,
+            amount: u64,
+            token: &str,
+            now: i64,
+        ) -> Result<
+            Option<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            let still_journaled = std::fs::read_to_string(&self.journal_path)
+                .map(|c| c.lines().any(|l| l.contains(token)))
+                .unwrap_or(false);
+            self.credits.lock().unwrap().push((
+                mac.to_owned(),
+                metric.to_owned(),
+                amount,
+                token.to_owned(),
+            ));
+            self.journal_held_token_at_credit
+                .lock()
+                .unwrap()
+                .push(still_journaled);
+            self.inner
+                .credit_for_token(mac, metric, amount, token, now)
+                .await
+        }
+
+        async fn get(
+            &self,
+            mac: &str,
+        ) -> Result<
+            Option<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            self.inner.get(mac).await
+        }
+
+        async fn insert(
+            &self,
+            session: merchant::CustomerSession,
+        ) -> Result<(), crate::v1_compat::session_store::SessionStoreError> {
+            self.inner.insert(session).await
+        }
+
+        async fn remove(
+            &self,
+            mac: &str,
+        ) -> Result<
+            Option<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            self.inner.remove(mac).await
+        }
+
+        async fn update(
+            &self,
+            mac: &str,
+            session: merchant::CustomerSession,
+        ) -> Result<(), crate::v1_compat::session_store::SessionStoreError> {
+            self.inner.update(mac, session).await
+        }
+
+        async fn list_all(
+            &self,
+        ) -> Result<
+            Vec<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            self.inner.list_all().await
+        }
+
+        async fn list_expired(
+            &self,
+            now_secs: i64,
+        ) -> Result<
+            Vec<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            self.inner.list_expired(now_secs).await
+        }
+
+        async fn add_allotment(
+            &self,
+            mac: &str,
+            metric: &str,
+            amount: u64,
+            now: i64,
+        ) -> Result<merchant::CustomerSession, crate::v1_compat::session_store::SessionStoreError>
+        {
+            self.inner.add_allotment(mac, metric, amount, now).await
+        }
+
+        async fn record_external_usage(
+            &self,
+            mac: &str,
+            snapshot: merchant::ExternalUsageSnapshot,
+        ) -> Result<
+            Option<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            self.inner.record_external_usage(mac, snapshot).await
+        }
+
+        async fn remove_expired(
+            &self,
+            mac: &str,
+            now_secs: i64,
+        ) -> Result<
+            Option<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            self.inner.remove_expired(mac, now_secs).await
+        }
+
+        async fn remove_exhausted_bytes(
+            &self,
+            mac: &str,
+            usage: u64,
+        ) -> Result<
+            Option<merchant::CustomerSession>,
+            crate::v1_compat::session_store::SessionStoreError,
+        > {
+            self.inner.remove_exhausted_bytes(mac, usage).await
+        }
+    }
+
+    fn test_driver_accepting(expected_token: String) -> Driver {
+        let identity = Arc::new(Identity::load_or_generate(&Config::default()).unwrap());
+        let wallet = BootstrapWallet::new(vec![]).with_verify_override(move |token: String| {
+            // clone per call: the boxed future must own its captures
+            let expected = expected_token.clone();
+            async move {
+                assert_eq!(
+                    token, expected,
+                    "wallet.verify must see the submitted token"
+                );
+                Ok(1_000) // 1 sat in milli-sat
+            }
+        });
+        Driver::new(
+            wallet,
+            IpAdapter::new(),
+            identity,
+            Price::default(),
+            "bytes",
+            Vec::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn regression_pr122_header_payment_credits_store_before_journal_completion() {
+        // PR #145's audit gap 1 (#122/#131): an ACCEPTED header-identified
+        // (delegated) payment must credit the session-API store via
+        // credit_for_token — the split-ledger bug credited only the
+        // driver. Acceptance requires wallet.verify to succeed (CDK
+        // receive or NUT-07 checkstate — both live-mint HTTP), so the
+        // wallet's cfg(test) verify override stands in for the mint;
+        // everything above it (driver admit, BootstrapAck, the
+        // handler's credit branch, journal bracketing) is production
+        // code.
+        let dir = std::env::temp_dir().join(format!("tg-hdr-credit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let journal_path = dir.join("pending.jsonl");
+
+        let token = crate::wallet::token_with_mint("https://mint.example"); // 1 sat
+        let probe = Arc::new(CreditOrderingProbe::new(&journal_path));
+        let driver = test_driver_accepting(token.clone());
+        let app = build_router(
+            driver.clone(),
+            test_config_with_journal(Some(journal_path.clone())),
+            Some(probe.clone()),
+        );
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("content-type", "text/plain")
+                    .header("x-tollgate-mac", "02:50:00:00:00:42")
+                    .body(Body::from(token.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "an accepted delegated payment answers 200"
+        );
+
+        // The store row: the delegated MAC holds a 60_000 ms session
+        // (1 sat at 1 sat/step, step 60_000 ms).
+        let row = probe
+            .inner
+            .get("02:50:00:00:00:42")
+            .await
+            .unwrap()
+            .expect("store row exists for the delegated MAC");
+        assert_eq!(row.allotment, 60_000);
+        assert_eq!(row.metric, "milliseconds");
+
+        // The credit call: exactly one, for this MAC and token.
+        {
+            let credits = probe.credits.lock().unwrap();
+            assert_eq!(credits.len(), 1, "exactly one store credit: {credits:?}");
+            assert_eq!(
+                credits[0],
+                (
+                    "02:50:00:00:00:42".to_owned(),
+                    "milliseconds".to_owned(),
+                    60_000,
+                    token.clone()
+                )
+            );
+        }
+
+        // The token-claim: a second credit for the same token is a no-op
+        // (crash-recovery re-derivation must not double-credit).
+        assert!(
+            probe
+                .inner
+                .credit_for_token(
+                    "02:50:00:00:00:42",
+                    "milliseconds",
+                    60_000,
+                    &token,
+                    now_secs()
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // The #129/#131 ordering: at credit time the journal STILL held
+        // the entry (the pre-#131 shape completed the journal first,
+        // making a crash between completion and credit unrecoverable).
+        assert_eq!(
+            probe
+                .journal_held_token_at_credit
+                .lock()
+                .unwrap()
+                .as_slice(),
+            &[true],
+            "credit must land BEFORE the journal entry is completed"
+        );
+
+        // Both ledgers: the driver also admitted the peer.
+        let peer_hex = adapter::mac_to_peer_hex("02:50:00:00:00:42");
+        let status = driver.status().await;
+        let peer = status
+            .peers
+            .iter()
+            .find(|p| p.pubkey == peer_hex)
+            .expect("driver holds the admitted peer");
+        assert_eq!(peer.state, "Active");
+
+        // Journal cleanup: after the response the entry is gone.
+        let journal = std::fs::read_to_string(&journal_path).unwrap();
+        assert!(
+            !journal.contains(&token),
+            "completed entry removed from journal: {journal}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
