@@ -375,6 +375,7 @@ mod tests {
             trust_proxy_headers: false,
             wallet: None,
             mint_health: None,
+            journal_path: None,
         }
     }
 

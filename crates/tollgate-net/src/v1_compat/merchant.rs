@@ -58,6 +58,10 @@ pub struct V1ServerConfig {
     pub trust_proxy_headers: bool,
     pub wallet: Option<Arc<CdkWallet>>,
     pub mint_health: Option<Arc<super::mint_health::MintHealthTracker>>,
+    /// Pending-receive journal path for the portal payment handler;
+    /// `None` = [`super::reconcile::DEFAULT_PENDING_RECEIVES_FILE`].
+    /// Unwritable journal fails the payment (fail-closed, issue #141).
+    pub journal_path: Option<std::path::PathBuf>,
 }
 
 /// External usage snapshot from RADIUS accounting or similar sources.

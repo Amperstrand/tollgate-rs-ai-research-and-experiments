@@ -122,6 +122,7 @@ pub fn build_v1_config(
         trust_proxy_headers: v1.trust_proxy_headers,
         wallet,
         mint_health,
+        journal_path: None,
     })
 }
 

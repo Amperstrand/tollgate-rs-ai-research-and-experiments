@@ -81,9 +81,6 @@ fn decode_cashu_amount(token: &str) -> Option<u64> {
     Some(amount)
 }
 
-/// Journal for ambiguous-receive reconciliation (NUT-07 startup recovery).
-const PENDING_RECEIVES_FILE: &str = "/var/lib/tollgate/pending-receives.jsonl";
-
 pub fn build_router(
     driver: Driver,
     config: Arc<V1ServerConfig>,
@@ -226,11 +223,27 @@ async fn handle_post_payment(
     // and grants the owed session (Go v1 ambiguous-outcome pattern).
     // Delegated (header-identified) payments carry the MAC so recovery
     // also credits the session store; IP-resolved payments leave it unset.
-    let journal_path = std::path::Path::new(PENDING_RECEIVES_FILE);
-    let _ = reconcile::journal_pending_receive(
+    // Fail-closed (issue #141): a receive that cannot be journaled is
+    // refused — proceeding unjournaled would reopen the crash-loss
+    // window the journal exists to close.
+    let journal_path = config
+        .journal_path
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new(reconcile::DEFAULT_PENDING_RECEIVES_FILE));
+    if let Err(e) = reconcile::journal_pending_receive(
         journal_path,
         &payment_journal_entry(&token, &peer_hex, hdr_mac.as_deref()),
-    );
+    ) {
+        tracing::error!(
+            journal = %journal_path.display(),
+            error = %e,
+            "pending-receive journal write failed — failing payment (fail-closed)"
+        );
+        return json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "payment journal unavailable",
+        );
+    }
 
     let result = adapter::admit_peer_with_token(&driver, &peer_hex, peer_ip, &token).await;
 
@@ -724,6 +737,12 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_config() -> Arc<V1ServerConfig> {
+        test_config_with_journal(Some(
+            std::env::temp_dir().join(format!("tg-portal-journal-{}.jsonl", std::process::id())),
+        ))
+    }
+
+    fn test_config_with_journal(journal_path: Option<std::path::PathBuf>) -> Arc<V1ServerConfig> {
         Arc::new(V1ServerConfig {
             metric: "milliseconds".to_string(),
             step_size: 60_000,
@@ -737,6 +756,7 @@ mod tests {
             trust_proxy_headers: false,
             wallet: None,
             mint_health: None,
+            journal_path,
         })
     }
 
@@ -822,6 +842,43 @@ mod tests {
         // verification (402) instead of failing identity resolution
         // (400 "could not resolve client identity").
         assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn post_payment_fails_closed_when_journal_unwritable() {
+        // Issue #141: an unwritable pending-receive journal must fail
+        // the payment (503) — proceeding unjournaled would lose the
+        // credit silently on a crash between mint-spend and credit.
+        let dir = std::env::temp_dir().join(format!("tg-portal-jfail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"").unwrap();
+        let config = test_config_with_journal(Some(blocker.join("pending.jsonl")));
+        let driver = test_driver();
+        let app = build_router(driver.clone(), config, None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("content-type", "text/plain")
+                    .header("x-tollgate-mac", "AA-BB-CC-DD-EE-FF")
+                    .body(Body::from("cashuAgarbage"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["error"], "payment journal unavailable",
+            "503 must name the journal failure: {json}"
+        );
+        assert!(
+            driver.status().await.peers.is_empty(),
+            "the driver peer must not be admitted when journaling fails"
+        );
     }
 
     #[tokio::test]
@@ -1413,6 +1470,7 @@ mod tests {
             trust_proxy_headers: false,
             wallet: None,
             mint_health: Some(tracker),
+            journal_path: None,
         });
 
         let app = build_router(test_driver(), config, None);
