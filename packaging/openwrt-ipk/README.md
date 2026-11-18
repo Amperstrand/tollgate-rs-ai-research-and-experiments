@@ -63,6 +63,24 @@ automatically by `opkg`.
 | `arm` | `arm_cortex-a7` | `arm-unknown-linux-musleabihf` | ✅ | ✅ |
 | `mipsel` | `mipsel_24kc` | `mipsel-unknown-linux-musl` | ✅ [`build-apk-mipsel.sh`](build-apk-mipsel.sh) | ✅ |
 | `mips` | `mips_24kc` | `mips-unknown-linux-musl` | ❌ Tier 3 | ✅ |
+| `arm_cortex-a7_neon-vfpv4` (ipq40xx) | `arm_cortex-a7_neon-vfpv4` | `armv7-unknown-linux-musleabihf` | ✅ [`build-apk-armv7.sh`](build-apk-armv7.sh) | ✅ |
+
+### armv7 (ipq40xx): plain cargo-zigbuild
+
+`armv7-unknown-linux-musleabihf` is a Rust **tier-2** target (prebuilt
+std via rustup), so — unlike MIPS — no SDK container or `-Z build-std`
+is needed: [`build-apk-armv7.sh`](build-apk-armv7.sh) runs
+`cargo zigbuild` on the host (zig cc defines `__ARM_ARCH`, which ring
+0.17.14's C/asm sources require on ARM32), then packages via
+`build-apk.sh --arch arm_cortex-a7_neon-vfpv4` (passed through verbatim —
+ipq40xx's packages arch; the plain `arm` alias maps to `arm_cortex-a7`,
+which apk rejects on ipq40xx devices). Verified end-to-end 2026-11-18:
+build in ~2.5 min with no flag iteration; output is a fully static
+32-bit ARM EABI5 hard-float ELF (`Tag_CPU_arch: v7`, no PT_INTERP, no
+NEEDED); boots under `qemu-arm-static` — serve on 127.0.0.1:4814,
+`GET /admin/api/status` → 200, `GET /v1/sessions/unknown` → 404; the
+`.apk` payload hashes equal the smoke-tested binaries (apk-tools 3
+adbdump).
 
 ### MIPS: the SDK-container + build-std path
 
