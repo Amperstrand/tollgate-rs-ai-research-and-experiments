@@ -461,17 +461,26 @@ async fn handle_balance(
         Some(&ConnectInfo(addr)),
         config.trust_proxy_headers,
     );
-    let peer_hex = match adapter::resolve_peer_hex(client_ip).await {
-        Some(h) => h,
-        None => {
-            let json = serde_json::json!({"error": "unknown client"});
-            return (
-                StatusCode::BAD_REQUEST,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
-            )
-                .into_response();
-        }
+    // Delegated (header-identified) callers resolve exactly like the
+    // payment path: the X-TollGate-MAC names the device, so the caller's
+    // own IP is never mapped as the device's. Live-found on the PRTA
+    // physical rig (issue #150): a session created via POST / with the
+    // MAC header was invisible to /balance's IP-only lookup, which
+    // answered {"error":"unknown client"} with the same headers.
+    let peer_hex = match header_mac(&headers) {
+        Some(mac) => adapter::mac_to_peer_hex(&mac),
+        None => match adapter::resolve_peer_hex(client_ip).await {
+            Some(h) => h,
+            None => {
+                let json = serde_json::json!({"error": "unknown client"});
+                return (
+                    StatusCode::BAD_REQUEST,
+                    [("content-type", "application/json")],
+                    serde_json::to_string(&json).unwrap_or_default(),
+                )
+                    .into_response();
+            }
+        },
     };
     match adapter::get_balance_json(&driver, &peer_hex).await {
         Some(json) => (
@@ -842,6 +851,54 @@ mod tests {
         // verification (402) instead of failing identity resolution
         // (400 "could not resolve client identity").
         assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn balance_header_mac_resolves_delegated_peer() {
+        // Issue #150: a delegated caller identifying by X-TollGate-MAC
+        // must resolve through the header — the payment path's peer —
+        // not through the caller's (unmapped) IP. With no paid session
+        // the honest answer is 404 "no active session", NOT 400
+        // "unknown client".
+        let app = build_router(test_driver(), test_config(), None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/balance")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .header("x-forwarded-for", "10.99.99.100")
+                    .header("x-tollgate-mac", "de:54:4e:91:49:da")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "no active session");
+    }
+
+    #[tokio::test]
+    async fn balance_unmapped_ip_without_header_is_unknown_client() {
+        let app = build_router(test_driver(), test_config(), None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/balance")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .header("x-forwarded-for", "10.99.99.100")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "unknown client");
     }
 
     #[tokio::test]
