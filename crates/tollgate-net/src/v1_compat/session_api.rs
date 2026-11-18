@@ -1146,4 +1146,60 @@ mod tests {
         drop(state2);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn regression_pr117_rejection_reason_proves_ack_roundtrip() {
+        // Regression (PR #117, live E2E 2026-11-16): redeem() passed the
+        // raw colon-MAC as the driver peer key; parse_peer hex-decodes
+        // peer keys, so the colon string collapsed to a zeroed PeerId
+        // and the core enqueued the BootstrapAck under
+        // peer_to_hex(zeroed) ≠ the caller's drain key — even a garbage
+        // token answered "no response from gateway" because the ack
+        // never round-tripped. The 402 body must instead carry the
+        // gateway's actual rejection reason ("token verification
+        // failed", the core's static BootstrapAck reason): that string
+        // is only reachable through the correct mac_to_peer_hex key.
+        let state = test_state();
+        let app = build_session_router(state.clone());
+
+        let requests = [
+            ("/sessions/bootstrap", bootstrap_body().to_owned()),
+            (
+                "/sessions/aa:bb:cc:dd:ee:ff/topups",
+                r#"{"token":"cashuAgarbage"}"#.to_owned(),
+            ),
+        ];
+        for (uri, body) in requests {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .header("x-api-key", "test-key")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+            let json = body_json(resp).await;
+            assert_eq!(
+                json["error"], "payment rejected: token verification failed",
+                "ack must round-trip through the mac_to_peer_hex peer key \
+                 (pre-fix answer: \"no response from gateway\"), uri={uri}"
+            );
+        }
+
+        assert!(
+            state
+                .sessions
+                .get("aa:bb:cc:dd:ee:ff")
+                .await
+                .unwrap()
+                .is_none(),
+            "rejected tokens must leave the store untouched"
+        );
+    }
 }
