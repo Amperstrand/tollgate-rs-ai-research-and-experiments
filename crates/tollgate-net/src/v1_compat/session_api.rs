@@ -75,7 +75,17 @@ impl SessionApiState {
             timestamp: now_secs(),
             mac: Some(mac.to_owned()),
         };
-        let _ = reconcile::journal_pending_receive(&self.journal_path, &entry);
+        // Fail-closed (issue #141): a receive that cannot be journaled
+        // is refused — proceeding unjournaled would reopen the crash-
+        // loss window the journal exists to close.
+        if let Err(e) = reconcile::journal_pending_receive(&self.journal_path, &entry) {
+            tracing::error!(
+                journal = %self.journal_path.display(),
+                error = %e,
+                "pending-receive journal write failed — failing redemption (fail-closed)"
+            );
+            return Err(format!("payment journal unavailable: {e}"));
+        }
 
         let result = adapter::admit_peer_with_token(&self.driver, &peer_hex, None, token).await;
 
@@ -477,6 +487,12 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> Arc<SessionApiState> {
+        state_with_journal(
+            std::env::temp_dir().join(format!("tg-sessapi-test-{}.jsonl", std::process::id())),
+        )
+    }
+
+    fn state_with_journal(journal_path: std::path::PathBuf) -> Arc<SessionApiState> {
         let identity = Arc::new(
             crate::config::Identity::load_or_generate(&crate::config::Config::default()).unwrap(),
         );
@@ -493,9 +509,19 @@ mod tests {
             config: crate::server::build_v1_config(&crate::config::V1CompatConfig::default(), None),
             driver,
             api_key: Some("test-key".to_owned()),
-            journal_path: std::env::temp_dir()
-                .join(format!("tg-sessapi-test-{}.jsonl", std::process::id())),
+            journal_path,
         })
+    }
+
+    /// A journal path whose parent is a regular file: every write fails
+    /// (ENOTDIR) — deterministic on any FS, and never /var/lib/tollgate.
+    fn unwritable_journal(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("tg-journal-fail-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"").unwrap();
+        blocker.join("pending.jsonl")
     }
 
     fn bootstrap_body() -> &'static str {
@@ -608,6 +634,75 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_fails_closed_when_journal_unwritable() {
+        // Issue #141: an unwritable pending-receive journal must refuse
+        // the redemption — proceeding unjournaled would lose the credit
+        // silently on a crash between mint-spend and store credit.
+        let state = state_with_journal(unwritable_journal("bootstrap"));
+        let app = build_session_router(state.clone());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions/bootstrap")
+                    .header("content-type", "application/json")
+                    .header("x-api-key", "test-key")
+                    .body(Body::from(bootstrap_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+        let body = body_json(resp).await;
+        assert!(
+            body["error"].as_str().unwrap().contains("journal"),
+            "error must name the journal failure: {body}"
+        );
+        assert!(
+            state
+                .sessions
+                .get("aa:bb:cc:dd:ee:ff")
+                .await
+                .unwrap()
+                .is_none(),
+            "no session may be created"
+        );
+        assert!(
+            state.driver.status().await.peers.is_empty(),
+            "the driver must not be credited when journaling fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn topup_fails_closed_when_journal_unwritable() {
+        // Issue #141, topup arm of the same redeem() path.
+        let state = state_with_journal(unwritable_journal("topup"));
+        let app = build_session_router(state.clone());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sessions/aa:bb:cc:dd:ee:ff/topups")
+                    .header("content-type", "application/json")
+                    .header("x-api-key", "test-key")
+                    .body(Body::from(r#"{"token":"cashuAgarbage"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+        let body = body_json(resp).await;
+        assert!(
+            body["error"].as_str().unwrap().contains("journal"),
+            "error must name the journal failure: {body}"
+        );
+        assert!(
+            state.driver.status().await.peers.is_empty(),
+            "the driver must not be credited when journaling fails"
         );
     }
 
