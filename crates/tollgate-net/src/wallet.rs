@@ -12,6 +12,18 @@ use anyhow::{Context, bail};
 use cashu::nuts::Token;
 use tokio::sync::RwLock;
 
+#[cfg(test)]
+use std::pin::Pin;
+
+/// Test seam (PR #145 gap 1): replaces the mint round-trip inside
+/// `verify` with a deterministic verdict, so the accepted admit path
+/// (driver → BootstrapAck → v1 handler credit branch) is unit-testable
+/// without HTTP. Compiled only under `cfg(test)` — the production
+/// binary does not contain the field or the branch.
+#[cfg(test)]
+type VerifyOverride =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = anyhow::Result<u64>> + Send>> + Send + Sync>;
+
 fn normalize_mint_url(url: &str) -> String {
     let mut normalized = url.trim_end_matches('/').to_string();
     if let Ok(parsed) = url::Url::parse(&normalized) {
@@ -38,6 +50,8 @@ pub struct BootstrapWallet {
     spent_yvalues: Arc<RwLock<HashSet<String>>>,
     spent_file: Option<PathBuf>,
     require_swap_verification: bool,
+    #[cfg(test)]
+    verify_override: Option<VerifyOverride>,
 }
 
 impl BootstrapWallet {
@@ -60,6 +74,8 @@ impl BootstrapWallet {
             spent_yvalues: Arc::new(RwLock::new(yvalues)),
             spent_file,
             require_swap_verification: false,
+            #[cfg(test)]
+            verify_override: None,
         }
     }
 
@@ -107,9 +123,30 @@ impl BootstrapWallet {
         self
     }
 
+    /// Test seam (PR #145 gap 1, #122/#131): replace the mint
+    /// round-trip with a deterministic verdict. The closure receives
+    /// the token string and returns the amount in milli-sat, exactly
+    /// like [`Self::verify`]. cfg(test)-gated so no production build
+    /// contains the override.
+    #[cfg(test)]
+    #[allow(dead_code)] // callers live in v1_compat tests; absent in default-feature builds
+    pub fn with_verify_override<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<u64>> + Send + 'static,
+    {
+        self.verify_override = Some(Arc::new(move |token: String| Box::pin(f(token))));
+        self
+    }
+
     /// Parse and verify a Cashu token. Returns the amount in milli-sat if valid,
     /// or an error if invalid, already spent, or from an unaccepted mint.
     pub async fn verify(&self, token_str: &str) -> anyhow::Result<u64> {
+        #[cfg(test)]
+        if let Some(override_fn) = self.verify_override.clone() {
+            return override_fn(token_str.to_owned()).await;
+        }
+
         let token: Token = token_str.parse().context("invalid Cashu token")?;
         let ys = token_proof_ys(&token);
         if ys.is_empty() {
