@@ -61,25 +61,41 @@ automatically by `opkg`.
 | `aarch64` *(default)* | `aarch64_cortex-a53` | `aarch64-unknown-linux-musl` | ✅ | ✅ |
 | `x86_64` | `x86_64` | `x86_64-unknown-linux-musl` | ✅ | ✅ |
 | `arm` | `arm_cortex-a7` | `arm-unknown-linux-musleabihf` | ✅ | ✅ |
-| `mipsel` | `mipsel_24kc` | `mipsel-unknown-linux-musl` | ❌ Tier 3 | ✅ |
+| `mipsel` | `mipsel_24kc` | `mipsel-unknown-linux-musl` | ✅ [`build-apk-mipsel.sh`](build-apk-mipsel.sh) | ✅ |
 | `mips` | `mips_24kc` | `mips-unknown-linux-musl` | ❌ Tier 3 | ✅ |
 
-### MIPS limitations (standalone builds)
+### MIPS: the SDK-container + build-std path
 
 Rust classifies `mips-unknown-linux-musl` and `mipsel-unknown-linux-musl` as
-**Tier 3** targets. This means no pre-compiled `rust-std` is available via
-`rustup`, so `cargo-zigbuild` cannot produce a standalone binary for MIPS.
+**Tier 3** targets: no pre-compiled `rust-std` is available via `rustup`, so
+`cargo-zigbuild` cannot produce a standalone binary for MIPS (zig also fails
+on both endians — compiler_rt intrinsics on big-endian, std heap-allocator
+symbols on little-endian; see issue #94).
 
-**For MIPS routers, use the OpenWrt SDK path instead.** The SDK's `rust/host`
-builds the Rust toolchain from source, which generates `rust-std` for all
-supported targets — including MIPS. This is slower (hours, not minutes) but
-produces correct binaries.
+For **mipsel** (ramips/mt7621), use [`build-apk-mipsel.sh`](build-apk-mipsel.sh):
+a docker wrapper around a digest-pinned `openwrt/sdk:ramips-mt7621-25.12.0`
+container that cross-compiles with the SDK's musl gcc and nightly
+`-Z build-std`, then packages the `.apk` via `build-apk.sh --arch mipsel`.
+Verified end-to-end 2026-11-18 (issue #94): build in ~3 min with no flag
+iteration (ring 0.17.14 compiles via its portable-C source set; sqlite is
+bundled via cc; secp256k1 via cc), and the binary boots under
+`qemu-mipsel-static` — serve on 127.0.0.1:4813, `GET /admin/api/status` →
+200, `GET /v1/sessions/unknown` → 404, correct musl interpreter
+(`/lib/ld-musl-mipsel-sf.so.1`, NEEDED `libc.so` + `libgcc_s.so.1` — both
+stock on OpenWrt). Requires: docker, apk-tools 3 + fakeroot (as for
+`build-apk.sh`); a host `qemu-mipsel-static` enables the emulated
+`--version` smoke.
 
 | Approach | MIPS support | Build time | Toolchain |
 | --- | --- | --- | --- |
 | `build-ipk.sh` (standalone) | ❌ No Tier 3 std | Minutes | cargo-zigbuild |
-| `Makefile` (OpenWrt SDK) | ✅ Full | Hours (rust/host compiles from source) | OpenWrt toolchain |
-| Nightly `-Z build-std` (future) | ✅ Experimental | Minutes | cargo + nightly |
+| `build-apk-mipsel.sh` (SDK container) | ✅ mipsel, verified | Minutes (first run downloads nightly) | docker + OpenWrt SDK gcc + nightly build-std |
+| `Makefile` (OpenWrt SDK) | ✅ Full (both endians) | Hours (rust/host compiles from source) | OpenWrt toolchain |
+
+Big-endian `mips` (ath79) is not covered by the container script yet — the
+same recipe applies with an `ath79/generic` SDK image (digest-pinned the
+same way); the `Makefile` path works today at the cost of a from-source
+rust/host build.
 
 **Future improvement**: When Rust stabilizes `-Z build-std` or promotes MIPS
 musl to Tier 2, the standalone path will work for MIPS without changes. The
