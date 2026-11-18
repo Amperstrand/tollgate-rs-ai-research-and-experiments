@@ -1527,4 +1527,99 @@ mod tests {
             "degraded advertisement must NOT advertise price_per_step"
         );
     }
+
+    #[test]
+    fn regression_pr117_v4_token_amount_decodes() {
+        // Regression (PR #117, live E2E 2026-11-16): decode_cashu_amount
+        // only read V3 (cashuA JSON); cdk 0.18 wallets emit V4 (cashuB
+        // binary), so every real token decoded to amount 0 → allotment 0
+        // on the portal payment and delegated redemption paths. The
+        // cashu::Token parse must read the V4 token's TRUE amount (the
+        // legacy cashuA JSON fallback stays for old clients).
+        let config = test_config();
+        // Real 1-sat testnut V4 token (same fixture as wallet.rs's
+        // SAMPLE_TOKEN).
+        let v4 = "cashuBo2FteBtodHRwczovL3Rlc3RudXQuY2FzaHUuc3BhY2VhdWNzYXRhdIGiYWlIAYhKdLsvxe5hcIGkYWEBYXN4QDk1NTM1NzQ1YjQ2MzM2OGQ1OTVkMGVhMmQ1M2NmMDU0YjZkY2ZhZTY0NjhlOWU0N2U1MDc1YWU3OWRmNmUyODdhY1ghA03QgEalpQeCViTFYVixs-4tTxGmV0Dl-hKTQ8jLyG1ZYWSjYWVYIKlCWsnyOJRBHT_0xffz67uTQUWhk336QvZbnEQW6OUZYXNYIA88wEUIkwoL1RKs6j41AgtMZLp2e3JrlpZyU1o2M3TJYXJYILoalwd76VtIosztMCjHmQzbNUVKCM4VjvV02fSkG19-";
+        assert_eq!(
+            extract_token_amount_and_allotment(v4, &config),
+            (1, 60_000),
+            "a cashuB (V4) token must decode to its true amount, not 0"
+        );
+
+        // V3 (cashuA) tokens keep decoding through the legacy JSON shape.
+        let v3 = crate::wallet::token_with_mint("https://mint.example");
+        assert_eq!(extract_token_amount_and_allotment(&v3, &config).0, 1);
+    }
+
+    #[tokio::test]
+    async fn regression_pr134_portal_payment_uses_connection_ip() {
+        // Regression (PR #134, live 2026-11-17): handle_post_payment had
+        // no ConnectInfo extractor, so with trust_proxy_headers=false
+        // (the default) every direct v1-client payment 400'd "could not
+        // resolve client identity" regardless of DHCP leases — only
+        // delegated-header or trusted-proxy callers could pay. The payer
+        // must be resolved like /usage: trusted headers, then the TCP
+        // connection address. A caller whose connection IP has a DHCP
+        // lease reaches token verification (402), not the 400.
+        const LEASE_IP: &[u8; 4] = &[198, 51, 100, 50]; // TEST-NET-2: never a real lease
+        let lease_path = std::path::Path::new("/tmp/dhcp.leases");
+        let original_leases = std::fs::read_to_string(lease_path).ok();
+        std::fs::write(
+            lease_path,
+            "1770000000 02:50:00:00:00:99 198.51.100.50 payer client-id\n",
+        )
+        .expect("test writes the dnsmasq lease fixture");
+
+        // The portal handler journals to the real pending-receives path
+        // (hardcoded); restore the journal's exact prior state so the
+        // test leaves no residue there.
+        let journal_path = std::path::Path::new(PENDING_RECEIVES_FILE);
+        let original_journal = std::fs::read_to_string(journal_path).ok();
+        let journal_existed = journal_path.exists();
+
+        let app = build_router(test_driver(), test_config(), None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("content-type", "text/plain")
+                    .extension(ConnectInfo(SocketAddr::from((*LEASE_IP, 40000))))
+                    .body(Body::from("cashuAgarbage"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Restore fixtures before asserting so a failed assert cannot
+        // leak them.
+        match original_leases {
+            Some(contents) => std::fs::write(lease_path, contents).unwrap(),
+            None => std::fs::remove_file(lease_path).unwrap(),
+        }
+        match (&original_journal, journal_existed) {
+            (Some(contents), _) => std::fs::write(journal_path, contents).unwrap(),
+            (None, false) => {
+                std::fs::remove_file(journal_path).ok();
+            }
+            (None, true) => std::fs::write(journal_path, "").unwrap(),
+        }
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::PAYMENT_REQUIRED,
+            "connection IP + DHCP lease must resolve the payer to token verification (402), not 400 'could not resolve client identity'"
+        );
+        let body = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), 65536)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            !body.contains("could not resolve client identity"),
+            "identity must be resolved from the connection address, got: {body}"
+        );
+    }
 }
