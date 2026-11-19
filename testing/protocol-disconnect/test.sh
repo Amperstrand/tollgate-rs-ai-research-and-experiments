@@ -26,7 +26,8 @@ echo "Bringing up gateway..."
 $COMPOSE up -d --no-build gateway
 
 echo "Running client (sending Disconnect)..."
-$COMPOSE up --no-build --exit-code-from client client || true
+CLIENT_EXIT=0
+$COMPOSE up --no-build --exit-code-from client client || CLIENT_EXIT=$?
 
 GATEWAY_LOG="$($COMPOSE logs --no-color gateway 2>/dev/null)"
 
@@ -40,6 +41,11 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 # on non-tty output, but this keeps greps robust regardless).
 strip_ansi() { sed $'s/\x1b\\[[0-9;]*m//g'; }
 GATEWAY_LOG="$(echo "$GATEWAY_LOG" | strip_ansi)"
+
+# 0. Client succeeded (a nonzero result means the protocol exchange itself
+# failed — e.g. HTTP 5xx after Announce — regardless of what the greps find).
+[ "$CLIENT_EXIT" -eq 0 ] \
+    || fail "client exited $CLIENT_EXIT — protocol failure (see gateway log above)"
 
 # 1. Gateway did not crash (it's still running or exited cleanly).
 echo "$GATEWAY_LOG" | grep -qi "panic\|fatal\|crash" \
