@@ -35,7 +35,7 @@ serde_json = { workspace = true }
 bytes = { workspace = true }
 sha2 = { workspace = true }
 # tolltop TUI (also pulls crossterm as its default backend).
-ratatui = "0.29"
+ratatui = "0.30"
 nostr = { workspace = true, optional = true }
 cdk = { workspace = true, optional = true }
 cdk-sqlite = { workspace = true, optional = true }
