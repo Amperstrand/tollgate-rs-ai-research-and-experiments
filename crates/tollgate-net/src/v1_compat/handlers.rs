@@ -178,6 +178,23 @@ async fn handle_post_payment(
     body: String,
 ) -> Response {
     let connect_info = connect_info.map(|axum::Extension(info)| info);
+    // HTTP-01 payment contract (corpus http01-payment.json): allowed
+    // Content-Types are text/plain, application/json, and absent —
+    // anything else is rejected 415 BEFORE token processing, with the
+    // exact Go-v1 error body. Live-found via consumer-conformance
+    // (issue #154): the fork answered 400 "missing or invalid token".
+    if let Some(ct) = headers.get("content-type").and_then(|v| v.to_str().ok()) {
+        let base = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        if !base.is_empty() && base != "text/plain" && base != "application/json" {
+            let json = serde_json::json!({"error": "Unsupported Media Type"});
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
+        }
+    }
     let token = match extract_payment_token(&body) {
         Some(t) => t,
         None => {
@@ -830,6 +847,52 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["kind"], 10021);
         assert!(json["tags"].is_array());
+    }
+
+    #[tokio::test]
+    async fn post_payment_unsupported_media_type_is_415() {
+        // HTTP-01 corpus vector http01-post/unsupported-media-type (issue
+        // #154): content-type outside {text/plain, application/json,
+        // absent} answers 415 with the exact Go-v1 body BEFORE any token
+        // processing — not 400 "missing or invalid token".
+        let app = build_router(test_driver(), test_config(), None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from("anything"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "Unsupported Media Type");
+    }
+
+    #[tokio::test]
+    async fn post_payment_charset_suffix_still_accepted() {
+        // A media type with parameters (charset=utf-8) is still text/plain —
+        // only the base type gates (corpus: allowed = text/plain,
+        // application/json, absent).
+        let app = build_router(test_driver(), test_config(), None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))))
+                    .header("content-type", "text/plain; charset=utf-8")
+                    .header("x-tollgate-mac", "aa:bb:cc:dd:ee:ff")
+                    .body(Body::from("cashuAgarbage"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
     }
 
     #[tokio::test]
