@@ -25,6 +25,14 @@ start_service() {
 	mkdir -p "$RUN_DIR"
 	chmod 0750 "$RUN_DIR"
 
+	# /var is tmpfs on OpenWrt: the CDK localstore directory dies on every
+	# reboot. Without it the wallet inits fail-closed and every payment is
+	# rejected (402). Found live on the tollgate-os baked image 2026-11-19:
+	# baked images never run package postinstalls, so the init script owns
+	# this — and even on apk-installed systems the postinstall only ran once
+	# (first install), not after reboots.
+	mkdir -p /var/lib/tollgate
+
 	# Defaults for the serve invocation. An admin may override the listen
 	# address via UCI (config/tollgate) without editing the YAML.
 	local listen
