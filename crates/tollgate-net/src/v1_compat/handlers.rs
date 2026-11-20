@@ -184,7 +184,12 @@ async fn handle_post_payment(
     // exact Go-v1 error body. Live-found via consumer-conformance
     // (issue #154): the fork answered 400 "missing or invalid token".
     if let Some(ct) = headers.get("content-type").and_then(|v| v.to_str().ok()) {
-        let base = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let base = ct
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         if !base.is_empty() && base != "text/plain" && base != "application/json" {
             let json = serde_json::json!({"error": "Unsupported Media Type"});
             return (
