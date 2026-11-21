@@ -632,7 +632,10 @@ async fn handle_get_ln_invoice(
     let quote_id = match params.get("quote") {
         Some(id) => id.as_str(),
         None => {
-            let json = serde_json::json!({"error": "missing quote parameter"});
+            // HTTP-03 corpus (issue #154): the error body carries a numeric
+            // `status` field (0 = quote-level failure) alongside the exact
+            // Go-v1 error text.
+            let json = serde_json::json!({"status": 0, "error": "quote is required"});
             return (
                 StatusCode::BAD_REQUEST,
                 [("content-type", "application/json")],
@@ -650,9 +653,17 @@ async fn handle_get_ln_invoice(
     let state = match wallet.check_mint_quote_status(quote_id).await {
         Ok(state) => state,
         Err(e) => {
-            let json =
-                serde_json::json!({"error": format!("quote check failed: {e}"), "quote": quote_id});
-            let status = if format!("{e}").to_lowercase().contains("unknown") {
+            // HTTP-03 corpus (issue #154): unknown quotes answer 404 with
+            // the Go-v1 body {"status":0,"error":"failed to fetch invoice
+            // status"} — other failures keep their text but gain status:0.
+            let unknown = format!("{e}").to_lowercase().contains("unknown");
+            let error_text = if unknown {
+                "failed to fetch invoice status".to_owned()
+            } else {
+                format!("quote check failed: {e}")
+            };
+            let json = serde_json::json!({"status": 0, "error": error_text});
+            let status = if unknown {
                 StatusCode::NOT_FOUND
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
