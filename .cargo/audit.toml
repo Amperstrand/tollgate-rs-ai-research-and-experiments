@@ -37,4 +37,17 @@ ignore = [
     # ---- the router (no untrusted db files). Removal tracks the rusqlite
     # ---- 0.41 / libsqlite3-sys 0.39 upgrade (major; separate PR).
     "RUSTSEC-2026-0459",
+    # ---- 2026-11-21 advisory-DB update (unmaintained-informational class,
+    # ---- promoted to failure by informational_warnings in CI): the two
+    # ---- lru unsound advisories were cleared by the ratatui 0.30 bump
+    # ---- (PR #155, lru now 0.18.5). These five are unmaintained-archive
+    # ---- notices with no vulnerability: chrono (RUSTSEC-2026-0543; the
+    # ---- jiff/time migration is a workspace-wide decision), instant
+    # ---- (via wasm tooling), paste, rustls-pemfile, unsafe-libyaml
+    # ---- (via serde_yaml). Track real migrations individually.
+    "RUSTSEC-2026-0543",  # chrono unmaintained
+    "RUSTSEC-2024-0384",  # instant unmaintained
+    "RUSTSEC-2024-0436",  # paste unmaintained
+    "RUSTSEC-2025-0134",  # rustls-pemfile unmaintained
+    "RUSTSEC-2024-0449",  # unsafe-libyaml unmaintained
 ]
