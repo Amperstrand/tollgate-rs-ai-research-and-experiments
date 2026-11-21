@@ -87,7 +87,17 @@ pub fn build_router(
     sessions: Option<Arc<dyn SessionStore>>,
 ) -> Router {
     Router::new()
-        .route("/", get(handle_get_details).post(handle_post_payment))
+        .route(
+            "/",
+            get(handle_get_details)
+                .post(handle_post_payment)
+                // HTTP-01 corpus (issue #154): POST / reads up to 1 MiB and
+                // answers oversize with 400 + invalid-request notice — it
+                // never 413s (deliberate asymmetry with /ln-invoice's 8 KiB
+                // 413). The handler enforces the exact cap; this layer only
+                // keeps axum from rejecting before the handler runs.
+                .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
         .route("/pay", get(handle_get_details))
         .route("/usage", get(handle_usage))
         .route("/whoami", get(handle_whoami))
@@ -200,16 +210,49 @@ async fn handle_post_payment(
                 .into_response();
         }
     }
+    // HTTP-01 corpus (issue #154): POST / caps the body at 1 MiB and
+    // answers oversize 400 + invalid-request notice — never 413 (deliberate
+    // asymmetry with /ln-invoice). The route layer admits 2 MiB so this
+    // check, not axum, produces the contract response.
+    if body.len() > 1_048_576 {
+        return match merchant::build_notice_event(
+            "error",
+            "invalid-request",
+            "request body exceeds 1 MiB",
+            None,
+            &config,
+        ) {
+            Ok(json) => (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "application/json")],
+                json,
+            )
+                .into_response(),
+            Err(_) => json_error(StatusCode::BAD_REQUEST, "invalid request"),
+        };
+    }
     let token = match extract_payment_token(&body) {
         Some(t) => t,
         None => {
-            let json = serde_json::json!({"error": "missing or invalid token"});
-            return (
-                StatusCode::BAD_REQUEST,
-                [("content-type", "application/json")],
-                serde_json::to_string(&json).unwrap_or_default(),
-            )
-                .into_response();
+            // HTTP-01 corpus: token-decode failures answer as a SIGNED
+            // kind-21023 Notice event with level=error and
+            // code=payment-error-invalid-token (Go v1 merchant.go 1509),
+            // not a plain JSON error envelope.
+            return match merchant::build_notice_event(
+                "error",
+                "payment-error-invalid-token",
+                "missing or invalid token",
+                None,
+                &config,
+            ) {
+                Ok(json) => (
+                    StatusCode::BAD_REQUEST,
+                    [("content-type", "application/json")],
+                    json,
+                )
+                    .into_response(),
+                Err(_) => json_error(StatusCode::BAD_REQUEST, "missing or invalid token"),
+            };
         }
     };
 
@@ -1330,6 +1373,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        // HTTP-01 corpus (issue #154): the error body is a SIGNED kind-21023
+        // Notice with level=error and code=payment-error-invalid-token.
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["kind"], 21_023);
+        assert!(json["id"].is_string(), "notice must be signed (id)");
+        assert!(json["sig"].is_string(), "notice must be signed (sig)");
+        assert!(
+            json["tags"]
+                .as_array()
+                .expect("tags")
+                .iter()
+                .any(|t| t == &serde_json::json!(["level", "error"]))
+        );
+        assert!(
+            json["tags"]
+                .as_array()
+                .expect("tags")
+                .iter()
+                .any(|t| t == &serde_json::json!(["code", "payment-error-invalid-token"]))
+        );
     }
 
     #[test]
@@ -1413,6 +1477,66 @@ mod tests {
             .iter()
             .any(|t| t.as_array().unwrap().first().unwrap() == "price_per_step");
         assert!(has_price, "advertisement must have price_per_step tag");
+    }
+
+    #[tokio::test]
+    async fn post_payment_oversize_body_is_400_invalid_request_notice() {
+        // HTTP-01 corpus body-over-1mib: 400 + signed notice with
+        // code=invalid-request — POST / never 413s (issue #154).
+        let app = build_router(test_driver(), test_config(), None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .body(Body::from(vec![b'x'; 1_048_577]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["kind"], 21_023);
+        assert!(
+            json["tags"]
+                .as_array()
+                .expect("tags")
+                .iter()
+                .any(|t| t == &serde_json::json!(["code", "invalid-request"]))
+        );
+    }
+
+    #[tokio::test]
+    async fn post_payment_legacy_envelope_other_kind_is_invalid_token_notice() {
+        // HTTP-01 corpus legacy-envelope-other-kind: a JSON body whose kind
+        // is not 21000 is treated as a raw token string and fails decode ->
+        // the signed payment-error-invalid-token notice.
+        let app = build_router(test_driver(), test_config(), None);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"kind":1,"tags":[["payment","x"]],"content":""}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["kind"], 21_023);
+        assert!(
+            json["tags"]
+                .as_array()
+                .expect("tags")
+                .iter()
+                .any(|t| t == &serde_json::json!(["code", "payment-error-invalid-token"]))
+        );
     }
 
     #[tokio::test]
