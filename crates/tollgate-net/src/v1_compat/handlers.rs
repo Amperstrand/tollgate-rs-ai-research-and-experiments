@@ -1662,9 +1662,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_with_large_body_returns_413() {
+    async fn post_with_sub_1mib_body_is_not_413() {
+        // HTTP-01 corpus (issue #154): POST / has no 413 — bodies under
+        // 1 MiB flow to token processing regardless of the old 64 KiB
+        // router cap (the 413 at 8 KiB belongs to /ln-invoice only). A
+        // 70 KB non-token body reaches the decoder and answers the signed
+        // invalid-token notice, not PAYLOAD_TOO_LARGE.
         let app = build_router(test_driver(), test_config(), None);
-        let big_body = vec![b'A'; 70_000]; // 70KB > 64KB limit
+        let big_body = vec![b'A'; 70_000];
         let resp = app
             .oneshot(
                 Request::builder()
@@ -1675,11 +1680,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            resp.status(),
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "70KB body should be rejected by 64KB limit"
-        );
+        assert_ne!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
