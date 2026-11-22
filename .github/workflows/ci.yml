@@ -11,6 +11,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Orphaned artifacts (their workflow runs deleted) never expire via
+# retention-days — 438 MB accumulated that way (#158). Purge on base pushes.
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -156,3 +159,43 @@ jobs:
   # OpenWrt musl devices cannot run anyway. Viable remaining path is an
   # OpenWrt-SDK container build; tracked with the full evidence on
   # issue #94 (MIPS musl deferral).
+
+  artifact-cleanup:
+    name: Purge orphaned artifacts
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            // #158: retention-days only fires while the parent run exists;
+            // orphans (41 from 2026-11-10 alone, 438 MB total) accumulate
+            // forever. Delete artifacts older than 7 days.
+            const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+            let page = 1;
+            let deleted = 0;
+            while (true) {
+              const list = await github.rest.actions.listArtifactsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                page,
+              });
+              if (!list.data.artifacts.length) break;
+              for (const a of list.data.artifacts) {
+                if (a.expired) continue;
+                if (Date.parse(a.created_at) < cutoff) {
+                  await github.rest.actions.deleteArtifact({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    artifact_id: a.id,
+                  });
+                  deleted++;
+                }
+              }
+              if (list.data.artifacts.length < 100) break;
+              page++;
+            }
+            console.log(`purged ${deleted} artifacts older than 7 days`);
