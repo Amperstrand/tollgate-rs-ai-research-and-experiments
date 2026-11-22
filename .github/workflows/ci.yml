@@ -11,6 +11,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Tiering (#158): fast feedback on every push (check + no_std, ~2 min);
+# the heavy lanes (audit, packaging, image, 7x integration) run on base
+# pushes, non-draft PRs (ready-for-review), or the ci-full label.
+# Agent workflow: iterate as draft -> cheap; mark ready -> full gate once.
+
 # Orphaned artifacts (their workflow runs deleted) never expire via
 # retention-days — 438 MB accumulated that way (#158). Purge on base pushes.
 
@@ -55,6 +60,7 @@ jobs:
         run: cargo test --workspace --features openwrt
 
   audit:
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci-full') || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     # audit-check@v2 creates a check-run annotation on push events even
     # when the audit is clean; the default GITHUB_TOKEN cannot (the
@@ -90,6 +96,7 @@ jobs:
   # it (mirrors the FIPS build-once / run-many shape). The image is shared via a
   # docker-save artifact so each matrix leg loads it instead of rebuilding.
   packaging:
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci-full') || github.event.pull_request.draft == false
     name: Packaging (apk, 25.x primary)
     runs-on: ubuntu-latest
     steps:
@@ -115,6 +122,7 @@ jobs:
         run: sh packaging/openwrt-ipk/tests/test-portal-staged.sh
 
   image:
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci-full') || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     needs: [check]
     steps:
@@ -132,6 +140,7 @@ jobs:
 
   integration:
     name: Integration (${{ matrix.suite }})
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci-full') || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     needs: [image]
     strategy:
