@@ -187,6 +187,10 @@ pub fn build_degraded_advertisement(
             TagKind::Custom("code".into()),
             ["no-reachable-mints".to_owned()],
         ),
+        // HTTP-01 corpus (issue #161): the tips tag rides BOTH modes —
+        // the full-service ad carries it and clients parse it before
+        // branching on degraded state.
+        Tag::custom(TagKind::Custom("tips".into()), ["1", "2", "3", "4"]),
     ];
 
     let event = EventBuilder::new(

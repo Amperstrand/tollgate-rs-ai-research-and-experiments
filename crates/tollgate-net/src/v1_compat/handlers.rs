@@ -645,9 +645,25 @@ async fn handle_get_ln_invoice(
         }
     };
 
+    // HTTP-03 corpus (issue #161): the quote-status lookup answers its
+    // contract shape even in degraded mode — service-unavailable precedes
+    // token PROCESSING (HTTP-01), not the quote-status lookup. With no
+    // wallet, unknown quotes still answer 404 {"status":0,"error":
+    // "failed to fetch invoice status"}; missing-param keeps its 400.
     let wallet = match config.wallet.as_ref() {
         Some(w) => w.clone(),
-        None => return json_error(StatusCode::SERVICE_UNAVAILABLE, "wallet not configured"),
+        None => {
+            let json = serde_json::json!({
+                "status": 0,
+                "error": "failed to fetch invoice status"
+            });
+            return (
+                StatusCode::NOT_FOUND,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
+        }
     };
 
     let state = match wallet.check_mint_quote_status(quote_id).await {
