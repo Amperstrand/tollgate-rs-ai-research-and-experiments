@@ -1359,7 +1359,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_ln_invoice_returns_503_with_explicit_message_when_wallet_not_configured() {
+    async fn ln_invoice_quote_status_keeps_contract_shape_without_wallet() {
+        // HTTP-03 corpus (issue #161): the quote-status lookup answers its
+        // contract shape even with no wallet (degraded) — 404 + the Go-v1
+        // body, NOT a bare 503 (service-unavailable precedes token
+        // processing, not the status lookup).
         let app = build_router(test_driver(), test_config(), None);
         let resp = app
             .oneshot(
@@ -1374,15 +1378,16 @@ mod tests {
             .unwrap();
         assert_eq!(
             resp.status(),
-            StatusCode::SERVICE_UNAVAILABLE,
-            "GET /ln-invoice must return 503 when wallet is not configured"
+            StatusCode::NOT_FOUND,
+            "unknown quote answers 404 even without a wallet"
         );
         let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
         let json: serde_json::Value =
-            serde_json::from_slice(&body).expect("ln-invoice 503 response must be valid JSON");
+            serde_json::from_slice(&body).expect("ln-invoice no-wallet body must be valid JSON");
+        assert_eq!(json["status"], 0, "quote-level failure status");
         assert_eq!(
-            json["error"], "wallet not configured",
-            "GET /ln-invoice 503 must explain 'wallet not configured' (B2 contract); got: {json}"
+            json["error"], "failed to fetch invoice status",
+            "the #159 shape holds without a wallet; got: {json}"
         );
     }
 
