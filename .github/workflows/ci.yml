@@ -5,6 +5,12 @@ on:
     branches: [master, experimental]
   pull_request:
 
+# One in-flight run per ref: superseded pushes (fmt fixes, rebases) cancel
+# their predecessors instead of stacking full CI runs (#158).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
