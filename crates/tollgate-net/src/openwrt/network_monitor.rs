@@ -469,10 +469,6 @@ impl NetworkMonitor {
 
     /// Query the gateway IP for a specific interface.
     ///
-    /// Uses the same 3-method fallback as Go v1:
-    /// 1. Default route on the specific interface
-    /// 2. Global default route with matching link index
-    /// 3. IP heuristic (network+1)
     // ── Filtering and throttling ─────────────────────────────────────
 
     /// Check if an interface should be processed (ignore/only filters).
