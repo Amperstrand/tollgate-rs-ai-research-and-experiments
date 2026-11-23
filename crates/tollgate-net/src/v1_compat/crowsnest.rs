@@ -328,10 +328,6 @@ impl Crowsnest {
     /// after it has been spawned.
     ///
     /// Send `true` to signal shutdown.
-    pub fn cancel_handle(&self) -> tokio::sync::watch::Sender<bool> {
-        self.cancel_tx.clone()
-    }
-
     /// Spawn the background discovery loop and return the join handle.
     ///
     /// The loop runs until the cancellation channel receives `true`.

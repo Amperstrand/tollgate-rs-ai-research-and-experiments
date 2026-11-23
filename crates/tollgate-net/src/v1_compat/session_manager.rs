@@ -25,7 +25,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use super::client::{V1Client, V1ClientConfig, V1ClientError, V1Session};
+use super::client::{V1Client, V1ClientConfig, V1ClientError};
 use super::crowsnest::{GatewayHandler, GatewayHandlerError};
 use super::http_client::TollGateHttpClient;
 use super::usage_tracker::{RenewalRequest, UsageTrackerConfig, UsageTrackerHandle};
@@ -252,34 +252,6 @@ impl SessionManager {
         }
 
         Ok(())
-    }
-
-    /// Return a snapshot of all active sessions.
-    pub async fn get_active_sessions(&self) -> Vec<SessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions
-            .values()
-            .map(|s| {
-                let (allotment, metric) = match s.client.session() {
-                    Some(V1Session {
-                        total_allotment,
-                        metric,
-                        ..
-                    }) => (*total_allotment, metric.clone()),
-                    None => (0, String::new()),
-                };
-
-                SessionInfo {
-                    gateway_ip: s.gateway_ip.clone(),
-                    interface_name: s.interface_name.clone(),
-                    total_allotment: allotment,
-                    metric,
-                    total_spent_sats: s.total_spent_sats,
-                    payment_count: s.payment_count,
-                    created_at_ago: s.created_at.elapsed(),
-                }
-            })
-            .collect()
     }
 
     /// Shutdown all sessions.

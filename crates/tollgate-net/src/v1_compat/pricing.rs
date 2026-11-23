@@ -101,15 +101,6 @@ pub fn calculate_allotment(steps: u64, step_size: u64) -> u64 {
     steps * step_size
 }
 
-/// Calculate how many steps we can afford with the given balance.
-pub fn affordable_steps(balance: u64, price_per_step: u64, min_steps: u64) -> u64 {
-    if price_per_step == 0 {
-        return 0;
-    }
-    let steps = balance / price_per_step;
-    if steps < min_steps { 0 } else { steps }
-}
-
 /// Validate a pubkey against blocklist, allowlist, and default trust policy.
 ///
 /// Evaluation order:
