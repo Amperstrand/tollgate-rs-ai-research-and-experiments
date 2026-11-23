@@ -183,8 +183,6 @@ impl NetworkMonitor {
         }
     }
 
-    /// Get a clone of the cancellation token (for external shutdown).
-
     /// Start monitoring and emit events to `event_tx`.
     ///
     /// Runs until cancelled via the [`CancellationToken`] or an unrecoverable
@@ -475,7 +473,6 @@ impl NetworkMonitor {
     /// 1. Default route on the specific interface
     /// 2. Global default route with matching link index
     /// 3. IP heuristic (network+1)
-
     // ── Filtering and throttling ─────────────────────────────────────
 
     /// Check if an interface should be processed (ignore/only filters).
