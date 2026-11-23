@@ -183,11 +183,6 @@ impl NetworkMonitor {
         }
     }
 
-    /// Get a clone of the cancellation token (for external shutdown).
-    pub fn cancel_token(&self) -> CancellationToken {
-        self.cancel.clone()
-    }
-
     /// Start monitoring and emit events to `event_tx`.
     ///
     /// Runs until cancelled via the [`CancellationToken`] or an unrecoverable
@@ -470,36 +465,6 @@ impl NetworkMonitor {
         });
 
         get_current_interfaces(&handle, self).await
-    }
-
-    /// Query the gateway IP for a specific interface.
-    ///
-    /// Uses the same 3-method fallback as Go v1:
-    /// 1. Default route on the specific interface
-    /// 2. Global default route with matching link index
-    /// 3. IP heuristic (network+1)
-    pub async fn get_gateway_for_interface(
-        &self,
-        iface: &str,
-    ) -> Result<Option<IpAddr>, NetworkMonitorError> {
-        let (conn, handle, _) =
-            rtnetlink::new_multicast_connection(&[MulticastGroup::Link, MulticastGroup::Ipv4Route])
-                .map_err(|e| NetworkMonitorError::ConnectionFailed(format!("{e}")))?;
-
-        let cancel = self.cancel.clone();
-        let _conn_guard = tokio::spawn(async move {
-            tokio::select! {
-                _ = conn => {}
-                () = cancel.cancelled() => {}
-            }
-        });
-
-        let link_index = match find_link_index(&handle, iface).await {
-            Some(idx) => idx,
-            None => return Ok(None),
-        };
-
-        Ok(infer_gateway(iface, link_index, &handle).await)
     }
 
     // ── Filtering and throttling ─────────────────────────────────────

@@ -752,37 +752,6 @@ impl CdkWallet {
     ///
     /// Uses the CDK melt flow: quote → prepare → confirm.
     /// Returns the amount paid (in sats).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the melt fails.
-    #[allow(clippy::missing_errors_doc)]
-    pub async fn melt_to_invoice(&self, invoice: &str) -> anyhow::Result<u64> {
-        let quote = self
-            .wallet
-            .melt_quote(PaymentMethod::BOLT11, invoice.to_owned(), None, None)
-            .await
-            .map_err(|e| anyhow::anyhow!("melt_quote: {e}"))?;
-
-        tracing::info!("[melt] Created melt quote {} for invoice", quote.id);
-
-        let prepared = self
-            .wallet
-            .prepare_melt(&quote.id, HashMap::new())
-            .await
-            .map_err(|e| anyhow::anyhow!("prepare_melt: {e}"))?;
-
-        let confirmed = prepared
-            .confirm()
-            .await
-            .map_err(|e| anyhow::anyhow!("melt confirm: {e}"))?;
-
-        let amount = u64::from(confirmed.amount());
-        let fee = u64::from(confirmed.fee_paid());
-        tracing::info!("[melt] Melted {amount} sat (fee: {fee} sat)");
-        Ok(amount)
-    }
-
     /// Melt tokens to a Lightning address (user@domain.com).
     ///
     /// CDK resolves the LNURL-pay endpoint and creates a melt quote automatically.
@@ -832,22 +801,9 @@ impl CdkWallet {
     // Reachability
     // -----------------------------------------------------------------------
 
-    /// Check if a mint URL is reachable (NUT-06).
-    ///
-    /// # Errors
-    ///
-    /// Currently always returns `Ok(true)`.
-    #[allow(clippy::missing_errors_doc)]
-    pub async fn mint_reachable(&self, mint_url: &str) -> anyhow::Result<bool> {
-        tracing::info!("[NUT-06] Checking mint reachability: {mint_url}");
-        Ok(true)
-    }
-
     // -----------------------------------------------------------------------
     // Proofs (requires `spilman` feature — not available in v1-compat)
     // -----------------------------------------------------------------------
-
-    /// Get unspent proofs serialized as JSON.
     ///
     /// Returns proofs in standard Cashu JSON format.
     #[allow(clippy::missing_errors_doc)]
