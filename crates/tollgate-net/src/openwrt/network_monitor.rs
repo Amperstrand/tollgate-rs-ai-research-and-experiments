@@ -467,8 +467,6 @@ impl NetworkMonitor {
         get_current_interfaces(&handle, self).await
     }
 
-    /// Query the gateway IP for a specific interface.
-    ///
     // ── Filtering and throttling ─────────────────────────────────────
 
     /// Check if an interface should be processed (ignore/only filters).
